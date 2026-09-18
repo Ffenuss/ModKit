@@ -17,35 +17,47 @@ import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.BuildConfig
 
 @Composable
-fun TargetSelectionScreen(onOpenExpertLab: () -> Unit) {
+fun TargetSelectionScreen(
+    onSelectInstalled: () -> Unit,
+    onSelectFile: () -> Unit,
+    onOpenExpertLab: () -> Unit,
+) {
     Column(
         modifier = Modifier.fillMaxSize().padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Text("ModKit", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        Text("v${BuildConfig.VERSION_NAME} · быстрый анализ → доказательства → изменения → APK")
+        Text("v${BuildConfig.VERSION_NAME}")
+        Text(
+            "Выберите приложение. Сначала выполняется быстрый пассивный анализ; глубокие движки запускаются только по найденным runtime и доказательствам.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Выберите цель", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                Button(onClick = { }, modifier = Modifier.fillMaxWidth()) { Text("Установленное приложение") }
-                Button(onClick = { }, modifier = Modifier.fillMaxWidth()) { Text("APK / APK-set / файл") }
+                Text("Новая проверка", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Button(onClick = onSelectInstalled, modifier = Modifier.fillMaxWidth()) {
+                    Text("Установленное приложение")
+                }
+                Button(onClick = onSelectFile, modifier = Modifier.fillMaxWidth()) {
+                    Text("APK / APK-set / файл")
+                }
             }
         }
 
         Card(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Основной процесс", fontWeight = FontWeight.SemiBold)
-                Text("1. Быстрый анализ")
-                Text("2. Выводы")
-                Text("3. Дополнительное подтверждение только при необходимости")
-                Text("4. Runtime/root только если статических доказательств недостаточно")
-                Text("5. Подготовка изменений → сборка → проверенный APK")
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text("Как работает основной режим", fontWeight = FontWeight.SemiBold)
+                Text("1  Быстрый анализ и runtime-профиль")
+                Text("2  Понятные выводы и ранние результаты")
+                Text("3  Дополнительное подтверждение только спорных целей")
+                Text("4  Runtime/root только если статики недостаточно")
+                Text("5  Подготовка изменений → сборка → проверенный APK")
             }
         }
 
         OutlinedButton(onClick = onOpenExpertLab, modifier = Modifier.fillMaxWidth()) {
-            Text("Expert Lab")
+            Text("Expert Lab — запуск отдельных инструментов")
         }
     }
 }
