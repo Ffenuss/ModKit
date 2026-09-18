@@ -56,6 +56,22 @@ fun AnalysisScreen(
                         }
                     }
                 }
+                val targeted = result.routingPlan.targeted
+                if (targeted.isNotEmpty()) {
+                    Text("Следующие релевантные движки", fontWeight = FontWeight.SemiBold)
+                    targeted.forEach { engine ->
+                        Text(
+                            "• ${engine.id}: ${if (engine.availableNow) "готов" else "ещё не перенесён"}",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+                if (result.routingPlan.missingCapabilities.isNotEmpty()) {
+                    Text("Что ещё нужно доделать", fontWeight = FontWeight.SemiBold)
+                    result.routingPlan.missingCapabilities.take(6).forEach {
+                        Text("• $it", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 if (index.warnings.isNotEmpty()) {
                     Text("Предупреждения", fontWeight = FontWeight.SemiBold)
                     index.warnings.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
