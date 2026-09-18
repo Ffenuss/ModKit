@@ -147,11 +147,11 @@ object FastArtifactIndexer {
             val digest = MessageDigest.getInstance("SHA-256")
             sources.sortedBy { it.displayName }.forEach { source ->
                 digest.update(source.displayName.toByteArray(Charsets.UTF_8))
-                digest.update(0)
+                digest.update(0.toByte())
                 digest.update(source.sha256.toByteArray(Charsets.US_ASCII))
-                digest.update(0)
+                digest.update(0.toByte())
                 digest.update(source.size.toString().toByteArray(Charsets.US_ASCII))
-                digest.update(0)
+                digest.update(0.toByte())
             }
             digest.digest().toHex()
         }
