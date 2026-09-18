@@ -44,7 +44,7 @@ object FastArtifactIndexer {
         for ((fileIndex, file) in files.withIndex()) {
             checkCancelled(cancellation)
             require(file.isFile) { "Target file does not exist: ${file.absolutePath}" }
-            val sha = sha256(file, cancellation)
+            val sha = sha256(file, cancellation, progress)
             sources += ArtifactSource(file.name, file.length(), sha)
 
             val indexed = runCatching {
@@ -177,7 +177,7 @@ object FastArtifactIndexer {
                 lastHeartbeatEpochMs = System.currentTimeMillis(),
             ),
         )
-        return FastAnalysisResult(index, System.currentTimeMillis() - started)
+        return FastAnalysisResult(index, EngineRouter.plan(index), System.currentTimeMillis() - started)
     }
 
     private data class Classification(
@@ -270,8 +270,14 @@ object FastArtifactIndexer {
         }
     }
 
-    private fun sha256(file: File, cancellation: CancellationSignal): String {
+    private fun sha256(
+        file: File,
+        cancellation: CancellationSignal,
+        progress: ProgressSink,
+    ): String {
         val digest = MessageDigest.getInstance("SHA-256")
+        var processed = 0L
+        var nextHeartbeat = 16L * 1024L * 1024L
         FileInputStream(file).buffered(128 * 1024).use { input ->
             val buffer = ByteArray(128 * 1024)
             while (true) {
@@ -279,6 +285,22 @@ object FastArtifactIndexer {
                 val read = input.read(buffer)
                 if (read < 0) break
                 digest.update(buffer, 0, read)
+                processed += read
+                if (processed >= nextHeartbeat) {
+                    progress.publish(
+                        EngineProgress(
+                            engineId = "artifact.fast-index",
+                            scheduleClass = EngineScheduleClass.FAST,
+                            state = RunState.RUNNING,
+                            currentTask = "SHA-256",
+                            currentArtifact = file.name,
+                            processed = processed,
+                            total = file.length(),
+                            lastHeartbeatEpochMs = System.currentTimeMillis(),
+                        ),
+                    )
+                    nextHeartbeat += 16L * 1024L * 1024L
+                }
             }
         }
         return digest.digest().toHex()
