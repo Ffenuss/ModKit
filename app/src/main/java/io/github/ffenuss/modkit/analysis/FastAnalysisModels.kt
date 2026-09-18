@@ -37,5 +37,6 @@ enum class BinaryFormat {
 
 data class FastAnalysisResult(
     val index: ArtifactIndex,
+    val routingPlan: EngineRoutingPlan,
     val elapsedMs: Long,
 )
