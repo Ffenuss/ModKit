@@ -6,10 +6,11 @@ import io.github.ffenuss.modkit.domain.RunState
 import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
-import java.util.zip.ZipException
 import java.util.zip.ZipFile
 
 object FastArtifactIndexer {
+    private const val HEARTBEAT_INTERVAL_MS = 1_500L
+
     data class Limits(
         val maxEntries: Int = 100_000,
         val probeBytes: Int = 64,
@@ -19,6 +20,7 @@ object FastArtifactIndexer {
         files: List<File>,
         cancellation: CancellationSignal,
         progress: ProgressSink,
+        knownSha256: Map<String, String> = emptyMap(),
         limits: Limits = Limits(),
     ): FastAnalysisResult {
         require(files.isNotEmpty()) { "No target files" }
@@ -34,7 +36,7 @@ object FastArtifactIndexer {
                 engineId = "artifact.fast-index",
                 scheduleClass = EngineScheduleClass.FAST,
                 state = RunState.RUNNING,
-                currentTask = "SHA-256 и инвентаризация входа",
+                currentTask = "Инвентаризация входа",
                 processed = 0,
                 total = files.size.toLong(),
                 lastHeartbeatEpochMs = System.currentTimeMillis(),
@@ -44,83 +46,92 @@ object FastArtifactIndexer {
         for ((fileIndex, file) in files.withIndex()) {
             checkCancelled(cancellation)
             require(file.isFile) { "Target file does not exist: ${file.absolutePath}" }
-            val sha = sha256(file, cancellation, progress)
+
+            val sha = knownSha256[file.absolutePath]
+                ?.takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
+                ?.lowercase()
+                ?: sha256(file, cancellation, progress)
             sources += ArtifactSource(file.name, file.length(), sha)
 
-            val indexed = runCatching {
-                ZipFile(file).use { zip ->
-                    val iterator = zip.entries()
-                    var count = 0
-                    while (iterator.hasMoreElements()) {
-                        checkCancelled(cancellation)
-                        if (count >= limits.maxEntries) {
-                            truncated = true
-                            warnings += "${file.name}: archive entry limit ${limits.maxEntries} reached"
-                            break
-                        }
-                        val entry = iterator.nextElement()
-                        if (entry.isDirectory) continue
-                        val probe = runCatching {
-                            zip.getInputStream(entry).use { input ->
-                                val bytes = ByteArray(limits.probeBytes)
-                                val read = input.read(bytes)
-                                if (read <= 0) ByteArray(0) else bytes.copyOf(read)
+            val fileProbe = readProbe(file, limits.probeBytes)
+            if (isZip(fileProbe)) {
+                runCatching {
+                    ZipFile(file).use { zip ->
+                        val iterator = zip.entries()
+                        var count = 0
+                        var lastHeartbeat = System.currentTimeMillis()
+                        while (iterator.hasMoreElements()) {
+                            checkCancelled(cancellation)
+                            if (count >= limits.maxEntries) {
+                                truncated = true
+                                warnings += "${file.name}: archive entry limit ${limits.maxEntries} reached"
+                                break
                             }
-                        }.getOrDefault(ByteArray(0))
-                        val classification = classify(entry.name, probe)
-                        classification.abi?.let(abis::add)
-                        entries += ArtifactEntry(
-                            container = file.name,
-                            path = entry.name,
-                            size = entry.size.coerceAtLeast(0),
-                            compressedSize = entry.compressedSize.takeIf { it >= 0 },
-                            crc32 = entry.crc.takeIf { it >= 0 },
-                            format = classification.format,
-                            abi = classification.abi,
-                            tags = classification.tags,
-                        )
-                        count++
-                        if (count % 128 == 0) {
-                            progress.publish(
-                                EngineProgress(
-                                    engineId = "artifact.fast-index",
-                                    scheduleClass = EngineScheduleClass.FAST,
-                                    state = RunState.RUNNING,
-                                    currentTask = "Индексирование archive entries",
-                                    currentArtifact = "${file.name}: ${entry.name}",
-                                    processed = count.toLong(),
-                                    total = null,
-                                    lastHeartbeatEpochMs = System.currentTimeMillis(),
-                                ),
+                            val entry = iterator.nextElement()
+                            if (entry.isDirectory) continue
+
+                            val probe = if (shouldProbeEntry(entry.name, entry.size)) {
+                                runCatching {
+                                    zip.getInputStream(entry).use { input ->
+                                        val bytes = ByteArray(limits.probeBytes)
+                                        val read = input.read(bytes)
+                                        if (read <= 0) ByteArray(0) else bytes.copyOf(read)
+                                    }
+                                }.getOrElse { error ->
+                                    warnings += "${file.name}:${entry.name}: probe failed: ${error.message ?: error.javaClass.simpleName}"
+                                    ByteArray(0)
+                                }
+                            } else {
+                                ByteArray(0)
+                            }
+
+                            val classification = classify(entry.name, probe)
+                            classification.abi?.let(abis::add)
+                            entries += ArtifactEntry(
+                                container = file.name,
+                                path = entry.name,
+                                size = entry.size.coerceAtLeast(0L),
+                                compressedSize = entry.compressedSize.takeIf { it >= 0L },
+                                crc32 = entry.crc.takeIf { it >= 0L },
+                                format = classification.format,
+                                abi = classification.abi,
+                                tags = classification.tags,
                             )
+                            count++
+
+                            val now = System.currentTimeMillis()
+                            if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+                                lastHeartbeat = now
+                                progress.publish(
+                                    EngineProgress(
+                                        engineId = "artifact.fast-index",
+                                        scheduleClass = EngineScheduleClass.FAST,
+                                        state = RunState.RUNNING,
+                                        currentTask = "Индексирование archive entries",
+                                        currentArtifact = "${file.name}: ${entry.name}",
+                                        processed = count.toLong(),
+                                        total = null,
+                                        lastHeartbeatEpochMs = now,
+                                    ),
+                                )
+                            }
                         }
                     }
+                }.onFailure { error ->
+                    warnings += "${file.name}: archive index failed: ${error.message ?: error.javaClass.simpleName}"
                 }
-                true
-            }.getOrElse { error ->
-                if (error is ZipException) {
-                    val probe = FileInputStream(file).use { input ->
-                        val bytes = ByteArray(limits.probeBytes)
-                        val read = input.read(bytes)
-                        if (read <= 0) ByteArray(0) else bytes.copyOf(read)
-                    }
-                    val classification = classify(file.name, probe)
-                    classification.abi?.let(abis::add)
-                    entries += ArtifactEntry(
-                        container = file.name,
-                        path = file.name,
-                        size = file.length(),
-                        format = classification.format,
-                        abi = classification.abi,
-                        tags = classification.tags,
-                    )
-                    true
-                } else {
-                    warnings += "${file.name}: ${error.message ?: error.javaClass.simpleName}"
-                    false
-                }
+            } else {
+                val classification = classify(file.name, fileProbe)
+                classification.abi?.let(abis::add)
+                entries += ArtifactEntry(
+                    container = file.name,
+                    path = file.name,
+                    size = file.length(),
+                    format = classification.format,
+                    abi = classification.abi,
+                    tags = classification.tags,
+                )
             }
-            if (!indexed) warnings += "${file.name}: index incomplete"
 
             progress.publish(
                 EngineProgress(
@@ -185,6 +196,17 @@ object FastArtifactIndexer {
         val abi: String?,
         val tags: Set<String>,
     )
+
+    private fun shouldProbeEntry(path: String, size: Long): Boolean {
+        if (size <= 0L) return false
+        val low = path.lowercase()
+        val base = low.substringAfterLast('/')
+        if (base.matches(Regex("classes(\\d*)\\.dex"))) return true
+        if (low.endsWith(".so")) return true
+        if (low.endsWith("global-metadata.dat")) return true
+        if (low.endsWith(".wasm")) return true
+        return '.' !in base && (low.startsWith("assets/") || low.startsWith("lib/"))
+    }
 
     private fun classify(path: String, probe: ByteArray): Classification {
         val low = path.lowercase()
@@ -270,6 +292,21 @@ object FastArtifactIndexer {
         }
     }
 
+    private fun isZip(probe: ByteArray): Boolean =
+        probe.size >= 4 &&
+            probe[0] == 'P'.code.toByte() &&
+            probe[1] == 'K'.code.toByte() &&
+            ((probe[2] == 3.toByte() && probe[3] == 4.toByte()) ||
+                (probe[2] == 5.toByte() && probe[3] == 6.toByte()) ||
+                (probe[2] == 7.toByte() && probe[3] == 8.toByte()))
+
+    private fun readProbe(file: File, maxBytes: Int): ByteArray =
+        FileInputStream(file).use { input ->
+            val bytes = ByteArray(maxBytes)
+            val read = input.read(bytes)
+            if (read <= 0) ByteArray(0) else bytes.copyOf(read)
+        }
+
     private fun sha256(
         file: File,
         cancellation: CancellationSignal,
@@ -277,7 +314,7 @@ object FastArtifactIndexer {
     ): String {
         val digest = MessageDigest.getInstance("SHA-256")
         var processed = 0L
-        var nextHeartbeat = 16L * 1024L * 1024L
+        var lastHeartbeat = 0L
         FileInputStream(file).buffered(128 * 1024).use { input ->
             val buffer = ByteArray(128 * 1024)
             while (true) {
@@ -286,7 +323,9 @@ object FastArtifactIndexer {
                 if (read < 0) break
                 digest.update(buffer, 0, read)
                 processed += read
-                if (processed >= nextHeartbeat) {
+                val now = System.currentTimeMillis()
+                if (now - lastHeartbeat >= HEARTBEAT_INTERVAL_MS) {
+                    lastHeartbeat = now
                     progress.publish(
                         EngineProgress(
                             engineId = "artifact.fast-index",
@@ -296,10 +335,9 @@ object FastArtifactIndexer {
                             currentArtifact = file.name,
                             processed = processed,
                             total = file.length(),
-                            lastHeartbeatEpochMs = System.currentTimeMillis(),
+                            lastHeartbeatEpochMs = now,
                         ),
                     )
-                    nextHeartbeat += 16L * 1024L * 1024L
                 }
             }
         }
@@ -310,7 +348,8 @@ object FastArtifactIndexer {
         if (cancellation.isCancelled()) throw AnalysisCancelledException()
     }
 
-    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    private fun ByteArray.toHex(): String =
+        joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
     private fun abiFromEvidence(value: String): String? =
         KNOWN_ABIS.firstOrNull { "/$it/" in value.lowercase() }

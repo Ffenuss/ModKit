@@ -1,7 +1,66 @@
 # ModKit
 
-Android-first analysis and modification workbench for authorized assessment of APK/APK-set targets.
+ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current version: **0.0.1**
+Current application version: **0.0.1**
 
-Development follows the canonical specification in `docs/TECHNICAL_SPEC_VNEXT.md`.
+## Product flow
+
+```text
+select app / APK
+        ↓
+fast analysis
+        ↓
+clear findings
+        ↓
+targeted confirmation only when needed
+        ↓
+runtime / root only when static evidence is insufficient
+        ↓
+prepare changes
+        ↓
+build / sign / verify
+        ↓
+APK
+```
+
+A separate **Expert Lab** will expose compatible engines directly for an APK, APK-set, installed application or individual file.
+
+## Development rules
+
+The canonical specification is [docs/TECHNICAL_SPEC_VNEXT.md](docs/TECHNICAL_SPEC_VNEXT.md).
+
+Legacy UniRevLab components are **not bulk-copied**. Every migrated subsystem is reviewed using the rule:
+
+> what exists → what is incomplete → what must be added → when it runs → what proves completion.
+
+See [docs/PORTING_MATRIX.md](docs/PORTING_MATRIX.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+
+## Current implemented baseline
+
+- clean Android/Compose application;
+- installed-app and file target selection;
+- single-pass archive inventory;
+- target SHA-256 binding;
+- validated DEX / ELF / WASM / IL2CPP metadata probes;
+- multi-label runtime fingerprinting;
+- demand-driven engine routing plan;
+- process-scoped analysis state;
+- cancellation;
+- heartbeat + stalled-state watchdog;
+- interrupted-analysis recovery UI;
+- CI that tests, lints, builds, verifies zip container/alignment and publishes an APK artifact.
+
+The deep engines are being migrated one at a time. A runtime being detected does **not** mean its deep backend is already complete.
+
+## Build
+
+CI uses Java 17, Gradle 9.5 and Android SDK 37.0.
+
+```bash
+gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+```
+
+## Security / authorization
+
+Use ModKit only for applications and environments you are authorized to assess. Do not publish customer APKs, secrets, access tokens, signing keys or proprietary analysis artifacts in public issues.

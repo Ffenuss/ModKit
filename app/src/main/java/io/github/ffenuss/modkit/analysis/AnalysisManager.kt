@@ -5,10 +5,13 @@ import android.net.Uri
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.domain.EngineProgress
+import io.github.ffenuss.modkit.domain.EngineScheduleClass
 import io.github.ffenuss.modkit.domain.RunState
+import java.io.File
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -20,16 +23,14 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/**
- * Process-scoped owner of the active analysis.
- *
- * The UI only observes state. This avoids losing work and progress when the
- * Activity/Compose tree is recreated. Persistent snapshots turn a process/device
- * restart into an explicit Interrupted state instead of a fake endless RUNNING state.
- */
 object AnalysisManager {
     private const val WATCHDOG_INTERVAL_MS = 5_000L
     private const val STALLED_AFTER_MS = 20_000L
+
+    private data class PreparedInput(
+        val files: List<File>,
+        val knownSha256: Map<String, String> = emptyMap(),
+    )
 
     private val lock = Any()
     private val nextRunId = AtomicLong(System.currentTimeMillis())
@@ -68,13 +69,11 @@ object AnalysisManager {
         }
     }
 
-    fun startFile(uri: Uri, label: String) {
+    fun startFile(uri: Uri, label: String) =
         start(AnalysisTargetDescriptor.FileUri(uri.toString(), label))
-    }
 
-    fun startInstalled(target: InstalledAppTarget) {
+    fun startInstalled(target: InstalledAppTarget) =
         start(AnalysisTargetDescriptor.InstalledPackage(target.packageName, target.label))
-    }
 
     fun resumeInterrupted() {
         val current = mutableState.value as? AnalysisRunState.Interrupted ?: return
@@ -94,7 +93,7 @@ object AnalysisManager {
         val job: Job?
         synchronized(lock) {
             val current = mutableState.value
-            val cancellable = when (current) {
+            val cancelling = when (current) {
                 is AnalysisRunState.Running -> AnalysisRunState.Cancelling(
                     current.runId,
                     current.target,
@@ -117,8 +116,15 @@ object AnalysisManager {
                 )
                 else -> return
             }
-            mutableState.value = cancellable
-            persist(AnalysisRunStore.CANCELLING, cancellable.runId, cancellable.target, cancellable.progress, cancellable.startedAtEpochMs, true)
+            mutableState.value = cancelling
+            persist(
+                AnalysisRunStore.CANCELLING,
+                cancelling.runId,
+                cancelling.target,
+                cancelling.progress,
+                cancelling.startedAtEpochMs,
+                force = true,
+            )
             activeSignal?.cancel()
             job = activeJob
         }
@@ -128,10 +134,17 @@ object AnalysisManager {
     fun retryStalled() {
         val stalled = mutableState.value as? AnalysisRunState.Stalled ?: return
         val oldJob = activeJob
+        val oldWatchdog = watchdogJob
         activeSignal?.cancel()
+        oldWatchdog?.cancel()
         oldJob?.cancel()
         scope.launch {
-            listOfNotNull(oldJob, watchdogJob).joinAll()
+            listOfNotNull(oldJob, oldWatchdog).joinAll()
+            synchronized(lock) {
+                activeJob = null
+                watchdogJob = null
+                activeSignal = null
+            }
             start(stalled.target)
         }
     }
@@ -146,7 +159,9 @@ object AnalysisManager {
     }
 
     private fun start(target: AnalysisTargetDescriptor) {
-        val context = requireNotNull(appContext) { "AnalysisManager.initialize(context) must be called first" }
+        val context = requireNotNull(appContext) {
+            "AnalysisManager.initialize(context) must be called first"
+        }
         synchronized(lock) {
             check(activeJob?.isActive != true) { "Another analysis is already running" }
         }
@@ -155,8 +170,8 @@ object AnalysisManager {
         val startedAt = System.currentTimeMillis()
         val signal = AtomicCancellationSignal()
         val initial = EngineProgress(
-            engineId = "artifact.fast-index",
-            scheduleClass = io.github.ffenuss.modkit.domain.EngineScheduleClass.FAST,
+            engineId = "target.prepare",
+            scheduleClass = EngineScheduleClass.FAST,
             state = RunState.RUNNING,
             currentTask = "Подготовка входа",
             lastHeartbeatEpochMs = startedAt,
@@ -165,36 +180,60 @@ object AnalysisManager {
         synchronized(lock) {
             activeSignal = signal
             mutableState.value = AnalysisRunState.Running(runId, target, initial, startedAt)
-            persist(AnalysisRunStore.RUNNING, runId, target, initial, startedAt, true)
+            persist(AnalysisRunStore.RUNNING, runId, target, initial, startedAt, force = true)
         }
 
-        val job = scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
-                val files = when (target) {
+                val progressSink = ProgressSink {
+                    publishProgress(runId, target, startedAt, it)
+                }
+
+                val prepared = when (target) {
                     is AnalysisTargetDescriptor.FileUri -> {
                         val uri = Uri.parse(target.uri)
-                        listOf(withContext(Dispatchers.IO) { TargetMaterializer.fromUri(context, uri, signal) })
+                        val materialized = withContext(Dispatchers.IO) {
+                            TargetMaterializer.fromUri(
+                                context = context,
+                                uri = uri,
+                                cancellation = signal,
+                                progress = progressSink,
+                            )
+                        }
+                        PreparedInput(
+                            files = listOf(materialized.file),
+                            knownSha256 = mapOf(
+                                materialized.file.absolutePath to materialized.sha256,
+                            ),
+                        )
                     }
                     is AnalysisTargetDescriptor.InstalledPackage -> {
                         val installed = withContext(Dispatchers.IO) {
                             InstalledAppRepository(context).find(target.packageName)
                         } ?: error("Установленное приложение больше недоступно: ${target.packageName}")
-                        installed.apkFiles
+                        PreparedInput(files = installed.apkFiles)
                     }
                 }
 
                 val result = withContext(Dispatchers.IO) {
                     FastArtifactIndexer.index(
-                        files = files,
+                        files = prepared.files,
                         cancellation = signal,
-                        progress = ProgressSink { publishProgress(runId, target, startedAt, it) },
+                        progress = progressSink,
+                        knownSha256 = prepared.knownSha256,
                     )
                 }
 
                 synchronized(lock) {
                     if (currentRunId() == runId) {
                         mutableState.value = AnalysisRunState.Completed(runId, target, result)
-                        store?.write(AnalysisRunStore.COMPLETED, runId, target, null, startedAt)
+                        store?.write(
+                            AnalysisRunStore.COMPLETED,
+                            runId,
+                            target,
+                            null,
+                            startedAt,
+                        )
                     }
                 }
             } catch (_: AnalysisCancelledException) {
@@ -206,12 +245,19 @@ object AnalysisManager {
                     if (currentRunId() == runId) {
                         val message = failure.message ?: failure.javaClass.simpleName
                         mutableState.value = AnalysisRunState.Failed(runId, target, message)
-                        store?.write(AnalysisRunStore.FAILED, runId, target, null, startedAt)
+                        store?.write(
+                            AnalysisRunStore.FAILED,
+                            runId,
+                            target,
+                            null,
+                            startedAt,
+                        )
                     }
                 }
             } finally {
                 synchronized(lock) {
-                    if (currentRunId() == runId && mutableState.value !is AnalysisRunState.Running &&
+                    if (currentRunId() == runId &&
+                        mutableState.value !is AnalysisRunState.Running &&
                         mutableState.value !is AnalysisRunState.Cancelling &&
                         mutableState.value !is AnalysisRunState.Stalled
                     ) {
@@ -233,7 +279,8 @@ object AnalysisManager {
                     synchronized(lock) {
                         val current = mutableState.value
                         if (current is AnalysisRunState.Running && current.runId == runId) {
-                            val heartbeat = current.progress?.lastHeartbeatEpochMs ?: current.startedAtEpochMs
+                            val heartbeat = current.progress?.lastHeartbeatEpochMs
+                                ?: current.startedAtEpochMs
                             val age = now - heartbeat
                             if (age >= STALLED_AFTER_MS) {
                                 val stalled = AnalysisRunState.Stalled(
@@ -244,13 +291,21 @@ object AnalysisManager {
                                     heartbeatAgeMs = age,
                                 )
                                 mutableState.value = stalled
-                                persist(AnalysisRunStore.STALLED, runId, target, stalled.progress, startedAt, true)
+                                persist(
+                                    AnalysisRunStore.STALLED,
+                                    runId,
+                                    target,
+                                    stalled.progress,
+                                    startedAt,
+                                    force = true,
+                                )
                             }
                         }
                     }
                 }
             }
         }
+        job.start()
     }
 
     private fun publishProgress(
@@ -268,8 +323,20 @@ object AnalysisManager {
                 }
                 is AnalysisRunState.Stalled -> if (current.runId == runId) {
                     val recovered = progress.copy(state = RunState.RUNNING)
-                    mutableState.value = AnalysisRunState.Running(runId, target, recovered, startedAt)
-                    persist(AnalysisRunStore.RUNNING, runId, target, recovered, startedAt, true)
+                    mutableState.value = AnalysisRunState.Running(
+                        runId,
+                        target,
+                        recovered,
+                        startedAt,
+                    )
+                    persist(
+                        AnalysisRunStore.RUNNING,
+                        runId,
+                        target,
+                        recovered,
+                        startedAt,
+                        force = true,
+                    )
                 }
                 is AnalysisRunState.Cancelling -> if (current.runId == runId) {
                     val cancelling = progress.copy(
@@ -277,18 +344,34 @@ object AnalysisManager {
                         currentTask = "Отмена выполняется… ${progress.currentTask.orEmpty()}",
                     )
                     mutableState.value = current.copy(progress = cancelling)
-                    persist(AnalysisRunStore.CANCELLING, runId, target, cancelling, startedAt)
+                    persist(
+                        AnalysisRunStore.CANCELLING,
+                        runId,
+                        target,
+                        cancelling,
+                        startedAt,
+                    )
                 }
                 else -> Unit
             }
         }
     }
 
-    private fun markCancelled(runId: Long, target: AnalysisTargetDescriptor, startedAt: Long) {
+    private fun markCancelled(
+        runId: Long,
+        target: AnalysisTargetDescriptor,
+        startedAt: Long,
+    ) {
         synchronized(lock) {
             if (currentRunId() == runId) {
                 mutableState.value = AnalysisRunState.Cancelled(runId, target)
-                store?.write(AnalysisRunStore.CANCELLED, runId, target, null, startedAt)
+                store?.write(
+                    AnalysisRunStore.CANCELLED,
+                    runId,
+                    target,
+                    null,
+                    startedAt,
+                )
             }
         }
     }
