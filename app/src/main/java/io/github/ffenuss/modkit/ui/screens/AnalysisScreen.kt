@@ -2,6 +2,7 @@ package io.github.ffenuss.modkit.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -25,7 +26,10 @@ fun AnalysisScreen(
     result: FastAnalysisResult?,
     error: String?,
     cancelled: Boolean,
+    cancelling: Boolean,
+    stalledAgeMs: Long?,
     onCancel: () -> Unit,
+    onRetry: () -> Unit,
     onBack: () -> Unit,
 ) {
     Column(
@@ -83,12 +87,25 @@ fun AnalysisScreen(
                 OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Назад") }
             }
             cancelled -> {
-                Text("Анализ отменён. Уже готовые данные не считаются подтверждённым полным результатом.")
+                Text("Анализ отменён. Уже полученные данные не выдаются как полный подтверждённый результат.")
                 OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Назад") }
+            }
+            stalledAgeMs != null -> {
+                Text(
+                    "Этап не присылал heartbeat ${stalledAgeMs / 1000} с.",
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                progress?.currentTask?.let { Text(it) }
+                progress?.currentArtifact?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = onRetry, modifier = Modifier.weight(1f)) { Text("Повторить") }
+                    OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("Остановить") }
+                }
             }
             else -> {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(progress?.currentTask ?: "Подготовка быстрого анализа…")
+                Text(if (cancelling) "Отмена выполняется…" else progress?.currentTask ?: "Подготовка быстрого анализа…")
                 progress?.currentArtifact?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 progress?.processed?.let { processed ->
                     Text(
@@ -96,7 +113,11 @@ fun AnalysisScreen(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                Button(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Отменить") }
+                Button(
+                    onClick = onCancel,
+                    enabled = !cancelling,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (cancelling) "Отмена…" else "Отменить") }
             }
         }
     }
