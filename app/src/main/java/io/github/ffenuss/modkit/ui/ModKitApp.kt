@@ -64,7 +64,7 @@ fun ModKitApp() {
                     FastArtifactIndexer.index(
                         files = files,
                         cancellation = signal,
-                        progress = ProgressSink { progress -> analysisProgress = progress },
+                        progress = ProgressSink { progress -> scope.launch { analysisProgress = progress } },
                     )
                 }
             }
