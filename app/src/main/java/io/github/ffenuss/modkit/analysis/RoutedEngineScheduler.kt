@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
  */
 object RoutedEngineScheduler {
     private val registeredEngineIds = setOf(
+        "elf.universal-inventory",
         "il2cpp.fast-dump",
         "il2cpp.codegen-bind",
     )
@@ -73,6 +74,50 @@ object RoutedEngineScheduler {
 
             result = try {
                 when (engine.id) {
+                    "elf.universal-inventory" -> {
+                        val cached = withContext(Dispatchers.IO) {
+                            cache?.loadUniversalElfInventory(
+                                result.index.artifactSha256,
+                            )
+                        }
+                        val inventory = cached ?: withContext(Dispatchers.IO) {
+                            UniversalElfInventoryEngine.analyze(
+                                workspace = workspace,
+                                outputRoot = outputRoot,
+                                cancellation = engineCancellation,
+                                progress = progress,
+                            )
+                        }.also { produced ->
+                            withContext(Dispatchers.IO) {
+                                cache?.saveUniversalElfInventory(
+                                    result.index.artifactSha256,
+                                    produced,
+                                )
+                            }
+                        }
+                        if (cached != null) {
+                            publishCacheHit(
+                                progress,
+                                engine,
+                                result.index.artifactSha256,
+                            )
+                        }
+                        result.copy(
+                            elfInventory = inventory,
+                            engineCacheHits = if (cached != null) {
+                                result.engineCacheHits + engine.id
+                            } else {
+                                result.engineCacheHits
+                            },
+                            engineWarnings = (
+                                result.engineWarnings +
+                                    inventory.warnings.map {
+                                        engine.id + ": " + it
+                                    }
+                                ).distinct(),
+                        )
+                    }
+
                     "il2cpp.fast-dump" -> {
                         val cached = withContext(Dispatchers.IO) {
                             cache?.loadIl2CppFastDump(result.index.artifactSha256)
