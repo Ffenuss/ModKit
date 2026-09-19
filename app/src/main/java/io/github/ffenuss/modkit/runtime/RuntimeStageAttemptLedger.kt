@@ -39,16 +39,21 @@ object RuntimeStageAttemptRecorder {
             ?.takeIf { it.isNotEmpty() }
             ?: failure.javaClass.simpleName
 
+        val lowerMessage = message.lowercase()
         val category = when {
-            "installed-app target" in message ->
+            "installed-app target" in message ||
+                "installed repacked test probe provider was not found" in lowerMessage ||
+                "installed package signer does not match" in lowerMessage ||
+                "probe package does not match" in lowerMessage ||
+                "probe provider class does not match" in lowerMessage ->
                 RuntimeStageBlockerCategory.INVALID_INPUT
-            "executor" in message.lowercase() &&
-                ("not registered" in message.lowercase() ||
-                    "not implemented" in message.lowercase()) ->
+            "executor" in lowerMessage &&
+                ("not registered" in lowerMessage ||
+                    "not implemented" in lowerMessage) ->
                 RuntimeStageBlockerCategory.EXECUTOR_GAP
-            "not readable" in message.lowercase() ||
-                "permission" in message.lowercase() ||
-                "no unambiguous readable main process" in message.lowercase() ->
+            "not readable" in lowerMessage ||
+                "permission" in lowerMessage ||
+                "no unambiguous readable main process" in lowerMessage ->
                 RuntimeStageBlockerCategory.TARGET_ENVIRONMENT
             else ->
                 RuntimeStageBlockerCategory.EVIDENCE_GAP
