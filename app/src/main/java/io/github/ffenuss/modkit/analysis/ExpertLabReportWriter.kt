@@ -524,9 +524,42 @@ object ExpertLabReportWriter {
             }
             appendLine()
 
+            appendLine("RUNTIME STAGE ATTEMPTS")
+            if (result.runtimeStageAttempts.isEmpty()) {
+                appendLine("none-recorded")
+            } else {
+                result.runtimeStageAttempts.forEach { attempt ->
+                    appendLine("- stage: " + attempt.stage.name)
+                    appendLine("  state: " + attempt.state.name)
+                    appendLine(
+                        "  attemptedAtEpochMs: " +
+                            (attempt.attemptedAtEpochMs?.toString()
+                                ?: "not_recorded"),
+                    )
+                    appendLine(
+                        "  requestedTargets: " +
+                            attempt.requestedTargetIds.sorted().joinToString()
+                                .ifBlank { "none" },
+                    )
+                    appendLine(
+                        "  resolvedTargets: " +
+                            attempt.resolvedTargetIds.sorted().joinToString()
+                                .ifBlank { "none" },
+                    )
+                    attempt.blockers.forEach { blocker ->
+                        appendLine(
+                            "  blocker: " + blocker.code + " / " +
+                                blocker.category.name + " / " +
+                                blocker.message,
+                        )
+                    }
+                }
+            }
+            appendLine()
+
             val rootDecision = RootRuntimeDecisionEngine.decide(
                 plan = RuntimeEscalationPlanner.plan(result),
-                attempts = emptyList(),
+                attempts = result.runtimeStageAttempts,
             )
             appendLine("ROOT RUNTIME POLICY")
             appendLine("lastResortOnly: true")
