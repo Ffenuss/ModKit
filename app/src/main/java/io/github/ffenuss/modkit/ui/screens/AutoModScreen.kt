@@ -28,14 +28,11 @@ import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
-import io.github.ffenuss.modkit.analysis.TargetShaVerifier
 import io.github.ffenuss.modkit.domain.EngineProgress
+import io.github.ffenuss.modkit.patch.AutoModPreparationCoordinator
 import io.github.ffenuss.modkit.patch.PatchPreparationPlan
-import io.github.ffenuss.modkit.patch.PatchPreparationPlanner
 import io.github.ffenuss.modkit.patch.PreparationTargetStatus
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @Composable
 fun AutoModScreen(
@@ -46,9 +43,11 @@ fun AutoModScreen(
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
 
+    var analysisResult by remember(result.index.artifactSha256) { mutableStateOf(result) }
     var preparing by remember(result.index.artifactSha256) { mutableStateOf(false) }
     var progress by remember(result.index.artifactSha256) { mutableStateOf<EngineProgress?>(null) }
     var plan by remember(result.index.artifactSha256) { mutableStateOf<PatchPreparationPlan?>(null) }
+    var confirmationNote by remember(result.index.artifactSha256) { mutableStateOf<String?>(null) }
     var error by remember(result.index.artifactSha256) { mutableStateOf<String?>(null) }
     var cancellation by remember(result.index.artifactSha256) {
         mutableStateOf<AtomicCancellationSignal?>(null)
@@ -64,21 +63,24 @@ fun AutoModScreen(
 
         scope.launch {
             try {
-                val verification = withContext(Dispatchers.IO) {
-                    TargetShaVerifier.verify(
-                        context = context,
-                        target = target,
-                        expectedSha256 = result.index.artifactSha256,
-                        cancellation = signal,
-                        progress = ProgressSink { update ->
-                            scope.launch { progress = update }
-                        },
-                    )
-                }
-                plan = PatchPreparationPlanner.prepare(
-                    result = result,
-                    shaVerification = verification,
+                val prepared = AutoModPreparationCoordinator.prepare(
+                    context = context,
+                    target = target,
+                    initial = analysisResult,
+                    cancellation = signal,
+                    progress = ProgressSink { update ->
+                        scope.launch { progress = update }
+                    },
                 )
+                analysisResult = prepared.analysisResult
+                plan = prepared.plan
+                confirmationNote = when {
+                    prepared.requestedStaticConfirmations <= 0 -> null
+                    prepared.remainingStaticConfirmations == 0 ->
+                        "Недостающее статическое подтверждение выполнено автоматически."
+                    else ->
+                        "Часть статических подтверждений остаётся нерешённой; автоматическое применение не разрешено."
+                }
             } catch (_: AnalysisCancelledException) {
                 error = "Подготовка отменена. Исходные результаты анализа не изменены."
             } catch (failure: Throwable) {
@@ -110,7 +112,7 @@ fun AutoModScreen(
         }
 
         item {
-            val graph = result.evidenceGraph
+            val graph = analysisResult.evidenceGraph
             val summary = graph?.summary
             Card(Modifier.fillMaxWidth()) {
                 Column(
@@ -120,7 +122,7 @@ fun AutoModScreen(
                     Text("Текущие результаты", fontWeight = FontWeight.SemiBold)
                     Text("Цель: " + target.label)
                     Text(
-                        "SHA: " + result.index.artifactSha256.take(16) + "…",
+                        "SHA: " + analysisResult.index.artifactSha256.take(16) + "…",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     if (summary != null) {
@@ -182,6 +184,18 @@ fun AutoModScreen(
         error?.let { message ->
             item {
                 Text(message, color = MaterialTheme.colorScheme.error)
+            }
+        }
+
+        confirmationNote?.let { message ->
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Text(
+                        message,
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         }
 
