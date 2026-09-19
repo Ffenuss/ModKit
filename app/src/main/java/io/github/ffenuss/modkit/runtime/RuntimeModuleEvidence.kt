@@ -83,6 +83,16 @@ object RuntimeModuleMappingResolver {
                 reason = "Module name resolves to multiple mapped paths.",
             )
         }
+        val mappedFileIdentities = moduleRegions
+            .map { Triple(it.device, it.inode, it.path) }
+            .distinct()
+        if (mappedFileIdentities.size != 1) {
+            return blocked(
+                moduleName = moduleName,
+                mappedPath = mappedPaths.single(),
+                reason = "Module maps belong to multiple device/inode identities.",
+            )
+        }
         if (loadSegments.isEmpty()) {
             return blocked(
                 moduleName = moduleName,
@@ -137,7 +147,7 @@ object RuntimeModuleMappingResolver {
         }
 
         val strong = candidates.filter { candidate ->
-            candidate.segmentIndexes.size >= minOf(2, loadSegments.size) &&
+            candidate.segmentIndexes.size >= 2 &&
                 candidate.executableSegmentIndexes.isNotEmpty() &&
                 candidate.zeroOffsetMatched
         }
