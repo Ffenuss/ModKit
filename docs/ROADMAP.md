@@ -28,8 +28,12 @@ Status: **ACTIVE**
 - [x] Responsive cancellation for current FAST work
 - [x] Interrupted-run detection after process/device restart
 - [x] Restart same file/package target from interrupted state
-- [ ] Persist/reuse completed partial engine outputs after restart
-- [ ] Content-addressed engine cache
+- [x] Persist/reuse completed migrated engine outputs after restart
+- [x] Content-addressed engine cache keyed by `artifactSHA + engineID + engineVersion`
+- [x] Reuse cached ArtifactIndex before repeating archive-entry probes
+- [x] Preserve already produced partial results when analysis is cancelled
+
+Current cache coverage: `artifact.fast-index`, `il2cpp.fast-dump`, and `il2cpp.codegen-bind`. Every newly migrated engine must define and bump its own cache version when output semantics change.
 
 ## Phase 2 — IL2CPP fast path
 - [x] Immediate validated global-metadata.dat + libil2cpp.so pair detection
@@ -47,7 +51,8 @@ Status: **ACTIVE**
 - [x] IL2CPP EXACT_METADATA → EXACT_BINARY proof transitions
 - [x] Initial fail-closed blocker model for CHANGE_READY
 - [x] Reject CHANGE_READY when required proof/preflight is missing
-- [ ] SHA-bound binding invalidation
+- [x] Current IL2CPP non-ready states expose an explicit next-transition blocker
+- [ ] SHA-bound binding invalidation across the full Evidence Graph
 - [ ] Runtime-confirmed transition
 
 ## Phase 4 — AutoMod / Patch Lab
