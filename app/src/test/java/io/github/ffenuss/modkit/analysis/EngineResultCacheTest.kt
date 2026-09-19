@@ -88,6 +88,45 @@ class EngineResultCacheTest {
         }
     }
 
+
+
+    @Test
+    fun reusesArtifactIndexOnlyForSameArtifactKey() {
+        val root = Files.createTempDirectory("modkit-index-cache").toFile()
+        try {
+            val index = ArtifactIndex(
+                artifactSha256 = "index-sha",
+                sources = listOf(ArtifactSource("base.apk", 123, "source-sha")),
+                entries = listOf(
+                    ArtifactEntry(
+                        container = "base.apk",
+                        path = "classes.dex",
+                        size = 42,
+                        format = BinaryFormat.DEX,
+                        tags = setOf("dex_candidate", "dex_valid"),
+                    ),
+                ),
+                detectedAbis = setOf("arm64-v8a"),
+                runtimeProfiles = listOf(
+                    RuntimeProfile(
+                        runtimeId = "android_dex",
+                        title = "Android DEX",
+                        status = DetectionStatus.CONFIRMED,
+                        confidence = DetectionConfidence.HIGH,
+                        evidence = listOf("base.apk:classes.dex"),
+                    ),
+                ),
+            )
+            val cache = EngineResultCache(File(root, "cache"))
+
+            assertTrue(cache.saveArtifactIndex("index-sha", index))
+            assertEquals(index, cache.loadArtifactIndex("index-sha"))
+            assertNull(cache.loadArtifactIndex("other-sha"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun metadataModel() = Il2CppMetadataModel(
         sizeBytes = 1024,
         magicValid = true,
