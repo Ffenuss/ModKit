@@ -35,7 +35,7 @@ Status: **ACTIVE**
 - [x] Reuse cached ArtifactIndex before repeating archive-entry probes
 - [x] Preserve already produced partial results when analysis is cancelled
 
-Current cache coverage: `artifact.fast-index`, `elf.universal-inventory`, `il2cpp.fast-dump`, `il2cpp.codegen-bind`, and `runtime.evidence`. Every newly migrated engine must define and bump its own cache version when output semantics change.
+Current cache coverage: `artifact.fast-index`, `elf.universal-inventory`, `il2cpp.fast-dump`, `il2cpp.codegen-bind`, `runtime.evidence`, and `runtime.stage-attempts`. Every newly migrated engine must define and bump its own cache version when output semantics change.
 
 ## Phase 2 — IL2CPP fast path
 - [x] Immediate validated global-metadata.dat + libil2cpp.so pair detection
@@ -119,6 +119,8 @@ Status: **ACTIVE**
 - [x] Non-root installed-app process discovery with exact `/proc/<pid>/cmdline` identity proof
 - [x] PID-reuse guard by rechecking process identity before and after bounded maps capture
 - [x] Automatic non-root maps capture/integration when the main process is uniquely confirmed and readable
+- [x] SHA-bound bounded runtime-stage attempt ledger restored into Expert Lab sessions
+- [x] Non-root success/blocker attempts feed root-last-resort decisions
 - [ ] Automatic in-process capture from a transparent repacked test runtime
 - [x] Bounded runtime memory-ELF validation for special/deleted executable mappings without proof escalation
 - [ ] JNI/dlsym runtime confirmation where static evidence is insufficient
