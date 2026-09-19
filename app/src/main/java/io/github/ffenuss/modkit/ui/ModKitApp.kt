@@ -19,6 +19,7 @@ import io.github.ffenuss.modkit.ui.screens.AnalysisScreen
 import io.github.ffenuss.modkit.ui.screens.ExpertLabScreen
 import io.github.ffenuss.modkit.ui.screens.InstalledAppsScreen
 import io.github.ffenuss.modkit.ui.screens.RecoveryScreen
+import io.github.ffenuss.modkit.ui.screens.RestoringPartialScreen
 import io.github.ffenuss.modkit.ui.screens.TargetSelectionScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -58,6 +59,8 @@ fun ModKitApp() {
             onOpenPartial = { AnalysisManager.openInterruptedPartial() },
             onDelete = { AnalysisManager.dismissInterrupted() },
         )
+
+        is AnalysisRunState.RestoringPartial -> RestoringPartialScreen(state = state)
 
         is AnalysisRunState.RecoveredPartial -> AnalysisScreen(
             title = state.target.label,
