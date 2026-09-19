@@ -33,6 +33,10 @@ class RepackedTestRuntimeTest {
                 plan.registeredCapabilities,
         )
         assertTrue(
+            RepackedRuntimeCapability.MANIFEST_IDENTITY_INSPECTION in
+                plan.registeredCapabilities,
+        )
+        assertTrue(
             RepackedRuntimeCapability.OLD_SIGNATURE_REMOVAL in
                 plan.registeredCapabilities,
         )
