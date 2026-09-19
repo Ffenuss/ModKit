@@ -64,7 +64,9 @@ data class RepackedTestRuntimePlan(
  *
  * This planner never claims availability from design intent. A capability is
  * usable only when its concrete executor is supplied by the caller/registry.
- * The current clean implementation registers only SOURCE_COPY.
+ * Registered capabilities below correspond to concrete executors already
+ * present in the clean repository. Instrumentation/launch/capture remain
+ * unavailable until their executors exist.
  */
 object RepackedTestRuntimePlanner {
     val requiredCapabilities: Set<RepackedRuntimeCapability> = setOf(
@@ -82,7 +84,15 @@ object RepackedTestRuntimePlanner {
     )
 
     val currentlyRegisteredCapabilities: Set<RepackedRuntimeCapability> =
-        setOf(RepackedRuntimeCapability.SOURCE_COPY)
+        setOf(
+            RepackedRuntimeCapability.SOURCE_COPY,
+            RepackedRuntimeCapability.OLD_SIGNATURE_REMOVAL,
+            RepackedRuntimeCapability.APK_ALIGNMENT,
+            RepackedRuntimeCapability.APK_SIGNING,
+            RepackedRuntimeCapability.PACKAGE_VERIFY,
+            RepackedRuntimeCapability.REPORT_WRITE,
+            RepackedRuntimeCapability.CLEANUP,
+        )
 
     fun plan(
         result: FastAnalysisResult,
