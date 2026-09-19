@@ -48,6 +48,7 @@ fun AutoModScreen(
     var progress by remember(result.index.artifactSha256) { mutableStateOf<EngineProgress?>(null) }
     var plan by remember(result.index.artifactSha256) { mutableStateOf<PatchPreparationPlan?>(null) }
     var confirmationNote by remember(result.index.artifactSha256) { mutableStateOf<String?>(null) }
+    var showManualPatch by remember(result.index.artifactSha256) { mutableStateOf(false) }
     var error by remember(result.index.artifactSha256) { mutableStateOf<String?>(null) }
     var cancellation by remember(result.index.artifactSha256) {
         mutableStateOf<AtomicCancellationSignal?>(null)
@@ -252,6 +253,31 @@ fun AutoModScreen(
                             Text(it, style = MaterialTheme.typography.bodySmall)
                         }
                     }
+                }
+            }
+
+            item {
+                OutlinedButton(
+                    onClick = { showManualPatch = !showManualPatch },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        if (showManualPatch) {
+                            "Скрыть ручной Patch Lab"
+                        } else {
+                            "Ручной Patch Lab"
+                        },
+                    )
+                }
+            }
+
+            if (showManualPatch) {
+                item {
+                    ManualNativePatchSection(
+                        target = target,
+                        analysis = analysisResult,
+                        preparation = prepared,
+                    )
                 }
             }
         }
