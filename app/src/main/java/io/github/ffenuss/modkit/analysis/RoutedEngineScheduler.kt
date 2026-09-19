@@ -46,6 +46,14 @@ object RoutedEngineScheduler {
 
         for (engine in engines) {
             if (cancellation.isCancelled()) throw AnalysisCancelledException()
+            if (
+                engine.scheduleClass == EngineScheduleClass.CONFIRMATION &&
+                result.confirmationQueue.none { request ->
+                    request.engineId == engine.id && request.availableNow
+                }
+            ) {
+                continue
+            }
             val engineCancellation = object : CancellationSignal {
                 override fun isCancelled(): Boolean =
                     cancellation.isCancelled() || skipController.isRequested(engine.id)
