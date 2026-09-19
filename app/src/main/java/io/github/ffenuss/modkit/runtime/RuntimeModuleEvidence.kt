@@ -41,6 +41,9 @@ data class RuntimeEvidenceBundle(
     val moduleMappings: List<RuntimeModuleMappingEvidence>,
     val addressConfirmations: List<RuntimeAddressConfirmation>,
     val blockers: List<String>,
+    val captureSource: ProcMapsCaptureSource = ProcMapsCaptureSource.IMPORTED_SNAPSHOT,
+    val capturePid: Int? = null,
+    val capturedAtEpochMs: Long? = null,
 )
 
 /**
@@ -223,9 +226,27 @@ object RuntimeModuleEvidenceCollector {
         moduleName: String,
         procMapsText: String,
         cancellation: CancellationSignal,
+    ): RuntimeEvidenceBundle =
+        collect(
+            artifactSha256 = artifactSha256,
+            moduleFile = moduleFile,
+            moduleName = moduleName,
+            capture = ProcMapsCaptureReader.imported(procMapsText),
+            cancellation = cancellation,
+        )
+
+    fun collect(
+        artifactSha256: String,
+        moduleFile: File,
+        moduleName: String,
+        capture: ProcMapsCapture,
+        cancellation: CancellationSignal,
     ): RuntimeEvidenceBundle {
         if (cancellation.isCancelled()) throw AnalysisCancelledException()
-        val regions = ProcMapsParser.parse(procMapsText)
+        require(!capture.truncated) {
+            "Truncated process maps cannot be used as exact runtime evidence."
+        }
+        val regions = ProcMapsParser.parse(capture.text)
         val mapping = ElfImage.open(moduleFile, cancellation).use { elf ->
             RuntimeModuleMappingResolver.resolve(
                 moduleName = moduleName,
@@ -235,17 +256,15 @@ object RuntimeModuleEvidenceCollector {
         }
         return RuntimeEvidenceBundle(
             artifactSha256 = artifactSha256,
-            procMapsSha256 = sha256(procMapsText.toByteArray(Charsets.UTF_8)),
+            procMapsSha256 = capture.sha256,
             moduleMappings = listOf(mapping),
             addressConfirmations = emptyList(),
             blockers = mapping.blockers,
+            captureSource = capture.source,
+            capturePid = capture.pid,
+            capturedAtEpochMs = capture.capturedAtEpochMs,
         )
     }
-
-    private fun sha256(bytes: ByteArray): String =
-        MessageDigest.getInstance("SHA-256")
-            .digest(bytes)
-            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 }
 
 /**
