@@ -10,6 +10,8 @@ import io.github.ffenuss.modkit.runtime.RepackedRuntimeBuildCoordinator
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeBuildResult
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeEvidenceCapture
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstrumentationCoordinator
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeNativeLookupCoordinator
+import io.github.ffenuss.modkit.runtime.RuntimeNativeLookupGraphAnnotator
 import io.github.ffenuss.modkit.runtime.ProcMemRuntimeMemoryReader
 import io.github.ffenuss.modkit.runtime.RuntimeMemoryElfValidator
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceBundle
@@ -41,6 +43,7 @@ data class ExpertLabSession(
     val temporaryFiles: List<File>,
     val packageName: String? = null,
     val repackedRuntimeBuild: RepackedRuntimeBuildResult? = null,
+    val repackedNativeRuntimeBuild: RepackedRuntimeBuildResult? = null,
 ) : AutoCloseable {
     override fun close() {
         temporaryFiles.forEach(File::delete)
@@ -411,6 +414,116 @@ object ExpertLabSessionController {
 
         return session.copy(
             repackedRuntimeBuild = build,
+        )
+    }
+
+    suspend fun buildRepackedNativeLookupRuntime(
+        context: Context,
+        session: ExpertLabSession,
+        cancellation: CancellationSignal,
+        progress: ProgressSink,
+    ): ExpertLabSession {
+        require(
+            session.result.index.entries.any {
+                it.format == BinaryFormat.ELF ||
+                    it.path.lowercase().endsWith(".so")
+            },
+        ) {
+            "Current target contains no indexed native ELF module for runtime lookup."
+        }
+
+        val outputRoot = File(
+            context.filesDir,
+            "expert-lab-results",
+        )
+        val build = withContext(Dispatchers.IO) {
+            val instrumentation =
+                RepackedRuntimeInstrumentationCoordinator
+                    .instrumentNativeLookup(
+                        context = context,
+                        workspace = session.workspace,
+                        outputRoot = outputRoot,
+                        cancellation = cancellation,
+                    )
+            RepackedRuntimeBuildCoordinator
+                .buildNativeProbeInjected(
+                    context = context,
+                    manifestInventory =
+                        instrumentation.base.manifestInventory,
+                    injection =
+                        instrumentation.nativeProbeInjection,
+                    outputRoot = outputRoot,
+                    cancellation = cancellation,
+                    progress = progress,
+                )
+        }
+        require(
+            build.artifactSha256.equals(
+                session.result.index.artifactSha256,
+                ignoreCase = true,
+            ),
+        ) {
+            "Native lookup test build artifact SHA does not match the active Expert Lab target."
+        }
+        return session.copy(
+            repackedNativeRuntimeBuild = build,
+        )
+    }
+
+    suspend fun integrateRepackedNativeLookup(
+        context: Context,
+        session: ExpertLabSession,
+        moduleName: String,
+        symbolName: String,
+        cancellation: CancellationSignal,
+    ): ExpertLabSession {
+        val build =
+            requireNotNull(session.repackedNativeRuntimeBuild) {
+                "Build the native lookup test APK before targeted runtime lookup."
+            }
+        require(
+            build.artifactSha256.equals(
+                session.result.index.artifactSha256,
+                ignoreCase = true,
+            ),
+        ) {
+            "Native lookup test build is stale for the active target SHA."
+        }
+
+        val execution = withContext(Dispatchers.IO) {
+            RepackedRuntimeNativeLookupCoordinator.execute(
+                build = build,
+                workspace = session.workspace,
+                moduleName = moduleName,
+                symbolName = symbolName,
+                transport =
+                    AndroidRepackedRuntimeProbeTransport(context),
+                tempRoot = File(
+                    context.cacheDir,
+                    "expert-lab-native-lookup",
+                ),
+                cancellation = cancellation,
+            )
+        }
+        val integrated = RuntimeEvidenceIntegrator.integrate(
+            result = session.result,
+            evidence = execution.attachedEvidence,
+            procMapsText = execution.mapsCapture.maps.text,
+        )
+        val annotated = RuntimeNativeLookupGraphAnnotator.annotate(
+            result = integrated,
+            moduleName = moduleName,
+            symbolName = symbolName,
+            validation = execution.lookup.validation,
+        )
+        val persisted = persistRuntimeEvidence(
+            context = context,
+            session = session,
+            integrated = annotated,
+            fallbackEvidence = execution.attachedEvidence,
+        )
+        return persisted.copy(
+            repackedNativeRuntimeBuild = build,
         )
     }
 
