@@ -236,7 +236,7 @@ object ExpertLabReportWriter {
 
             result.runtimeEvidence?.let { runtime ->
                 appendLine("RUNTIME EVIDENCE")
-                appendLine("engineVersion: runtime.evidence/2")
+                appendLine("engineVersion: runtime.evidence/3")
                 appendLine("artifactSha256: " + runtime.artifactSha256)
                 appendLine("procMapsSha256: " + runtime.procMapsSha256)
                 appendLine("captureSource: " + runtime.captureSource.name)
@@ -375,10 +375,75 @@ object ExpertLabReportWriter {
                         "  path: " +
                             (candidate.path ?: "anonymous_or_special_mapping"),
                     )
+                    appendLine(
+                        "  fileOffset: 0x" +
+                            candidate.fileOffset.toString(16),
+                    )
+                    appendLine(
+                        "  fileZeroAddressCandidate: 0x" +
+                            candidate.fileZeroAddressCandidate.toString(16),
+                    )
                     appendLine("  reason: " + candidate.reason)
                     appendLine(
                         "  status: candidate_only_until_memory_ELF_header_validation",
                     )
+                }
+                appendLine("MEMORY-BACKED ELF VALIDATION")
+                runtime.memoryElfEvidence.forEach { memoryElf ->
+                    appendLine(
+                        "- headerAddress: 0x" +
+                            memoryElf.headerAddress.toString(16),
+                    )
+                    appendLine("  status: " + memoryElf.status.name)
+                    appendLine("  validated: " + memoryElf.validated)
+                    appendLine(
+                        "  path: " +
+                            (memoryElf.candidatePath
+                                ?: "anonymous_or_special_mapping"),
+                    )
+                    appendLine(
+                        "  class: " +
+                            when (memoryElf.is64Bit) {
+                                true -> "ELF64"
+                                false -> "ELF32"
+                                null -> "not_resolved"
+                            },
+                    )
+                    appendLine(
+                        "  machine: " +
+                            (memoryElf.machine?.toString() ?: "not_resolved"),
+                    )
+                    appendLine(
+                        "  elfType: " +
+                            (memoryElf.elfType?.toString() ?: "not_resolved"),
+                    )
+                    appendLine(
+                        "  programHeaders: " +
+                            (memoryElf.programHeaderCount?.toString()
+                                ?: "not_resolved"),
+                    )
+                    appendLine(
+                        "  loadSegments: " +
+                            memoryElf.loadSegmentCount,
+                    )
+                    appendLine(
+                        "  executableLoadSegments: " +
+                            memoryElf.executableLoadSegmentCount,
+                    )
+                    appendLine(
+                        "  candidateExecutableSegmentMatched: " +
+                            memoryElf.executableCandidateSegmentMatched,
+                    )
+                    appendLine(
+                        "  headerSha256: " +
+                            (memoryElf.headerSha256 ?: "not_readable"),
+                    )
+                    appendLine(
+                        "  bytesRead: " + memoryElf.bytesRead,
+                    )
+                    memoryElf.blockers.forEach {
+                        appendLine("  blocker: " + it)
+                    }
                 }
                 runtime.blockers.forEach {
                     appendLine("runtime-blocker: " + it)
