@@ -186,6 +186,27 @@ fun AnalysisScreen(
                         }
                     }
 
+                    if (result.engineCacheHits.isNotEmpty()) {
+                        item {
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(
+                                    Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text("Переиспользовано", fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        result.engineCacheHits.sorted().joinToString(),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Text(
+                                        "Результаты привязаны к SHA цели и версии движка.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     items(result.index.runtimeProfiles, key = { it.runtimeId }) { runtime ->
                         Card(Modifier.fillMaxWidth()) {
                             Column(
