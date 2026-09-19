@@ -30,6 +30,7 @@ import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.AutoModPreparationCoordinator
+import io.github.ffenuss.modkit.patch.MutationApplyOutcome
 import io.github.ffenuss.modkit.patch.PatchPreparationPlan
 import io.github.ffenuss.modkit.patch.PreparationTargetStatus
 import kotlinx.coroutines.launch
@@ -49,6 +50,9 @@ fun AutoModScreen(
     var plan by remember(result.index.artifactSha256) { mutableStateOf<PatchPreparationPlan?>(null) }
     var confirmationNote by remember(result.index.artifactSha256) { mutableStateOf<String?>(null) }
     var showManualPatch by remember(result.index.artifactSha256) { mutableStateOf(false) }
+    var stagingOutcome by remember(result.index.artifactSha256) {
+        mutableStateOf<MutationApplyOutcome?>(null)
+    }
     var error by remember(result.index.artifactSha256) { mutableStateOf<String?>(null) }
     var cancellation by remember(result.index.artifactSha256) {
         mutableStateOf<AtomicCancellationSignal?>(null)
@@ -277,6 +281,9 @@ fun AutoModScreen(
                         target = target,
                         analysis = analysisResult,
                         preparation = prepared,
+                        onStagingReady = { outcome ->
+                            stagingOutcome = outcome
+                        },
                     )
                 }
             }
@@ -304,6 +311,8 @@ fun AutoModScreen(
                 when {
                     plan == null ->
                         "Сначала выполните подготовку изменений."
+                    stagingOutcome?.applied == true ->
+                        "Staging APK готов. Следующий обязательный этап: align → sign → verify."
                     plan?.automaticApplyAllowed != true ->
                         "Сборка остаётся заблокированной, пока нет изменений, полностью готовых к безопасному применению."
                     else ->
