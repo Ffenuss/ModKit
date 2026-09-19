@@ -73,6 +73,20 @@ class RepackedTestRuntimeTest {
             },
         )
         assertTrue(
+            RepackedRuntimeCapability.TEST_LAUNCH in
+                plan.registeredCapabilities,
+        )
+        assertTrue(
+            RepackedRuntimeCapability.RUNTIME_EVIDENCE_CAPTURE in
+                plan.registeredCapabilities,
+        )
+        assertFalse(
+            plan.blockers.any {
+                it.code ==
+                    "TEST_LAUNCH_NOT_REGISTERED"
+            },
+        )
+        assertFalse(
             plan.blockers.any {
                 it.code ==
                     "RUNTIME_EVIDENCE_CAPTURE_NOT_REGISTERED"
