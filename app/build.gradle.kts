@@ -1,3 +1,6 @@
+import java.io.File
+import java.util.zip.ZipFile
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -38,7 +41,7 @@ android {
         buildConfig = true
     }
 
-    sourceSets.getByName("main").assets.srcDir(runtimeProbeAssetDir)
+    sourceSets.getByName("main").assets.directories.add(runtimeProbeAssetDir.get().asFile)
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -83,14 +86,14 @@ val generateRuntimeProbeDexAsset =
 
             val output = runtimeProbeDexAsset.get().asFile
             output.parentFile.mkdirs()
-            val temp = java.io.File(
+            val temp = File(
                 output.parentFile,
                 output.name + ".tmp",
             )
             temp.delete()
             output.delete()
 
-            java.util.zip.ZipFile(payloadApk).use { zip ->
+            ZipFile(payloadApk).use { zip ->
                 val dex = checkNotNull(zip.getEntry("classes.dex")) {
                     "Runtime probe APK has no classes.dex."
                 }
@@ -101,13 +104,15 @@ val generateRuntimeProbeDexAsset =
                 }
             }
 
-            val magic = temp.inputStream().use { input ->
-                input.readNBytes(4)
+            val magic = ByteArray(4)
+            val magicBytesRead = temp.inputStream().use { input ->
+                input.read(magic)
             }
             check(
-                magic.contentEquals(
-                    byteArrayOf(0x64, 0x65, 0x78, 0x0a),
-                ),
+                magicBytesRead == 4 &&
+                    magic.contentEquals(
+                        byteArrayOf(0x64, 0x65, 0x78, 0x0a),
+                    ),
             ) {
                 "Generated runtime probe payload is not a DEX file."
             }
