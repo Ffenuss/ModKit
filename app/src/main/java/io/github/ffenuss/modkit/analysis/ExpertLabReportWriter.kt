@@ -257,6 +257,22 @@ object ExpertLabReportWriter {
                             address.executableMappingContainsAddress,
                     )
                 }
+                appendLine("RUNTIME MODULE INVENTORY")
+                runtime.moduleInventory.forEach { module ->
+                    appendLine("- " + module.path)
+                    appendLine("  fileName: " + module.fileName)
+                    appendLine("  device: " + module.device)
+                    appendLine("  inode: " + module.inode)
+                    appendLine("  regions: " + module.regionCount)
+                    appendLine("  executableRegions: " + module.executableRegionCount)
+                    appendLine(
+                        "  staticArtifactMatch: " +
+                            module.presentInStaticArtifact,
+                    )
+                    module.staticArtifactMatches.forEach {
+                        appendLine("  static: " + it)
+                    }
+                }
                 runtime.blockers.forEach {
                     appendLine("runtime-blocker: " + it)
                 }
