@@ -49,8 +49,9 @@ class RepackedRuntimeReportTest {
             assertTrue(text.contains("PACKAGE_VERIFY"))
             assertTrue(text.contains("REPORT_WRITE"))
             assertTrue(text.contains("CLEANUP"))
+            assertTrue(text.contains("BINARY_MANIFEST_REWRITE"))
             assertTrue(
-                text.contains(
+                !text.contains(
                     "BINARY_MANIFEST_REWRITE_NOT_REGISTERED",
                 ),
             )
