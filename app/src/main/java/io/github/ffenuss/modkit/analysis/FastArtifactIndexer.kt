@@ -22,21 +22,18 @@ object FastArtifactIndexer {
         progress: ProgressSink,
         knownSha256: Map<String, String> = emptyMap(),
         limits: Limits = Limits(),
+        cache: EngineResultCache? = null,
     ): FastAnalysisResult {
         require(files.isNotEmpty()) { "No target files" }
         val started = System.currentTimeMillis()
         val sources = ArrayList<ArtifactSource>(files.size)
-        val entries = ArrayList<ArtifactEntry>()
-        val warnings = mutableListOf<String>()
-        val abis = linkedSetOf<String>()
-        var truncated = false
 
         progress.publish(
             EngineProgress(
                 engineId = "artifact.fast-index",
                 scheduleClass = EngineScheduleClass.FAST,
                 state = RunState.RUNNING,
-                currentTask = "Инвентаризация входа",
+                currentTask = "SHA-привязка входа",
                 processed = 0,
                 total = files.size.toLong(),
                 lastHeartbeatEpochMs = System.currentTimeMillis(),
@@ -51,8 +48,72 @@ object FastArtifactIndexer {
                 ?.takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
                 ?.lowercase()
                 ?: sha256(file, cancellation, progress)
-            sources += ArtifactSource(file.name, file.length(), sha)
 
+            sources += ArtifactSource(
+                displayName = file.name,
+                size = file.length(),
+                sha256 = sha,
+            )
+
+            progress.publish(
+                EngineProgress(
+                    engineId = "artifact.fast-index",
+                    scheduleClass = EngineScheduleClass.FAST,
+                    state = RunState.RUNNING,
+                    currentTask = "SHA входа подтверждён",
+                    currentArtifact = file.name,
+                    processed = (fileIndex + 1).toLong(),
+                    total = files.size.toLong(),
+                    lastHeartbeatEpochMs = System.currentTimeMillis(),
+                ),
+            )
+        }
+
+        val setSha = artifactSha256(sources)
+        val cachedIndex = cache
+            ?.loadArtifactIndex(setSha)
+            ?.takeIf { it.sources == sources }
+
+        if (cachedIndex != null) {
+            progress.publish(
+                EngineProgress(
+                    engineId = "artifact.fast-index",
+                    scheduleClass = EngineScheduleClass.FAST,
+                    state = RunState.COMPLETED,
+                    currentTask = "Быстрый индекс восстановлен из content-addressed cache",
+                    currentArtifact = setSha.take(16),
+                    processed = cachedIndex.entries.size.toLong(),
+                    total = cachedIndex.entries.size.toLong(),
+                    lastHeartbeatEpochMs = System.currentTimeMillis(),
+                ),
+            )
+            return FastAnalysisResult(
+                index = cachedIndex,
+                routingPlan = EngineRouter.plan(cachedIndex),
+                elapsedMs = System.currentTimeMillis() - started,
+                engineCacheHits = setOf(EngineResultCache.ARTIFACT_INDEX_ENGINE_ID),
+            )
+        }
+
+        val entries = ArrayList<ArtifactEntry>()
+        val warnings = mutableListOf<String>()
+        val abis = linkedSetOf<String>()
+        var truncated = false
+
+        progress.publish(
+            EngineProgress(
+                engineId = "artifact.fast-index",
+                scheduleClass = EngineScheduleClass.FAST,
+                state = RunState.RUNNING,
+                currentTask = "Инвентаризация archive entries",
+                processed = 0,
+                total = files.size.toLong(),
+                lastHeartbeatEpochMs = System.currentTimeMillis(),
+            ),
+        )
+
+        for ((fileIndex, file) in files.withIndex()) {
+            checkCancelled(cancellation)
             val fileProbe = readProbe(file, limits.probeBytes)
             if (isZip(fileProbe)) {
                 runCatching {
@@ -152,7 +213,38 @@ object FastArtifactIndexer {
             profile.evidence.mapNotNull(::abiFromEvidence)
         }
 
-        val setSha = if (sources.size == 1) {
+        val index = ArtifactIndex(
+            artifactSha256 = setSha,
+            sources = sources,
+            entries = entries,
+            detectedAbis = abis,
+            runtimeProfiles = runtimeProfiles,
+            truncated = truncated,
+            warnings = warnings.distinct(),
+        )
+
+        cache?.saveArtifactIndex(setSha, index)
+
+        progress.publish(
+            EngineProgress(
+                engineId = "artifact.fast-index",
+                scheduleClass = EngineScheduleClass.FAST,
+                state = RunState.COMPLETED,
+                currentTask = "Быстрый индекс готов",
+                processed = entries.size.toLong(),
+                total = entries.size.toLong(),
+                lastHeartbeatEpochMs = System.currentTimeMillis(),
+            ),
+        )
+        return FastAnalysisResult(
+            index = index,
+            routingPlan = EngineRouter.plan(index),
+            elapsedMs = System.currentTimeMillis() - started,
+        )
+    }
+
+    private fun artifactSha256(sources: List<ArtifactSource>): String =
+        if (sources.size == 1) {
             sources.single().sha256
         } else {
             val digest = MessageDigest.getInstance("SHA-256")
@@ -166,30 +258,6 @@ object FastArtifactIndexer {
             }
             digest.digest().toHex()
         }
-
-        val index = ArtifactIndex(
-            artifactSha256 = setSha,
-            sources = sources,
-            entries = entries,
-            detectedAbis = abis,
-            runtimeProfiles = runtimeProfiles,
-            truncated = truncated,
-            warnings = warnings.distinct(),
-        )
-
-        progress.publish(
-            EngineProgress(
-                engineId = "artifact.fast-index",
-                scheduleClass = EngineScheduleClass.FAST,
-                state = RunState.COMPLETED,
-                currentTask = "Быстрый индекс готов",
-                processed = entries.size.toLong(),
-                total = entries.size.toLong(),
-                lastHeartbeatEpochMs = System.currentTimeMillis(),
-            ),
-        )
-        return FastAnalysisResult(index, EngineRouter.plan(index), System.currentTimeMillis() - started)
-    }
 
     private data class Classification(
         val format: BinaryFormat,
