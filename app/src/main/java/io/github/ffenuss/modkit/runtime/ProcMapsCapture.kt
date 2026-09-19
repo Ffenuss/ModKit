@@ -68,6 +68,21 @@ object ProcMapsCaptureReader {
         )
     }
 
+    internal fun fromFile(
+        file: File,
+        source: ProcMapsCaptureSource,
+        pid: Int?,
+        cancellation: CancellationSignal,
+        maxBytes: Int = DEFAULT_MAX_BYTES,
+    ): ProcMapsCapture =
+        readFile(
+            file = file,
+            source = source,
+            pid = pid,
+            cancellation = cancellation,
+            maxBytes = maxBytes,
+        )
+
     private fun readFile(
         file: File,
         source: ProcMapsCaptureSource,
