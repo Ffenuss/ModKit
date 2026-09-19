@@ -28,6 +28,7 @@ import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
+import io.github.ffenuss.modkit.build.BuildArtifactExporter
 import io.github.ffenuss.modkit.build.VerifiedBuildPipeline
 import io.github.ffenuss.modkit.build.VerifiedBuildResult
 import io.github.ffenuss.modkit.domain.EngineProgress
@@ -394,6 +395,32 @@ fun AutoModScreen(
                             "Mutation diff: подтверждён · файлов: " + built.files.size,
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        val post = built.postBuildAnalysis
+                        Text(
+                            "Повторный анализ: runtime " +
+                                post.index.runtimeProfiles.size +
+                                " · подтверждений " +
+                                (post.evidenceGraph?.targets?.size ?: 0),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                runCatching {
+                                    BuildArtifactExporter.share(context, built)
+                                }.onFailure { failure ->
+                                    error = failure.message ?: failure.javaClass.simpleName
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (built.files.size == 1) {
+                                    "Экспортировать APK"
+                                } else {
+                                    "Экспортировать APK-set"
+                                },
+                            )
+                        }
                     }
                 }
             }
