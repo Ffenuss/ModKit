@@ -47,6 +47,8 @@ data class RuntimeEvidenceBundle(
     val captureSource: ProcMapsCaptureSource = ProcMapsCaptureSource.IMPORTED_SNAPSHOT,
     val capturePid: Int? = null,
     val capturedAtEpochMs: Long? = null,
+    val processIdentity: String? = null,
+    val processIdentityConfirmed: Boolean = false,
     val additionalObservations: List<RuntimeEvidenceObservation> = emptyList(),
 ) : Serializable
 
