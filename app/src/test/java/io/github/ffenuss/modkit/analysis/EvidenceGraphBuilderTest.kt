@@ -130,7 +130,7 @@ class EvidenceGraphBuilderTest {
         ).withEvidenceGraph()
 
         val target = requireNotNull(result.evidenceGraph).targets.single()
-        assertEquals(UserFindingStatus.COULD_NOT_CONFIRM, target.userStatus)
+        assertEquals(UserFindingStatus.RUNTIME_REQUIRED, target.userStatus)
         assertEquals(blocker.code, target.blockers.single().code)
 
         val request = result.confirmationQueue.single()
