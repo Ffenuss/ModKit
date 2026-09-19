@@ -1,12 +1,14 @@
 package io.github.ffenuss.modkit.runtime
 
+import java.io.Serializable
+
 data class RuntimeMemoryMappingCandidate(
     val start: Long,
     val endExclusive: Long,
     val permissions: String,
     val path: String?,
     val reason: String,
-) {
+) : Serializable {
     val size: Long get() = endExclusive - start
 }
 
