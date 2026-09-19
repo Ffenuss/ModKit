@@ -236,7 +236,7 @@ object ExpertLabReportWriter {
 
             result.runtimeEvidence?.let { runtime ->
                 appendLine("RUNTIME EVIDENCE")
-                appendLine("engineVersion: runtime.evidence/1")
+                appendLine("engineVersion: runtime.evidence/2")
                 appendLine("artifactSha256: " + runtime.artifactSha256)
                 appendLine("procMapsSha256: " + runtime.procMapsSha256)
                 appendLine("captureSource: " + runtime.captureSource.name)
@@ -255,6 +255,14 @@ object ExpertLabReportWriter {
                 appendLine(
                     "capturedAtEpochMs: " +
                         (runtime.capturedAtEpochMs?.toString() ?: "not_recorded"),
+                )
+                appendLine(
+                    "processIdentity: " +
+                        (runtime.processIdentity ?: "not_confirmed"),
+                )
+                appendLine(
+                    "processIdentityConfirmed: " +
+                        runtime.processIdentityConfirmed,
                 )
                 runtime.moduleMappings.forEach { mapping ->
                     val firstBlocker = mapping.blockers.firstOrNull()
