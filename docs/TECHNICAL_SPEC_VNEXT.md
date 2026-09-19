@@ -1477,7 +1477,7 @@ Require target SHA validation.
 
 For every finished layer:
 
-1. commit to `Modkit1`;
+1. commit to the current development branch in `Ffenuss/ModKit` (currently `main`);
 2. canonical GitHub Actions run;
 3. source hygiene;
 4. Python/runtime tests;
@@ -1493,7 +1493,7 @@ For every finished layer:
 
 Do not treat a run as green because only early tests passed.
 
-Do not modify or merge `main` without explicit instruction.
+Do not merge unrelated legacy branches into the clean ModKit repository. Migrate only reviewed components that satisfy this specification.
 
 ---
 
