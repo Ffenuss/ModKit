@@ -19,11 +19,11 @@ import org.junit.Test
 
 class RepackedTestRuntimeTest {
     @Test
-    fun defaultPlanIsFailClosedUntilConcreteExecutorsAreRegistered() {
+    fun defaultPlanIsReadyOnlyBecauseEveryConcreteExecutorIsRegistered() {
         val plan = RepackedTestRuntimePlanner.plan(runtimeRequiredResult())
 
         assertTrue(plan.required)
-        assertFalse(plan.readyToBuildTestCopy)
+        assertTrue(plan.readyToBuildTestCopy)
         assertEquals(
             RuntimeEscalationStage.NON_ROOT_RUNTIME,
             plan.fallbackStage,
