@@ -40,6 +40,8 @@ import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.domain.EngineProgress
+import io.github.ffenuss.modkit.runtime.ProcMapsCaptureSource
+import io.github.ffenuss.modkit.runtime.RuntimeEvidenceContract
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -613,6 +615,25 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                             }
 
                             current.result.runtimeEvidence?.let { runtimeEvidence ->
+                                Text(
+                                    "Capture: " + runtimeEvidence.captureSource.name +
+                                        " · PID: " +
+                                        (runtimeEvidence.capturePid?.toString()
+                                            ?: if (
+                                                runtimeEvidence.captureSource ==
+                                                ProcMapsCaptureSource.IMPORTED_SNAPSHOT
+                                            ) {
+                                                "не подтверждён (импортированный snapshot)"
+                                            } else {
+                                                "не записан"
+                                            }),
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                Text(
+                                    "Snapshot SHA-256: " +
+                                        runtimeEvidence.procMapsSha256,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
                                 runtimeEvidence.moduleMappings.forEach { mapping ->
                                     Text(
                                         mapping.moduleName +
@@ -628,10 +649,13 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         "path: " + mapping.mappedPath,
                                         style = MaterialTheme.typography.bodySmall,
                                     )
+                                    val unresolvedReason = mapping.blockers.firstOrNull()
+                                        ?: "не удалось определить"
                                     Text(
                                         "loadBias: " +
-                                            mapping.loadBias?.let { "0x" + it.toString(16) }
-                                                .orEmpty().ifBlank { "null" } +
+                                            (mapping.loadBias?.let {
+                                                "0x" + it.toString(16)
+                                            } ?: unresolvedReason) +
                                             " · PT_LOAD: " + mapping.matchedLoadSegments +
                                             " · exec: " + mapping.matchedExecutableSegments,
                                         style = MaterialTheme.typography.bodySmall,
@@ -642,6 +666,29 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                             color = MaterialTheme.colorScheme.error,
                                             style = MaterialTheme.typography.bodySmall,
                                         )
+                                    }
+                                }
+                                val observations =
+                                    RuntimeEvidenceContract.observations(runtimeEvidence)
+                                if (observations.isNotEmpty()) {
+                                    Text(
+                                        "Runtime evidence contract",
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    observations.take(16).forEach { observation ->
+                                        Text(
+                                            "• " + observation.kind.name +
+                                                " · " + observation.strength.name +
+                                                " · " + observation.summary,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                        observation.blockers.forEach { blocker ->
+                                            Text(
+                                                "  ↳ " + blocker,
+                                                color = MaterialTheme.colorScheme.error,
+                                                style = MaterialTheme.typography.bodySmall,
+                                            )
+                                        }
                                     }
                                 }
                                 runtimeEvidence.addressConfirmations.take(12).forEach { address ->
