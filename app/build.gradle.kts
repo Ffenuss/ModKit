@@ -10,6 +10,10 @@ val runtimeProbeAssetDir =
     layout.buildDirectory.dir("generated/runtimeProbeAssets")
 val runtimeProbeDexAsset =
     runtimeProbeAssetDir.map { it.file("modkit-runtime-probe.dex") }
+val runtimeProbeNativeAssetRoot =
+    runtimeProbeAssetDir.map {
+        it.dir("modkit-runtime-probe-native")
+    }
 
 android {
     namespace = "io.github.ffenuss.modkit"
@@ -72,6 +76,7 @@ val generateRuntimeProbeDexAsset =
     tasks.register("generateRuntimeProbeDexAsset") {
         dependsOn(":runtimeprobe:assembleDebug")
         outputs.file(runtimeProbeDexAsset)
+        outputs.dir(runtimeProbeNativeAssetRoot)
 
         doLast {
             val payloadApk = project(":runtimeprobe")
@@ -143,6 +148,64 @@ val generateRuntimeProbeDexAsset =
             check(temp.renameTo(output)) {
                 temp.delete()
                 "Could not finalize runtime probe DEX asset."
+            }
+
+
+            val nativeRoot =
+                runtimeProbeNativeAssetRoot.get().asFile
+            nativeRoot.deleteRecursively()
+            nativeRoot.mkdirs()
+            val expectedAbis = listOf(
+                "arm64-v8a",
+                "armeabi-v7a",
+                "x86",
+                "x86_64",
+            )
+            val extractedAbis = mutableSetOf<String>()
+            ZipFile(payloadApk).use { zip ->
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.isDirectory) continue
+                    val match = Regex(
+                        """lib/(arm64-v8a|armeabi-v7a|x86|x86_64)/libmodkit_runtime_probe\.so""",
+                    ).matchEntire(entry.name) ?: continue
+                    val abi = match.groupValues[1]
+                    check(extractedAbis.add(abi)) {
+                        "Duplicate runtime probe native payload for $abi"
+                    }
+                    val nativeOutput = File(
+                        nativeRoot,
+                        "$abi/libmodkit_runtime_probe.so",
+                    )
+                    nativeOutput.parentFile.mkdirs()
+                    zip.getInputStream(entry).use { source ->
+                        nativeOutput.outputStream().buffered().use { target ->
+                            source.copyTo(target)
+                        }
+                    }
+                    val magic = ByteArray(4)
+                    val read = nativeOutput.inputStream().use {
+                        it.read(magic)
+                    }
+                    check(
+                        read == 4 &&
+                            magic.contentEquals(
+                                byteArrayOf(
+                                    0x7f,
+                                    0x45,
+                                    0x4c,
+                                    0x46,
+                                ),
+                            ),
+                    ) {
+                        "Runtime probe native payload for $abi is not ELF."
+                    }
+                }
+            }
+            check(extractedAbis == expectedAbis.toSet()) {
+                "Runtime probe native payload ABI set mismatch: " +
+                    extractedAbis.sorted().joinToString()
             }
         }
     }
