@@ -163,6 +163,8 @@ object RepackedRuntimeNativeLookupCapture {
                 append("0x")
                 append(reply.resolvedRuntimeAddress.toString(16))
             },
+            acquisitionMode =
+                RuntimeNativeAcquisitionMode.TARGETED_PROBE,
         )
         val validation = RuntimeNativeLookupValidator.validate(
             capture = trace,
