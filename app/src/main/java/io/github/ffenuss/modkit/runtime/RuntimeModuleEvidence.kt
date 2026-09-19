@@ -44,6 +44,7 @@ data class RuntimeEvidenceBundle(
     val blockers: List<String>,
     val moduleInventory: List<RuntimeMappedModule> = emptyList(),
     val memoryMappingCandidates: List<RuntimeMemoryMappingCandidate> = emptyList(),
+    val memoryElfEvidence: List<RuntimeMemoryElfEvidence> = emptyList(),
     val captureSource: ProcMapsCaptureSource = ProcMapsCaptureSource.IMPORTED_SNAPSHOT,
     val capturePid: Int? = null,
     val capturedAtEpochMs: Long? = null,
