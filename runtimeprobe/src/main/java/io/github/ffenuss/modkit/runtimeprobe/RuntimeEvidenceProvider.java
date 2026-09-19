@@ -48,7 +48,7 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         MatrixCursor cursor = new MatrixCursor(
                 new String[]{"schemaVersion", "packageName", "pid"}
         );
-        Context context = requireContext();
+        Context context = probeContext();
         cursor.addRow(new Object[]{1, context.getPackageName(), Process.myPid()});
         return cursor;
     }
@@ -102,7 +102,7 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
     }
 
     private void enforceCaller() {
-        Context context = requireContext();
+        Context context = probeContext();
         int uid = Binder.getCallingUid();
         String[] packages = context.getPackageManager().getPackagesForUid(uid);
         if (packages == null || !Arrays.asList(packages).contains(CALLER_PACKAGE)) {
@@ -110,7 +110,7 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         }
     }
 
-    private Context requireContext() {
+    private Context probeContext() {
         Context context = getContext();
         if (context == null) {
             throw new IllegalStateException("Runtime probe context is unavailable.");
@@ -121,7 +121,7 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
     private void writeEvidence(ParcelFileDescriptor descriptor) {
         try (ParcelFileDescriptor.AutoCloseOutputStream output =
                      new ParcelFileDescriptor.AutoCloseOutputStream(descriptor)) {
-            Context context = requireContext();
+            Context context = probeContext();
             ReadResult mapsResult =
                     readBounded(new File("/proc/self/maps"), MAX_MAPS_BYTES);
             ReadResult cmdlineResult =
