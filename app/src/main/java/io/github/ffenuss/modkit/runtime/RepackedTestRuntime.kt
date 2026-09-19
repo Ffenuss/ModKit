@@ -89,6 +89,7 @@ object RepackedTestRuntimePlanner {
         setOf(
             RepackedRuntimeCapability.SOURCE_COPY,
             RepackedRuntimeCapability.MANIFEST_IDENTITY_INSPECTION,
+            RepackedRuntimeCapability.BINARY_MANIFEST_REWRITE,
             RepackedRuntimeCapability.OLD_SIGNATURE_REMOVAL,
             RepackedRuntimeCapability.APK_ALIGNMENT,
             RepackedRuntimeCapability.APK_SIGNING,
