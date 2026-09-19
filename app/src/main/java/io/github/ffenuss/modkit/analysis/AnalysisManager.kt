@@ -44,6 +44,7 @@ object AnalysisManager {
     @Volatile private var activeJob: Job? = null
     @Volatile private var watchdogJob: Job? = null
     @Volatile private var activeSignal: AtomicCancellationSignal? = null
+    @Volatile private var activeSkipController: EngineSkipController? = null
     private var lastPersistAtMs = 0L
 
     fun initialize(context: Context) {
@@ -133,6 +134,36 @@ object AnalysisManager {
         job?.cancel(CancellationException("Cancelled by user"))
     }
 
+    fun skipStalled() {
+        synchronized(lock) {
+            val stalled = mutableState.value as? AnalysisRunState.Stalled ?: return
+            val engineId = stalled.progress?.engineId ?: return
+            if (stalled.progress?.scheduleClass == EngineScheduleClass.FAST) return
+            activeSkipController?.request(engineId)
+            val now = System.currentTimeMillis()
+            val progress = stalled.progress.copy(
+                state = RunState.RUNNING,
+                currentTask = "Пропускаем зависший движок " + engineId + "…",
+                lastHeartbeatEpochMs = now,
+            )
+            mutableState.value = AnalysisRunState.Running(
+                runId = stalled.runId,
+                target = stalled.target,
+                progress = progress,
+                startedAtEpochMs = stalled.startedAtEpochMs,
+                partialResult = stalled.partialResult,
+            )
+            persist(
+                AnalysisRunStore.RUNNING,
+                stalled.runId,
+                stalled.target,
+                progress,
+                stalled.startedAtEpochMs,
+                force = true,
+            )
+        }
+    }
+
     fun retryStalled() {
         val stalled = mutableState.value as? AnalysisRunState.Stalled ?: return
         val oldJob = activeJob
@@ -146,6 +177,7 @@ object AnalysisManager {
                 activeJob = null
                 watchdogJob = null
                 activeSignal = null
+                activeSkipController = null
             }
             start(stalled.target)
         }
@@ -171,6 +203,7 @@ object AnalysisManager {
         val runId = nextRunId.incrementAndGet()
         val startedAt = System.currentTimeMillis()
         val signal = AtomicCancellationSignal()
+        val skipController = EngineSkipController()
         val initial = EngineProgress(
             engineId = "target.prepare",
             scheduleClass = EngineScheduleClass.FAST,
@@ -181,6 +214,7 @@ object AnalysisManager {
 
         synchronized(lock) {
             activeSignal = signal
+            activeSkipController = skipController
             mutableState.value = AnalysisRunState.Running(runId, target, initial, startedAt)
             persist(AnalysisRunStore.RUNNING, runId, target, initial, startedAt, force = true)
         }
@@ -238,6 +272,7 @@ object AnalysisManager {
                     workspace = workspace,
                     outputRoot = File(context.filesDir, "analysis-results"),
                     cancellation = signal,
+                    skipController = skipController,
                     progress = progressSink,
                     onPartial = { partial -> publishPartial(runId, partial) },
                 )
@@ -281,6 +316,8 @@ object AnalysisManager {
                     ) {
                         activeJob = null
                         activeSignal = null
+                        activeSkipController?.clear()
+                        activeSkipController = null
                         watchdogJob?.cancel()
                         watchdogJob = null
                     }
