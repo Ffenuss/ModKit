@@ -61,8 +61,10 @@ class RepackedRuntimeReportTest {
                     "PROBE_PAYLOAD_INJECTION_NOT_REGISTERED",
                 ),
             )
-            assertTrue(text.contains("TEST_LAUNCH_NOT_REGISTERED"))
-            assertTrue(text.contains("RUNTIME_EVIDENCE_CAPTURE_NOT_REGISTERED"))
+            assertTrue(text.contains("TEST_LAUNCH"))
+            assertTrue(text.contains("RUNTIME_EVIDENCE_CAPTURE"))
+            assertTrue(!text.contains("TEST_LAUNCH_NOT_REGISTERED"))
+            assertTrue(!text.contains("RUNTIME_EVIDENCE_CAPTURE_NOT_REGISTERED"))
             assertTrue(text.contains("fallbackStage: NON_ROOT_RUNTIME"))
         } finally {
             root.deleteRecursively()
