@@ -42,7 +42,7 @@ class RuntimeMemoryElfTest {
     @Test
     fun elfMagicWithoutExecutablePtLoadOffsetMatchRemainsBlocked() {
         val image = elf64(
-            executableOffset = 0x2000,
+            executableOffset = 0x20000,
             programHeaderCount = 1,
         )
         val evidence = RuntimeMemoryElfValidator.validate(
