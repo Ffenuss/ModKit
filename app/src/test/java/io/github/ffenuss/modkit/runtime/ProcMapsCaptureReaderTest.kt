@@ -31,24 +31,13 @@ class ProcMapsCaptureReaderTest {
                     Charsets.UTF_8,
                 )
             }
-            val method = ProcMapsCaptureReader::class.java
-                .getDeclaredMethod(
-                    "readFile",
-                    java.io.File::class.java,
-                    ProcMapsCaptureSource::class.java,
-                    Int::class.javaObjectType,
-                    CancellationSignal::class.java,
-                    Int::class.javaPrimitiveType,
-                )
-            method.isAccessible = true
-            val capture = method.invoke(
-                ProcMapsCaptureReader,
-                file,
-                ProcMapsCaptureSource.NON_ROOT_PROCESS,
-                42,
-                NeverCancelled,
-                1024,
-            ) as ProcMapsCapture
+            val capture = ProcMapsCaptureReader.fromFile(
+                file = file,
+                source = ProcMapsCaptureSource.NON_ROOT_PROCESS,
+                pid = 42,
+                cancellation = NeverCancelled,
+                maxBytes = 1024,
+            )
 
             assertFalse(capture.truncated)
             assertEquals(42, capture.pid)
