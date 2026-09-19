@@ -103,11 +103,18 @@ Status: **CORE ACTIVE**
 - [ ] Search/filtering for large target and backend inventories
 
 ## Phase 7 — Runtime escalation
-- [ ] Repacked test runtime
-- [ ] Non-root runtime where feasible
-- [ ] Root only for unresolved runtime evidence
-- [ ] RVA → runtime VA
-- [ ] Feed runtime proof back into Evidence Graph
+Status: **ACTIVE**
+
+- [x] Runtime escalation planner: static → repacked test → non-root → root-last-resort
+- [x] Bounded imported/non-root `/proc/<pid>/maps` capture primitives
+- [x] Fail-closed module mapping proof from `PT_LOAD + file offset + device/inode + executable mapping`
+- [x] RVA → runtime VA for targets that already have exact binary proof
+- [x] Feed confirmed runtime address proof back into Evidence Graph without promoting to CHANGE_READY
+- [x] Expert Lab manual process-maps confirmation and technical-report export
+- [ ] Automatic in-process capture from a transparent repacked test runtime
+- [ ] Runtime memory-ELF validation for stripped/relocated modules
+- [ ] JNI/dlsym runtime confirmation where static evidence is insufficient
+- [ ] Root runtime only for evidence that remains unresolved after non-root stages
 
 ## Phase 8 — Non-ARM64 deep completion
 - [ ] ARMv7 / Thumb-2
