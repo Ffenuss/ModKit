@@ -31,12 +31,15 @@ import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.ExpertCapabilityValidator
+import io.github.ffenuss.modkit.analysis.ExpertLabReportExporter
+import io.github.ffenuss.modkit.analysis.ExpertLabReportWriter
 import io.github.ffenuss.modkit.analysis.ExpertLabSession
 import io.github.ffenuss.modkit.analysis.ExpertLabSessionController
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.domain.EngineProgress
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -353,6 +356,35 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
+                }
+            }
+
+            item {
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            runCatching {
+                                val report = withContext(Dispatchers.IO) {
+                                    ExpertLabReportWriter.write(
+                                        outputDir = File(
+                                            appContext.filesDir,
+                                            "expert-lab-export/" +
+                                                current.result.index.artifactSha256,
+                                        ),
+                                        label = current.label,
+                                        result = current.result,
+                                    )
+                                }
+                                ExpertLabReportExporter.share(appContext, report)
+                            }.onFailure { failure ->
+                                error = failure.message ?: failure.javaClass.simpleName
+                            }
+                        }
+                    },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Экспортировать технический отчёт")
                 }
             }
 
