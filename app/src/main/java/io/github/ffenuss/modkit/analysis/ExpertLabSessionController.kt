@@ -3,6 +3,8 @@ package io.github.ffenuss.modkit.analysis
 import android.content.Context
 import android.net.Uri
 import io.github.ffenuss.modkit.data.InstalledAppTarget
+import io.github.ffenuss.modkit.runtime.RuntimeEvidenceIntegrator
+import io.github.ffenuss.modkit.runtime.RuntimeModuleEvidenceCollector
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -127,6 +129,57 @@ object ExpertLabSessionController {
             workspace = workspace,
             temporaryFiles = emptyList(),
         )
+    }
+
+    suspend fun integrateRuntimeMaps(
+        context: Context,
+        session: ExpertLabSession,
+        procMapsText: String,
+        cancellation: CancellationSignal,
+    ): ExpertLabSession {
+        require(procMapsText.isNotBlank()) {
+            "Снимок /proc/<pid>/maps пуст."
+        }
+        val libraryEntry = session.result.il2cppBinaryBinding
+            ?.evidence
+            ?.firstOrNull()
+            ?.libraryEntry
+            ?: session.result.il2cppFastDump
+                ?.libraryEntries
+                ?.firstOrNull { it.endsWith("/libil2cpp.so") || it.endsWith(":libil2cpp.so") }
+            ?: error("В текущем результате нет IL2CPP library evidence.")
+
+        val abi = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+            .firstOrNull { candidate ->
+                "/$candidate/" in libraryEntry.lowercase()
+            }
+            ?: error("Не удалось определить ABI для libil2cpp.so.")
+        val moduleName = libraryEntry.substringAfterLast('/')
+        val relative = session.result.index.artifactSha256 +
+            "/il2cpp/native/" + abi + "-libil2cpp.so"
+        val moduleFile = listOf(
+            File(context.filesDir, "expert-lab-results/" + relative),
+            File(context.filesDir, "analysis-results/" + relative),
+        ).firstOrNull { it.isFile && it.canRead() }
+            ?: error(
+                "Извлечённый libil2cpp.so не найден. Сначала запустите IL2CPP binary confirmation.",
+            )
+
+        val evidence = withContext(Dispatchers.IO) {
+            RuntimeModuleEvidenceCollector.collect(
+                artifactSha256 = session.result.index.artifactSha256,
+                moduleFile = moduleFile,
+                moduleName = moduleName,
+                procMapsText = procMapsText,
+                cancellation = cancellation,
+            )
+        }
+        val integrated = RuntimeEvidenceIntegrator.integrate(
+            result = session.result,
+            evidence = evidence,
+            procMapsText = procMapsText,
+        )
+        return session.withResult(integrated)
     }
 
     suspend fun runEngine(
