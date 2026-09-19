@@ -35,7 +35,7 @@ Status: **ACTIVE**
 - [x] Reuse cached ArtifactIndex before repeating archive-entry probes
 - [x] Preserve already produced partial results when analysis is cancelled
 
-Current cache coverage: `artifact.fast-index`, `il2cpp.fast-dump`, and `il2cpp.codegen-bind`. Every newly migrated engine must define and bump its own cache version when output semantics change.
+Current cache coverage: `artifact.fast-index`, `elf.universal-inventory`, `il2cpp.fast-dump`, `il2cpp.codegen-bind`, and `runtime.evidence`. Every newly migrated engine must define and bump its own cache version when output semantics change.
 
 ## Phase 2 — IL2CPP fast path
 - [x] Immediate validated global-metadata.dat + libil2cpp.so pair detection
@@ -58,7 +58,7 @@ Current cache coverage: `artifact.fast-index`, `il2cpp.fast-dump`, and `il2cpp.c
 - [x] Confirmation engines are launched only from the ConfirmationQueue
 - [x] Exact source SHA is revalidated before Patch preparation
 - [ ] SHA-bound binding invalidation across the full Evidence Graph
-- [ ] Runtime-confirmed transition
+- [x] Runtime-confirmed transition for independently confirmed exact runtime addresses
 
 ## Phase 4 — AutoMod / Patch Lab
 Status: **ACTIVE**
@@ -111,6 +111,9 @@ Status: **ACTIVE**
 - [x] RVA → runtime VA for targets that already have exact binary proof
 - [x] Feed confirmed runtime address proof back into Evidence Graph without promoting to CHANGE_READY
 - [x] Expert Lab manual process-maps confirmation and technical-report export
+- [x] Typed runtime evidence contract separating process/module/mapping/address/execution/field/JNI-dlsym observations
+- [x] SHA-bound runtime evidence persistence and fail-closed snapshot restoration
+- [x] Versioned Expert Lab runtime report with explicit capture provenance and unresolved reasons
 - [ ] Automatic in-process capture from a transparent repacked test runtime
 - [ ] Runtime memory-ELF validation for stripped/relocated modules
 - [ ] JNI/dlsym runtime confirmation where static evidence is insufficient
