@@ -4,7 +4,12 @@ import android.content.Context
 import android.net.Uri
 import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.runtime.AndroidNonRootProcessProbe
+import io.github.ffenuss.modkit.runtime.AndroidRepackedRuntimeProbeTransport
 import io.github.ffenuss.modkit.runtime.NonRootRuntimeCaptureCoordinator
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeBuildCoordinator
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeBuildResult
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeEvidenceCapture
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstrumentationCoordinator
 import io.github.ffenuss.modkit.runtime.ProcMemRuntimeMemoryReader
 import io.github.ffenuss.modkit.runtime.RuntimeMemoryElfValidator
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceBundle
@@ -17,6 +22,7 @@ import io.github.ffenuss.modkit.runtime.RuntimeStageAttemptRecorder
 import io.github.ffenuss.modkit.runtime.RuntimeStageAttemptState
 import io.github.ffenuss.modkit.runtime.RuntimeStageBlocker
 import io.github.ffenuss.modkit.runtime.RuntimeStageBlockerCategory
+import io.github.ffenuss.modkit.runtime.toEvidenceBundle
 import io.github.ffenuss.modkit.domain.ProofLevel
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +40,7 @@ data class ExpertLabSession(
     val workspace: AnalysisWorkspace,
     val temporaryFiles: List<File>,
     val packageName: String? = null,
+    val repackedRuntimeBuild: RepackedRuntimeBuildResult? = null,
 ) : AutoCloseable {
     override fun close() {
         temporaryFiles.forEach(File::delete)
@@ -345,6 +352,222 @@ object ExpertLabSessionController {
                     session.result.engineWarnings +
                         "runtime.non-root: " +
                         (failure.message ?: failure.javaClass.simpleName)
+                    ).distinct(),
+            )
+            return persistRuntimeAttempts(
+                context = context,
+                session = session.withResult(updated),
+            )
+        }
+    }
+
+    suspend fun buildRepackedTestRuntime(
+        context: Context,
+        session: ExpertLabSession,
+        cancellation: CancellationSignal,
+        progress: ProgressSink,
+    ): ExpertLabSession {
+        val plan = RuntimeEscalationPlanner.plan(session.result)
+        val requestedTargets = plan.needs
+            .filter {
+                it.firstStage ==
+                    RuntimeEscalationStage.REPACKED_TEST_RUNTIME
+            }
+            .mapTo(linkedSetOf()) { it.targetId }
+        require(requestedTargets.isNotEmpty()) {
+            "No unresolved target currently requires repacked test runtime."
+        }
+
+        val outputRoot = File(
+            context.filesDir,
+            "expert-lab-results",
+        )
+        val build = withContext(Dispatchers.IO) {
+            val instrumentation =
+                RepackedRuntimeInstrumentationCoordinator.instrument(
+                    context = context,
+                    workspace = session.workspace,
+                    outputRoot = outputRoot,
+                    cancellation = cancellation,
+                )
+            RepackedRuntimeBuildCoordinator.buildProbeInjected(
+                context = context,
+                manifestInventory =
+                    instrumentation.manifestInventory,
+                injection = instrumentation.probeInjection,
+                outputRoot = outputRoot,
+                cancellation = cancellation,
+                progress = progress,
+            )
+        }
+        require(
+            build.artifactSha256.equals(
+                session.result.index.artifactSha256,
+                ignoreCase = true,
+            ),
+        ) {
+            "Repacked test build artifact SHA does not match the active Expert Lab target."
+        }
+
+        return session.copy(
+            repackedRuntimeBuild = build,
+        )
+    }
+
+    suspend fun integrateRepackedTestRuntime(
+        context: Context,
+        session: ExpertLabSession,
+        cancellation: CancellationSignal,
+    ): ExpertLabSession {
+        val plan = RuntimeEscalationPlanner.plan(session.result)
+        val requestedTargets = plan.needs
+            .filter {
+                it.firstStage ==
+                    RuntimeEscalationStage.REPACKED_TEST_RUNTIME
+            }
+            .mapTo(linkedSetOf()) { it.targetId }
+        val build = requireNotNull(session.repackedRuntimeBuild) {
+            "Build the repacked test runtime APK before runtime capture."
+        }
+        require(
+            build.artifactSha256.equals(
+                session.result.index.artifactSha256,
+                ignoreCase = true,
+            ),
+        ) {
+            "Repacked runtime build is stale for the active target SHA."
+        }
+
+        try {
+            require(requestedTargets.isNotEmpty()) {
+                "No unresolved target currently requires repacked test runtime."
+            }
+            val captured = withContext(Dispatchers.IO) {
+                RepackedRuntimeEvidenceCapture.capture(
+                    build = build,
+                    transport =
+                        AndroidRepackedRuntimeProbeTransport(context),
+                    cancellation = cancellation,
+                )
+            }
+
+            var evidence = captured.toEvidenceBundle(
+                artifactSha256 =
+                    session.result.index.artifactSha256,
+                artifactEntries =
+                    session.result.index.entries,
+            )
+
+            val module = runCatching {
+                resolveIl2CppRuntimeModule(
+                    context = context,
+                    result = session.result,
+                )
+            }.getOrNull()
+            if (module != null) {
+                evidence = withContext(Dispatchers.IO) {
+                    RuntimeModuleEvidenceCollector.collect(
+                        artifactSha256 =
+                            session.result.index.artifactSha256,
+                        moduleFile = module.file,
+                        moduleName = module.moduleName,
+                        capture = captured.maps,
+                        cancellation = cancellation,
+                        artifactEntries =
+                            session.result.index.entries,
+                    )
+                }.copy(
+                    processIdentity =
+                        captured.processIdentity,
+                    processIdentityConfirmed = true,
+                )
+            }
+
+            val integrated = RuntimeEvidenceIntegrator.integrate(
+                result = session.result,
+                evidence = evidence,
+                procMapsText = captured.maps.text,
+            )
+            val resolvedTargets = integrated.evidenceGraph
+                ?.targets
+                .orEmpty()
+                .asSequence()
+                .filter { it.id in requestedTargets }
+                .filter {
+                    it.proofLevel.ordinal >=
+                        ProofLevel.RUNTIME_CONFIRMED.ordinal
+                }
+                .mapTo(linkedSetOf()) { it.id }
+            val unresolvedTargets =
+                requestedTargets - resolvedTargets
+            val attempt = RuntimeStageAttempt(
+                stage =
+                    RuntimeEscalationStage.REPACKED_TEST_RUNTIME,
+                state = if (unresolvedTargets.isEmpty()) {
+                    RuntimeStageAttemptState.COMPLETED
+                } else {
+                    RuntimeStageAttemptState.BLOCKED
+                },
+                attemptedAtEpochMs =
+                    System.currentTimeMillis(),
+                requestedTargetIds = requestedTargets,
+                resolvedTargetIds = resolvedTargets,
+                blockers = if (unresolvedTargets.isEmpty()) {
+                    emptyList()
+                } else {
+                    listOf(
+                        RuntimeStageBlocker(
+                            code =
+                                "REPACKED_RUNTIME_EVIDENCE_UNRESOLVED",
+                            message =
+                                "Repacked runtime capture completed, but proof remains unresolved for: " +
+                                    unresolvedTargets
+                                        .sorted()
+                                        .joinToString(),
+                            category =
+                                RuntimeStageBlockerCategory.EVIDENCE_GAP,
+                        ),
+                    )
+                },
+            )
+            val withAttempt = appendAttempt(
+                result = integrated,
+                attempt = attempt,
+            )
+            val withEvidence = persistRuntimeEvidence(
+                context = context,
+                session = session,
+                integrated = withAttempt,
+                fallbackEvidence = evidence,
+            )
+            return persistRuntimeAttempts(
+                context = context,
+                session = withEvidence.copy(
+                    repackedRuntimeBuild = build,
+                ),
+            )
+        } catch (failure: Throwable) {
+            if (failure is AnalysisCancelledException) {
+                throw failure
+            }
+            val attempt =
+                RuntimeStageAttemptRecorder.blockedAttempt(
+                    stage =
+                        RuntimeEscalationStage.REPACKED_TEST_RUNTIME,
+                    requestedTargetIds = requestedTargets,
+                    failure = failure,
+                )
+            val updated = appendAttempt(
+                result = session.result,
+                attempt = attempt,
+            ).copy(
+                engineWarnings = (
+                    session.result.engineWarnings +
+                        "runtime.repacked: " +
+                        (
+                            failure.message
+                                ?: failure.javaClass.simpleName
+                            )
                     ).distinct(),
             )
             return persistRuntimeAttempts(
