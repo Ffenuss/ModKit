@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
+import io.github.ffenuss.modkit.analysis.ArtifactEntry
 import java.io.ByteArrayOutputStream
 import java.io.FileInputStream
 import java.security.MessageDigest
@@ -37,6 +38,31 @@ data class RepackedRuntimeProbeCaptureResult(
     val rawEvidenceSha256: String,
     val maps: ProcMapsCapture,
 )
+
+fun RepackedRuntimeProbeCaptureResult.toEvidenceBundle(
+    artifactSha256: String,
+    artifactEntries: List<ArtifactEntry>,
+): RuntimeEvidenceBundle {
+    val regions = ProcMapsParser.parse(maps.text)
+    return RuntimeEvidenceBundle(
+        artifactSha256 = artifactSha256,
+        procMapsSha256 = maps.sha256,
+        moduleMappings = emptyList(),
+        addressConfirmations = emptyList(),
+        blockers = emptyList(),
+        moduleInventory = RuntimeModuleInventoryBuilder.build(
+            regions = regions,
+            artifactEntries = artifactEntries,
+        ),
+        memoryMappingCandidates =
+            RuntimeMemoryMappingDetector.candidates(regions),
+        captureSource = ProcMapsCaptureSource.REPACKED_TEST_RUNTIME,
+        capturePid = pid,
+        capturedAtEpochMs = capturedAtEpochMs,
+        processIdentity = processIdentity,
+        processIdentityConfirmed = true,
+    )
+}
 
 interface RepackedRuntimeProbeTransport {
     fun inspectInstalled(
