@@ -1,0 +1,140 @@
+package io.github.ffenuss.modkit.analysis
+
+import java.io.File
+import java.nio.file.Files
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class EngineResultCacheTest {
+    @Test
+    fun reusesFastDumpOnlyForSameArtifactAndExistingOutput() {
+        val root = Files.createTempDirectory("modkit-engine-cache").toFile()
+        try {
+            val dumpFile = File(root, "dump.cs").apply { writeText("// cached") }
+            val result = Il2CppFastDumpResult(
+                metadataEntry = "base.apk:global-metadata.dat",
+                libraryEntries = listOf("base.apk:lib/arm64-v8a/libil2cpp.so"),
+                metadata = metadataModel(),
+                dumpFilePath = dumpFile.absolutePath,
+                preview = "cached preview",
+                warnings = listOf("cached warning"),
+            )
+            val cache = EngineResultCache(File(root, "cache"))
+
+            assertTrue(cache.saveIl2CppFastDump("abc123", result))
+            assertEquals(result, cache.loadIl2CppFastDump("abc123"))
+            assertNull(cache.loadIl2CppFastDump("different-sha"))
+
+            dumpFile.delete()
+            assertNull(cache.loadIl2CppFastDump("abc123"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun reusesBinaryBindingWithExactEvidence() {
+        val root = Files.createTempDirectory("modkit-binding-cache").toFile()
+        try {
+            val binding = Il2CppBinaryBindingResult(
+                evidence = listOf(
+                    Il2CppBinaryEvidence(
+                        libraryEntry = "base.apk:lib/arm64-v8a/libil2cpp.so",
+                        machine = 183,
+                        pointerSize = 8,
+                        codeRegistrationVirtualAddress = 0x1000,
+                        metadataRegistrationVirtualAddress = 0x2000,
+                        codegenRegisterVirtualAddress = 0x3000,
+                        moduleArrayDiscovery = "CODE_REGISTRATION_PAIR_0",
+                        modules = listOf(
+                            Il2CppCodeGenModuleEvidence(
+                                moduleName = "Assembly-CSharp.dll",
+                                moduleVirtualAddress = 0x4000,
+                                methodPointerCount = 1,
+                                methodPointersVirtualAddress = 0x5000,
+                                sampledPointers = 1,
+                                executablePointers = 1,
+                            ),
+                        ),
+                        bindings = listOf(
+                            Il2CppMethodBinaryBinding(
+                                methodIndex = 0,
+                                managedIdentity = "Game.Player.Hit",
+                                metadataToken = 0x06000001,
+                                imageName = "Assembly-CSharp.dll",
+                                moduleName = "Assembly-CSharp.dll",
+                                slotIndex = 0,
+                                functionVirtualAddress = 0x6000,
+                                functionFileOffset = 0x800,
+                            ),
+                        ),
+                        blockers = emptyList(),
+                    ),
+                ),
+                exactBindingCount = 1,
+                warnings = emptyList(),
+            )
+            val cache = EngineResultCache(File(root, "cache"))
+
+            assertTrue(cache.saveIl2CppBinaryBinding("artifact-sha", binding))
+            val restored = cache.loadIl2CppBinaryBinding("artifact-sha")
+            assertEquals(binding, restored)
+            assertTrue(restored?.exactBindingAvailable == true)
+            assertNull(cache.loadIl2CppBinaryBinding("other-artifact"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    private fun metadataModel() = Il2CppMetadataModel(
+        sizeBytes = 1024,
+        magicValid = true,
+        metadataVersion = 29,
+        layoutProfile = "IL2CPP_METADATA_V27_V30",
+        tableRanges = listOf(Il2CppTableRange("methods", 100, 32)),
+        declaredTypeCount = 1,
+        declaredMethodCount = 1,
+        declaredFieldCount = 0,
+        declaredImageCount = 1,
+        images = listOf(
+            Il2CppImageDefinition(
+                index = 0,
+                name = "Assembly-CSharp.dll",
+                assemblyIndex = 0,
+                typeStart = 0,
+                typeCount = 1,
+                token = 1,
+            ),
+        ),
+        types = listOf(
+            Il2CppTypeDefinition(
+                index = 0,
+                namespace = "Game",
+                name = "Player",
+                fullName = "Game.Player",
+                methodStart = 0,
+                methodCount = 1,
+                fieldStart = 0,
+                fieldCount = 0,
+                token = 0x02000001,
+            ),
+        ),
+        methods = listOf(
+            Il2CppMethodDefinition(
+                index = 0,
+                declaringTypeIndex = 0,
+                declaringType = "Game.Player",
+                name = "Hit",
+                parameterCount = 0,
+                token = 0x06000001,
+                flags = 6,
+            ),
+        ),
+        fields = emptyList(),
+        structuredSupported = true,
+        truncated = false,
+        warnings = emptyList(),
+    )
+}
