@@ -62,17 +62,16 @@ object AnalysisManager {
                     AnalysisRunStore.STALLED,
                 )
             ) {
-                val recovered = saved.artifactSha256?.let { artifactSha ->
-                    EngineResultCache(File(application.filesDir, "analysis-cache"))
-                        .restorePartialResult(artifactSha)
-                }
+                val cache = EngineResultCache(File(application.filesDir, "analysis-cache"))
+                val partialAvailable = saved.artifactSha256?.let(cache::hasRestorablePartial) == true
                 mutableState.value = AnalysisRunState.Interrupted(
                     runId = saved.runId,
                     target = saved.target,
                     previousProgress = saved.progress,
-                    partialResult = recovered,
-                    message = if (recovered != null) {
-                        "Предыдущий анализ был прерван. Готовые стадии восстановлены из SHA-привязанного кэша: их можно открыть сейчас или продолжить анализ."
+                    artifactSha256 = saved.artifactSha256,
+                    partialAvailable = partialAvailable,
+                    message = if (partialAvailable) {
+                        "Предыдущий анализ был прерван. Готовые стадии сохранены: их можно открыть без повторного анализа или продолжить цель с переиспользованием кэша."
                     } else {
                         "Предыдущий анализ был прерван системой или перезапуском. Можно продолжить ту же цель; доступные завершённые стадии будут переиспользованы."
                     },
@@ -93,15 +92,44 @@ object AnalysisManager {
     }
 
     fun openInterruptedPartial() {
-        synchronized(lock) {
+        val interrupted = synchronized(lock) {
             val current = mutableState.value as? AnalysisRunState.Interrupted ?: return
-            val partial = current.partialResult ?: return
-            mutableState.value = AnalysisRunState.RecoveredPartial(
+            val artifactSha = current.artifactSha256 ?: return
+            if (!current.partialAvailable) return
+            mutableState.value = AnalysisRunState.RestoringPartial(
                 runId = current.runId,
                 target = current.target,
-                result = partial,
-                message = "Восстановлены только стадии, которые были полностью завершены до прерывания. Можно просмотреть их без повторного анализа.",
+                message = "Восстанавливаем полностью завершённые стадии из SHA-привязанного кэша…",
             )
+            current to artifactSha
+        }
+
+        scope.launch {
+            val (snapshot, artifactSha) = interrupted
+            val context = appContext ?: return@launch
+            val restored = withContext(Dispatchers.IO) {
+                EngineResultCache(File(context.filesDir, "analysis-cache"))
+                    .restorePartialResult(artifactSha)
+            }
+            synchronized(lock) {
+                val state = mutableState.value
+                if (state !is AnalysisRunState.RestoringPartial || state.runId != snapshot.runId) {
+                    return@synchronized
+                }
+                if (restored != null) {
+                    mutableState.value = AnalysisRunState.RecoveredPartial(
+                        runId = snapshot.runId,
+                        target = snapshot.target,
+                        result = restored,
+                        message = "Восстановлены только стадии, которые были полностью завершены до прерывания. Эти данные можно просматривать без повторного анализа.",
+                    )
+                } else {
+                    mutableState.value = snapshot.copy(
+                        partialAvailable = false,
+                        message = "Сохранённые частичные результаты больше не читаются. Можно продолжить анализ: валидные стадии будут восстановлены заново по текущему SHA.",
+                    )
+                }
+            }
         }
     }
 
@@ -109,11 +137,15 @@ object AnalysisManager {
         synchronized(lock) {
             val current = mutableState.value as? AnalysisRunState.RecoveredPartial ?: return
             val saved = store?.load()
+            val artifactSha = saved?.artifactSha256 ?: current.result.index.artifactSha256
             mutableState.value = AnalysisRunState.Interrupted(
                 runId = current.runId,
                 target = current.target,
                 previousProgress = saved?.progress,
-                partialResult = current.result,
+                artifactSha256 = artifactSha,
+                partialAvailable = EngineResultCache(
+                    File(requireNotNull(appContext).filesDir, "analysis-cache"),
+                ).hasRestorablePartial(artifactSha),
                 message = "Предыдущий анализ был прерван. Готовые стадии сохранены; можно продолжить анализ, снова открыть результаты или удалить состояние.",
             )
         }
@@ -564,6 +596,7 @@ object AnalysisManager {
         is AnalysisRunState.Cancelled -> state.runId
         is AnalysisRunState.Failed -> state.runId
         is AnalysisRunState.RecoveredPartial -> state.runId
+        is AnalysisRunState.RestoringPartial -> state.runId
         else -> null
     }
 }
