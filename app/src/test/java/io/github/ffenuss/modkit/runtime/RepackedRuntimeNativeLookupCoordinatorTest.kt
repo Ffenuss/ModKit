@@ -19,7 +19,7 @@ class RepackedRuntimeNativeLookupCoordinatorTest {
                 regionCount = 2,
                 executableRegionCount = 1,
                 fileZeroBaseCandidates =
-                    setOf(0x70000000),
+                    setOf(0x70000000L),
                 staticArtifactMatches = listOf(
                     "base.apk:lib/arm64-v8a/$MODULE",
                     "base.apk:lib/x86_64/$MODULE",
@@ -77,7 +77,7 @@ class RepackedRuntimeNativeLookupCoordinatorTest {
                 inode = 42,
                 regionCount = 2,
                 executableRegionCount = 1,
-                fileZeroBaseCandidates = setOf(0x70000000),
+                fileZeroBaseCandidates = setOf(0x70000000L),
                 staticArtifactMatches = listOf(
                     "base.apk:lib/arm64-v8a/$MODULE",
                     "base.apk:lib/x86_64/$MODULE",
@@ -116,7 +116,7 @@ class RepackedRuntimeNativeLookupCoordinatorTest {
         inode = inode,
         regionCount = 2,
         executableRegionCount = 1,
-        fileZeroBaseCandidates = setOf(0x70000000),
+        fileZeroBaseCandidates = setOf(0x70000000L),
         staticArtifactMatches = listOf(
             "base.apk:lib/arm64-v8a/$MODULE",
         ),
