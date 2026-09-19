@@ -47,10 +47,12 @@ class EngineResultCache(
 
     fun restorePartialResult(artifactSha256: String): FastAnalysisResult? {
         val index = loadArtifactIndex(artifactSha256) ?: return null
+        val elfInventory = loadUniversalElfInventory(artifactSha256)
         val dump = loadIl2CppFastDump(artifactSha256)
         val binding = loadIl2CppBinaryBinding(artifactSha256)
         val cacheHits = buildSet {
             add(ARTIFACT_INDEX_ENGINE_ID)
+            if (elfInventory != null) add(UNIVERSAL_ELF_INVENTORY_ENGINE_ID)
             if (dump != null) add(IL2CPP_FAST_DUMP_ENGINE_ID)
             if (binding != null) add(IL2CPP_BINARY_BINDING_ENGINE_ID)
         }
@@ -59,6 +61,7 @@ class EngineResultCache(
             index = index,
             routingPlan = EngineRouter.plan(index),
             elapsedMs = 0L,
+            elfInventory = elfInventory,
             il2cppFastDump = dump,
             il2cppBinaryBinding = binding,
             engineCacheHits = cacheHits,
@@ -94,6 +97,26 @@ class EngineResultCache(
         engineId = ARTIFACT_INDEX_ENGINE_ID,
         engineVersion = ARTIFACT_INDEX_ENGINE_VERSION,
         payload = index,
+    )
+
+    fun loadUniversalElfInventory(
+        artifactSha256: String,
+    ): UniversalElfInventoryResult? =
+        load(
+            artifactSha256 = artifactSha256,
+            engineId = UNIVERSAL_ELF_INVENTORY_ENGINE_ID,
+            engineVersion = UNIVERSAL_ELF_INVENTORY_ENGINE_VERSION,
+            type = UniversalElfInventoryResult::class.java,
+        )
+
+    fun saveUniversalElfInventory(
+        artifactSha256: String,
+        result: UniversalElfInventoryResult,
+    ): Boolean = save(
+        artifactSha256 = artifactSha256,
+        engineId = UNIVERSAL_ELF_INVENTORY_ENGINE_ID,
+        engineVersion = UNIVERSAL_ELF_INVENTORY_ENGINE_VERSION,
+        payload = result,
     )
 
     fun loadIl2CppFastDump(artifactSha256: String): Il2CppFastDumpResult? {
@@ -248,6 +271,9 @@ class EngineResultCache(
 
         const val ARTIFACT_INDEX_ENGINE_ID = "artifact.fast-index"
         const val ARTIFACT_INDEX_ENGINE_VERSION = "2"
+
+        const val UNIVERSAL_ELF_INVENTORY_ENGINE_ID = "elf.universal-inventory"
+        const val UNIVERSAL_ELF_INVENTORY_ENGINE_VERSION = "1"
 
         const val IL2CPP_FAST_DUMP_ENGINE_ID = "il2cpp.fast-dump"
         const val IL2CPP_FAST_DUMP_ENGINE_VERSION = "2"
