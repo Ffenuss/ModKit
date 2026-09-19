@@ -280,6 +280,9 @@ object MutationPreflightEngine {
         if (replacement.size <= 0L) {
             add("Содержимое замены пустое.")
         }
+        if (replacement.storagePath.isNullOrBlank()) {
+            add("Содержимое замены не сохранено во внутреннем staging-хранилище.")
+        }
         if (
             requireSameSize &&
             originalSize != null &&
