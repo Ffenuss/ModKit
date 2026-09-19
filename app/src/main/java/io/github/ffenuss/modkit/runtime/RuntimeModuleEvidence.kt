@@ -320,6 +320,14 @@ object RuntimeEvidenceIntegrator {
                     "runtime.evidence: proc maps snapshot mismatch",
             )
         }
+        if (!hasConfirmedProcessIdentity(evidence)) {
+            val blockedEvidence = withProcessIdentityBlocker(evidence)
+            return result.copy(
+                runtimeEvidence = blockedEvidence,
+                engineWarnings = result.engineWarnings +
+                    "runtime.evidence: process identity not independently confirmed",
+            )
+        }
 
         val graph = result.evidenceGraph
             ?: return result.copy(runtimeEvidence = evidence)
@@ -417,6 +425,14 @@ object RuntimeEvidenceIntegrator {
         if (!artifactMatches(result, evidence)) {
             return artifactMismatch(result)
         }
+        if (!hasConfirmedProcessIdentity(evidence)) {
+            val blockedEvidence = withProcessIdentityBlocker(evidence)
+            return result.copy(
+                runtimeEvidence = blockedEvidence,
+                engineWarnings = result.engineWarnings +
+                    "runtime.evidence: cached process identity is not independently confirmed",
+            )
+        }
 
         val graph = result.evidenceGraph
             ?: return result.copy(runtimeEvidence = evidence)
@@ -488,6 +504,25 @@ object RuntimeEvidenceIntegrator {
             ),
         )
     }
+
+    private fun hasConfirmedProcessIdentity(
+        evidence: RuntimeEvidenceBundle,
+    ): Boolean =
+        evidence.captureSource != ProcMapsCaptureSource.IMPORTED_SNAPSHOT &&
+            evidence.capturePid != null &&
+            !evidence.processIdentity.isNullOrBlank() &&
+            evidence.processIdentityConfirmed
+
+    private fun withProcessIdentityBlocker(
+        evidence: RuntimeEvidenceBundle,
+    ): RuntimeEvidenceBundle =
+        evidence.copy(
+            blockers = (
+                evidence.blockers +
+                    "Process identity is not independently confirmed for this runtime capture."
+                ).distinct(),
+            addressConfirmations = emptyList(),
+        )
 
     private fun artifactMatches(
         result: FastAnalysisResult,
