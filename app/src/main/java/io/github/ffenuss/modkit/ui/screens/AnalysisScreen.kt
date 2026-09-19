@@ -19,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
+import io.github.ffenuss.modkit.analysis.UserFindingStatus
 import io.github.ffenuss.modkit.domain.EngineProgress
 
 @Composable
@@ -207,6 +208,82 @@ fun AnalysisScreen(
                         }
                     }
 
+                    result.evidenceGraph?.takeIf { it.targets.isNotEmpty() }?.let { graph ->
+                        item {
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(
+                                    Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                                ) {
+                                    Text("Выводы", fontWeight = FontWeight.SemiBold)
+                                    val summary = graph.summary
+                                    Text(
+                                        "Найдено: " + summary.found +
+                                            " · подтверждается: " + summary.confirming +
+                                            " · подтверждено: " + summary.confirmed +
+                                            " · готово: " + summary.ready,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    if (summary.runtimeRequired > 0 || summary.couldNotConfirm > 0) {
+                                        Text(
+                                            "Runtime требуется: " + summary.runtimeRequired +
+                                                " · не удалось подтвердить: " + summary.couldNotConfirm,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        items(graph.targets.take(8), key = { it.id }) { target ->
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(
+                                    Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text(target.displayName, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        findingStatusLabel(target.userStatus),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    target.abi?.let {
+                                        Text("ABI: " + it, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                    target.blockers.firstOrNull()?.let { blocker ->
+                                        Text(
+                                            "Следующий шаг: " + blocker.message,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (result.confirmationQueue.isNotEmpty()) {
+                        item {
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(
+                                    Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text("Дополнительное подтверждение", fontWeight = FontWeight.SemiBold)
+                                    result.confirmationQueue.take(5).forEach { request ->
+                                        Text(
+                                            "• " + request.reason +
+                                                if (request.availableNow) {
+                                                    " · будет выполнено автоматически"
+                                                } else {
+                                                    " · требуется следующий runtime-этап"
+                                                },
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     items(result.index.runtimeProfiles, key = { it.runtimeId }) { runtime ->
                         Card(Modifier.fillMaxWidth()) {
                             Column(
@@ -243,7 +320,7 @@ fun AnalysisScreen(
                                     )
                                     Text(
                                         if (dump.metadata.structuredSupported) {
-                                            "EXACT_METADATA: структурная реконструкция готова"
+                                            "Метаданные структурно подтверждены"
                                         } else {
                                             "Metadata magic подтверждён; layout ещё не поддержан"
                                         },
@@ -267,11 +344,15 @@ fun AnalysisScreen(
                                 ) {
                                     Text("Evidence Graph", fontWeight = FontWeight.SemiBold)
                                     Text(
-                                        "Уровень доказательств: " + evidence.proofLevel.name,
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                    Text(
-                                        "CHANGE_READY: " + if (evidence.changeReady) "да" else "нет",
+                                        if (evidence.changeReady) {
+                                            "Статус: готово к применению"
+                                        } else if (evidence.binaryIdentityExact) {
+                                            "Статус: бинарная цель подтверждена"
+                                        } else if (evidence.metadataIdentityExact) {
+                                            "Статус: метаданные подтверждены, проверяется бинарная привязка"
+                                        } else {
+                                            "Статус: найдено, требуется подтверждение"
+                                        },
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                     if (!evidence.changeReady) {
@@ -309,9 +390,9 @@ fun AnalysisScreen(
                                     Text("IL2CPP binary confirmation", fontWeight = FontWeight.SemiBold)
                                     Text(
                                         if (binary.exactBindingAvailable) {
-                                            "EXACT_BINARY: подтверждено методов " + binary.exactBindingCount
+                                            "Точно подтверждено методов: " + binary.exactBindingCount
                                         } else {
-                                            "EXACT_BINARY пока не доказан"
+                                            "Точная бинарная привязка пока не подтверждена"
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                     )
@@ -401,4 +482,13 @@ fun AnalysisScreen(
             }
         }
     }
+}
+
+private fun findingStatusLabel(status: UserFindingStatus): String = when (status) {
+    UserFindingStatus.FOUND -> "Найдено"
+    UserFindingStatus.CONFIRMING -> "Идёт подтверждение"
+    UserFindingStatus.CONFIRMED -> "Подтверждено"
+    UserFindingStatus.READY -> "Готово к изменению"
+    UserFindingStatus.RUNTIME_REQUIRED -> "Требуется runtime-подтверждение"
+    UserFindingStatus.COULD_NOT_CONFIRM -> "Статически подтвердить не удалось"
 }
