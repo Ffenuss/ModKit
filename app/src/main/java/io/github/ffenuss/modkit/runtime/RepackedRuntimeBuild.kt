@@ -199,6 +199,62 @@ object RepackedRuntimeSignatureStripper {
     }
 }
 
+data class RepackedRuntimeBuildPreflightResult(
+    val ready: Boolean,
+    val packageName: String?,
+    val blockers: List<String>,
+)
+
+object RepackedRuntimeBuildPreflight {
+    fun validate(
+        artifactSha256: String,
+        manifestInventory: RepackedRuntimeManifestInventory,
+        instrumentedApks: List<Pair<String, File>>,
+    ): RepackedRuntimeBuildPreflightResult {
+        val blockers = mutableListOf<String>()
+
+        if (!manifestInventory.artifactSha256.equals(
+                artifactSha256,
+                ignoreCase = true,
+            )
+        ) {
+            blockers += "Manifest inventory artifact SHA does not match the repacked runtime target."
+        }
+        if (!manifestInventory.verified) {
+            blockers += manifestInventory.blockers.ifEmpty {
+                listOf("Manifest inventory is not verified.")
+            }
+        }
+
+        val expectedNames = manifestInventory.records
+            .map { it.sourceDisplayName }
+            .sorted()
+        val actualNames = instrumentedApks
+            .map { it.first }
+            .sorted()
+        if (actualNames != expectedNames) {
+            blockers +=
+                "Instrumented APK source relationships do not match the verified manifest inventory."
+        }
+        if (actualNames.size != actualNames.distinct().size) {
+            blockers += "Instrumented APK source identities are duplicated."
+        }
+
+        instrumentedApks.forEach { (displayName, file) ->
+            if (!file.isFile || !file.canRead()) {
+                blockers += "Instrumented APK is unavailable: $displayName"
+            }
+        }
+
+        return RepackedRuntimeBuildPreflightResult(
+            ready = blockers.isEmpty() &&
+                !manifestInventory.packageName.isNullOrBlank(),
+            packageName = manifestInventory.packageName,
+            blockers = blockers.distinct(),
+        )
+    }
+}
+
 /**
  * Finalizes an already instrumented repacked-test APK/APK-set.
  *
@@ -211,7 +267,7 @@ object RepackedRuntimeBuildCoordinator {
     fun build(
         context: Context,
         artifactSha256: String,
-        expectedPackageName: String,
+        manifestInventory: RepackedRuntimeManifestInventory,
         instrumentedApks: List<Pair<String, File>>,
         outputRoot: File,
         cancellation: CancellationSignal,
@@ -220,11 +276,20 @@ object RepackedRuntimeBuildCoordinator {
         require(artifactSha256.isNotBlank()) {
             "Artifact SHA is required for repacked runtime build."
         }
-        require(expectedPackageName.isNotBlank()) {
-            "Parsed target package is required for repacked runtime build."
-        }
         require(instrumentedApks.isNotEmpty()) {
             "No instrumented test APK is available."
+        }
+        val preflight = RepackedRuntimeBuildPreflight.validate(
+            artifactSha256 = artifactSha256,
+            manifestInventory = manifestInventory,
+            instrumentedApks = instrumentedApks,
+        )
+        require(preflight.ready) {
+            preflight.blockers.firstOrNull()
+                ?: "Repacked runtime build preflight is not ready."
+        }
+        val expectedPackageName = requireNotNull(preflight.packageName) {
+            "Verified manifest inventory has no package name."
         }
 
         val root = File(
