@@ -10,6 +10,14 @@ import io.github.ffenuss.modkit.runtime.RuntimeMemoryElfValidator
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceBundle
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceIntegrator
 import io.github.ffenuss.modkit.runtime.RuntimeModuleEvidenceCollector
+import io.github.ffenuss.modkit.runtime.RuntimeEscalationPlanner
+import io.github.ffenuss.modkit.runtime.RuntimeEscalationStage
+import io.github.ffenuss.modkit.runtime.RuntimeStageAttempt
+import io.github.ffenuss.modkit.runtime.RuntimeStageAttemptRecorder
+import io.github.ffenuss.modkit.runtime.RuntimeStageAttemptState
+import io.github.ffenuss.modkit.runtime.RuntimeStageBlocker
+import io.github.ffenuss.modkit.runtime.RuntimeStageBlockerCategory
+import io.github.ffenuss.modkit.domain.ProofLevel
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -78,13 +86,25 @@ object ExpertLabSessionController {
                 File(context.filesDir, "analysis-cache"),
             )
             val result = withContext(Dispatchers.IO) {
-                FastArtifactIndexer.index(
+                val indexed = FastArtifactIndexer.index(
                     files = files,
                     cancellation = cancellation,
                     progress = progress,
                     knownSha256 = knownSha,
                     cache = cache,
                 )
+                val ledger = cache.loadRuntimeStageAttempts(
+                    indexed.index.artifactSha256,
+                )
+                if (ledger == null) {
+                    indexed
+                } else {
+                    indexed.copy(
+                        runtimeStageAttempts = ledger.attempts,
+                        engineCacheHits = indexed.engineCacheHits +
+                            EngineResultCache.RUNTIME_STAGE_ATTEMPTS_ENGINE_ID,
+                    )
+                }
             }
             val workspace = AnalysisWorkspace(
                 index = result.index,
@@ -120,12 +140,24 @@ object ExpertLabSessionController {
             File(context.filesDir, "analysis-cache"),
         )
         val result = withContext(Dispatchers.IO) {
-            FastArtifactIndexer.index(
+            val indexed = FastArtifactIndexer.index(
                 files = app.apkFiles,
                 cancellation = cancellation,
                 progress = progress,
                 cache = cache,
             )
+            val ledger = cache.loadRuntimeStageAttempts(
+                indexed.index.artifactSha256,
+            )
+            if (ledger == null) {
+                indexed
+            } else {
+                indexed.copy(
+                    runtimeStageAttempts = ledger.attempts,
+                    engineCacheHits = indexed.engineCacheHits +
+                        EngineResultCache.RUNTIME_STAGE_ATTEMPTS_ENGINE_ID,
+                )
+            }
         }
         val workspace = AnalysisWorkspace(
             index = result.index,
@@ -194,53 +226,132 @@ object ExpertLabSessionController {
         session: ExpertLabSession,
         cancellation: CancellationSignal,
     ): ExpertLabSession {
-        val packageName = requireNotNull(session.packageName) {
-            "Non-root runtime auto-discovery is available only for an installed-app target."
-        }
-        val probe = AndroidNonRootProcessProbe(context)
-        val verifiedCapture = withContext(Dispatchers.IO) {
-            NonRootRuntimeCaptureCoordinator.captureMaps(
-                packageName = packageName,
-                probe = probe,
-                cancellation = cancellation,
-            )
-        }
-        val module = resolveIl2CppRuntimeModule(context, session.result)
-        val evidence = withContext(Dispatchers.IO) {
-            val collected = RuntimeModuleEvidenceCollector.collect(
-                artifactSha256 = session.result.index.artifactSha256,
-                moduleFile = module.file,
-                moduleName = module.moduleName,
-                capture = verifiedCapture.capture,
-                cancellation = cancellation,
-                artifactEntries = session.result.index.entries,
-            )
-            val memoryElf = if (collected.memoryMappingCandidates.isEmpty()) {
-                emptyList()
-            } else {
-                RuntimeMemoryElfValidator.validateCandidates(
-                    candidates = collected.memoryMappingCandidates,
-                    reader = ProcMemRuntimeMemoryReader(verifiedCapture.pid),
+        val plan = RuntimeEscalationPlanner.plan(session.result)
+        val requestedTargets = plan.needs
+            .filter {
+                it.firstStage.ordinal <=
+                    RuntimeEscalationStage.NON_ROOT_RUNTIME.ordinal
+            }
+            .mapTo(linkedSetOf()) { it.targetId }
+
+        try {
+            require(requestedTargets.isNotEmpty()) {
+                "No unresolved runtime confirmation target requires non-root runtime."
+            }
+            val packageName = requireNotNull(session.packageName) {
+                "Non-root runtime auto-discovery is available only for an installed-app target."
+            }
+            val probe = AndroidNonRootProcessProbe(context)
+            val verifiedCapture = withContext(Dispatchers.IO) {
+                NonRootRuntimeCaptureCoordinator.captureMaps(
+                    packageName = packageName,
+                    probe = probe,
                     cancellation = cancellation,
                 )
             }
-            collected.copy(
-                memoryElfEvidence = memoryElf,
-                processIdentity = packageName,
-                processIdentityConfirmed = true,
+            val module = resolveIl2CppRuntimeModule(context, session.result)
+            val evidence = withContext(Dispatchers.IO) {
+                val collected = RuntimeModuleEvidenceCollector.collect(
+                    artifactSha256 = session.result.index.artifactSha256,
+                    moduleFile = module.file,
+                    moduleName = module.moduleName,
+                    capture = verifiedCapture.capture,
+                    cancellation = cancellation,
+                    artifactEntries = session.result.index.entries,
+                )
+                val memoryElf = if (collected.memoryMappingCandidates.isEmpty()) {
+                    emptyList()
+                } else {
+                    RuntimeMemoryElfValidator.validateCandidates(
+                        candidates = collected.memoryMappingCandidates,
+                        reader = ProcMemRuntimeMemoryReader(verifiedCapture.pid),
+                        cancellation = cancellation,
+                    )
+                }
+                collected.copy(
+                    memoryElfEvidence = memoryElf,
+                    processIdentity = packageName,
+                    processIdentityConfirmed = true,
+                )
+            }
+            val integrated = RuntimeEvidenceIntegrator.integrate(
+                result = session.result,
+                evidence = evidence,
+                procMapsText = verifiedCapture.capture.text,
+            )
+
+            val resolvedTargets = integrated.evidenceGraph
+                ?.targets
+                .orEmpty()
+                .asSequence()
+                .filter { it.id in requestedTargets }
+                .filter {
+                    it.proofLevel.ordinal >=
+                        ProofLevel.RUNTIME_CONFIRMED.ordinal
+                }
+                .mapTo(linkedSetOf()) { it.id }
+            val unresolvedTargets = requestedTargets - resolvedTargets
+            val attempt = RuntimeStageAttempt(
+                stage = RuntimeEscalationStage.NON_ROOT_RUNTIME,
+                state = if (unresolvedTargets.isEmpty()) {
+                    RuntimeStageAttemptState.COMPLETED
+                } else {
+                    RuntimeStageAttemptState.BLOCKED
+                },
+                attemptedAtEpochMs = System.currentTimeMillis(),
+                requestedTargetIds = requestedTargets,
+                resolvedTargetIds = resolvedTargets,
+                blockers = if (unresolvedTargets.isEmpty()) {
+                    emptyList()
+                } else {
+                    listOf(
+                        RuntimeStageBlocker(
+                            code = "NON_ROOT_EVIDENCE_UNRESOLVED",
+                            message =
+                                "Non-root capture completed, but runtime proof remains unresolved for: " +
+                                    unresolvedTargets.sorted().joinToString(),
+                            category = RuntimeStageBlockerCategory.EVIDENCE_GAP,
+                        ),
+                    )
+                },
+            )
+            val withAttempt = appendAttempt(
+                result = integrated,
+                attempt = attempt,
+            )
+            val withEvidence = persistRuntimeEvidence(
+                context = context,
+                session = session,
+                integrated = withAttempt,
+                fallbackEvidence = evidence,
+            )
+            return persistRuntimeAttempts(
+                context = context,
+                session = withEvidence,
+            )
+        } catch (failure: Throwable) {
+            if (failure is AnalysisCancelledException) throw failure
+
+            val attempt = RuntimeStageAttemptRecorder.blockedAttempt(
+                stage = RuntimeEscalationStage.NON_ROOT_RUNTIME,
+                requestedTargetIds = requestedTargets,
+                failure = failure,
+            )
+            val updated = appendAttempt(
+                result = session.result,
+                attempt = attempt,
+            ).copy(
+                engineWarnings = (
+                    session.result.engineWarnings +
+                        "runtime.non-root: " +
+                        (failure.message ?: failure.javaClass.simpleName)
+                    ).distinct(),
+            )
+            return persistRuntimeAttempts(
+                context = context,
+                session = session.withResult(updated),
             )
         }
-        val integrated = RuntimeEvidenceIntegrator.integrate(
-            result = session.result,
-            evidence = evidence,
-            procMapsText = verifiedCapture.capture.text,
-        )
-        return persistRuntimeEvidence(
-            context = context,
-            session = session,
-            integrated = integrated,
-            fallbackEvidence = evidence,
-        )
     }
 
     suspend fun runEngine(
@@ -325,6 +436,52 @@ object ExpertLabSessionController {
             file = moduleFile,
             moduleName = moduleName,
         )
+    }
+
+    private fun appendAttempt(
+        result: FastAnalysisResult,
+        attempt: RuntimeStageAttempt,
+    ): FastAnalysisResult {
+        val ledger = RuntimeStageAttemptRecorder.append(
+            artifactSha256 = result.index.artifactSha256,
+            existing = result.runtimeStageAttempts,
+            attempt = attempt,
+        )
+        return result.copy(
+            runtimeStageAttempts = ledger.attempts,
+        )
+    }
+
+    private suspend fun persistRuntimeAttempts(
+        context: Context,
+        session: ExpertLabSession,
+    ): ExpertLabSession {
+        val ledger = RuntimeStageAttemptRecorder.append(
+            artifactSha256 = session.result.index.artifactSha256,
+            existing = session.result.runtimeStageAttempts.dropLast(1),
+            attempt = session.result.runtimeStageAttempts.lastOrNull()
+                ?: return session,
+        )
+        val persisted = withContext(Dispatchers.IO) {
+            EngineResultCache(
+                File(context.filesDir, "analysis-cache"),
+            ).saveRuntimeStageAttempts(
+                artifactSha256 = session.result.index.artifactSha256,
+                ledger = ledger,
+            )
+        }
+        return if (persisted) {
+            session
+        } else {
+            session.withResult(
+                session.result.copy(
+                    engineWarnings = (
+                        session.result.engineWarnings +
+                            "runtime.stage-attempts: persistence failed"
+                        ).distinct(),
+                ),
+            )
+        }
     }
 
     private suspend fun persistRuntimeEvidence(
