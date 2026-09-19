@@ -19,6 +19,7 @@ enum class RuntimeEvidenceObservationKind {
     METHOD_EXECUTION_CONFIRMED,
     FIELD_VALUE_OBSERVED,
     JNI_DLSYM_OBSERVED,
+    MEMORY_ELF_VALIDATED,
 }
 
 enum class RuntimeEvidenceObservationStrength {
@@ -190,6 +191,40 @@ object RuntimeEvidenceContract {
                         "runtimeVA=0x" + address.runtimeVirtualAddress.toString(16),
                     ),
                     proofLevel = ProofLevel.RUNTIME_CONFIRMED,
+                )
+            }
+
+        bundle.memoryElfEvidence
+            .filter { it.validated }
+            .forEach { memoryElf ->
+                projected += RuntimeEvidenceObservation(
+                    id = "runtime:memory-elf:" +
+                        memoryElf.headerAddress.toString(16),
+                    kind = RuntimeEvidenceObservationKind.MEMORY_ELF_VALIDATED,
+                    strength = RuntimeEvidenceObservationStrength.CONFIRMED,
+                    subjectId = memoryElf.candidatePath,
+                    artifactSha256 = bundle.artifactSha256,
+                    captureSha256 = bundle.procMapsSha256,
+                    captureSource = bundle.captureSource,
+                    capturedAtEpochMs = bundle.capturedAtEpochMs,
+                    summary =
+                        "Executable special mapping contains a structurally validated in-memory ELF image.",
+                    supportingFacts = buildList {
+                        add(
+                            "headerAddress=0x" +
+                                memoryElf.headerAddress.toString(16),
+                        )
+                        memoryElf.machine?.let { add("machine=$it") }
+                        memoryElf.elfType?.let { add("elfType=$it") }
+                        memoryElf.programHeaderCount?.let {
+                            add("programHeaders=$it")
+                        }
+                        add("loadSegments=" + memoryElf.loadSegmentCount)
+                        add(
+                            "executableLoadSegments=" +
+                                memoryElf.executableLoadSegmentCount,
+                        )
+                    },
                 )
             }
 
