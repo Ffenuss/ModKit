@@ -1,5 +1,7 @@
 package io.github.ffenuss.modkit.analysis
 
+import io.github.ffenuss.modkit.runtime.RuntimeEvidenceBundle
+
 enum class DetectionStatus {
     CONFIRMED,
     LIKELY,
@@ -44,6 +46,7 @@ data class FastAnalysisResult(
     val il2cppEvidence: ExecutableBindingEvidence? = null,
     val evidenceGraph: EvidenceGraph? = null,
     val confirmationQueue: List<ConfirmationRequest> = emptyList(),
+    val runtimeEvidence: RuntimeEvidenceBundle? = null,
     val engineCacheHits: Set<String> = emptySet(),
     val engineWarnings: List<String> = emptyList(),
 )
