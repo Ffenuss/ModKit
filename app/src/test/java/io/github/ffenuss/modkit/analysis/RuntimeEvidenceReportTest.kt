@@ -69,8 +69,10 @@ class RuntimeEvidenceReportTest {
 
             assertTrue(text.contains("schemaVersion: 2"))
             assertTrue(text.contains("engineVersion: expert-lab-report/2"))
-            assertTrue(text.contains("engineVersion: runtime.evidence/1"))
+            assertTrue(text.contains("engineVersion: runtime.evidence/2"))
             assertTrue(text.contains("captureSource: IMPORTED_SNAPSHOT"))
+            assertTrue(text.contains("processIdentity: not_confirmed"))
+            assertTrue(text.contains("processIdentityConfirmed: false"))
             assertTrue(
                 text.contains(
                     "capturePid: not_available_imported_snapshot",
