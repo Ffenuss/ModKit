@@ -2,6 +2,7 @@ package io.github.ffenuss.modkit.analysis
 
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceBundle
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceIntegrator
+import io.github.ffenuss.modkit.runtime.RuntimeStageAttemptLedger
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -53,12 +54,14 @@ class EngineResultCache(
         val dump = loadIl2CppFastDump(artifactSha256)
         val binding = loadIl2CppBinaryBinding(artifactSha256)
         val runtimeEvidence = loadRuntimeEvidence(artifactSha256)
+        val runtimeAttempts = loadRuntimeStageAttempts(artifactSha256)
         val cacheHits = buildSet {
             add(ARTIFACT_INDEX_ENGINE_ID)
             if (elfInventory != null) add(UNIVERSAL_ELF_INVENTORY_ENGINE_ID)
             if (dump != null) add(IL2CPP_FAST_DUMP_ENGINE_ID)
             if (binding != null) add(IL2CPP_BINARY_BINDING_ENGINE_ID)
             if (runtimeEvidence != null) add(RUNTIME_EVIDENCE_ENGINE_ID)
+            if (runtimeAttempts != null) add(RUNTIME_STAGE_ATTEMPTS_ENGINE_ID)
         }
 
         var result = FastAnalysisResult(
@@ -68,6 +71,7 @@ class EngineResultCache(
             elfInventory = elfInventory,
             il2cppFastDump = dump,
             il2cppBinaryBinding = binding,
+            runtimeStageAttempts = runtimeAttempts?.attempts.orEmpty(),
             engineCacheHits = cacheHits,
         )
         if (dump != null) {
@@ -200,6 +204,33 @@ class EngineResultCache(
         )
     }
 
+    fun loadRuntimeStageAttempts(
+        artifactSha256: String,
+    ): RuntimeStageAttemptLedger? =
+        load(
+            artifactSha256 = artifactSha256,
+            engineId = RUNTIME_STAGE_ATTEMPTS_ENGINE_ID,
+            engineVersion = RUNTIME_STAGE_ATTEMPTS_ENGINE_VERSION,
+            type = RuntimeStageAttemptLedger::class.java,
+        )?.takeIf {
+            it.artifactSha256.equals(artifactSha256, ignoreCase = true)
+        }
+
+    fun saveRuntimeStageAttempts(
+        artifactSha256: String,
+        ledger: RuntimeStageAttemptLedger,
+    ): Boolean {
+        if (!ledger.artifactSha256.equals(artifactSha256, ignoreCase = true)) {
+            return false
+        }
+        return save(
+            artifactSha256 = artifactSha256,
+            engineId = RUNTIME_STAGE_ATTEMPTS_ENGINE_ID,
+            engineVersion = RUNTIME_STAGE_ATTEMPTS_ENGINE_VERSION,
+            payload = ledger,
+        )
+    }
+
     private fun <T : Serializable> load(
         artifactSha256: String,
         engineId: String,
@@ -317,5 +348,8 @@ class EngineResultCache(
 
         const val RUNTIME_EVIDENCE_ENGINE_ID = "runtime.evidence"
         const val RUNTIME_EVIDENCE_ENGINE_VERSION = "3"
+
+        const val RUNTIME_STAGE_ATTEMPTS_ENGINE_ID = "runtime.stage-attempts"
+        const val RUNTIME_STAGE_ATTEMPTS_ENGINE_VERSION = "1"
     }
 }
