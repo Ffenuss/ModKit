@@ -53,6 +53,7 @@ sealed interface AnalysisRunState {
     data class Cancelled(
         val runId: Long,
         val target: AnalysisTargetDescriptor,
+        val partialResult: FastAnalysisResult? = null,
     ) : AnalysisRunState
 
     data class Failed(
