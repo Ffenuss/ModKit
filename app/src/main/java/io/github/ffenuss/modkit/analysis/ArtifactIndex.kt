@@ -16,7 +16,7 @@ data class ArtifactIndex(
     val runtimeProfiles: List<RuntimeProfile> = emptyList(),
     val truncated: Boolean = false,
     val warnings: List<String> = emptyList(),
-)
+) : java.io.Serializable
 
 data class ArtifactEntry(
     val container: String,
@@ -27,4 +27,4 @@ data class ArtifactEntry(
     val format: BinaryFormat = BinaryFormat.UNKNOWN,
     val abi: String? = null,
     val tags: Set<String> = emptySet(),
-)
+) : java.io.Serializable
