@@ -672,6 +672,22 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                 }
+                                if (runtimeEvidence.memoryMappingCandidates.isNotEmpty()) {
+                                    Text(
+                                        "Memory-backed executable candidates: " +
+                                            runtimeEvidence.memoryMappingCandidates.size +
+                                            " · пока только кандидаты до проверки ELF header в памяти",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                runtimeEvidence.memoryMappingCandidates.take(6).forEach { candidate ->
+                                    Text(
+                                        "• 0x" + candidate.start.toString(16) +
+                                            "-0x" + candidate.endExclusive.toString(16) +
+                                            " · " + (candidate.path ?: "anonymous"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                             }
                         }
                     }
