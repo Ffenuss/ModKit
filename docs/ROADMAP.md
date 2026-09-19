@@ -110,12 +110,15 @@ Status: **ACTIVE**
 - [x] Fail-closed module mapping proof from `PT_LOAD + file offset + device/inode + executable mapping`
 - [x] RVA → runtime VA for targets that already have exact binary proof
 - [x] Feed confirmed runtime address proof back into Evidence Graph without promoting to CHANGE_READY
-- [x] Expert Lab manual process-maps confirmation and technical-report export
+- [x] Expert Lab manual process-maps mapping diagnostics and technical-report export
 - [x] Typed runtime evidence contract separating process/module/mapping/address/execution/field/JNI-dlsym observations
 - [x] SHA-bound runtime evidence persistence and fail-closed snapshot restoration
 - [x] Versioned Expert Lab runtime report with explicit capture provenance and unresolved reasons
 - [x] Fail-closed repacked-test runtime architecture with explicit executor capability gates
 - [x] Verified read-only source-copy workspace with SHA revalidation and scoped cleanup
+- [x] Non-root installed-app process discovery with exact `/proc/<pid>/cmdline` identity proof
+- [x] PID-reuse guard by rechecking process identity before and after bounded maps capture
+- [x] Automatic non-root maps capture/integration when the main process is uniquely confirmed and readable
 - [ ] Automatic in-process capture from a transparent repacked test runtime
 - [ ] Runtime memory-ELF validation for stripped/relocated modules
 - [ ] JNI/dlsym runtime confirmation where static evidence is insufficient
