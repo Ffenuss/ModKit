@@ -52,7 +52,7 @@ class RepackedTestRuntimeTest {
             RepackedRuntimeCapability.PACKAGE_VERIFY in
                 plan.registeredCapabilities,
         )
-        assertFalse(
+        assertTrue(
             RepackedRuntimeCapability.BINARY_MANIFEST_REWRITE in
                 plan.registeredCapabilities,
         )
@@ -60,7 +60,7 @@ class RepackedTestRuntimeTest {
             RepackedRuntimeCapability.PROBE_PAYLOAD_INJECTION in
                 plan.registeredCapabilities,
         )
-        assertTrue(
+        assertFalse(
             plan.blockers.any {
                 it.code ==
                     "BINARY_MANIFEST_REWRITE_NOT_REGISTERED"
