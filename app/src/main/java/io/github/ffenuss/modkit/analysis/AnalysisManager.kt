@@ -441,7 +441,13 @@ object AnalysisManager {
     ) {
         synchronized(lock) {
             if (currentRunId() == runId) {
-                mutableState.value = AnalysisRunState.Cancelled(runId, target)
+                val partial = when (val current = mutableState.value) {
+                    is AnalysisRunState.Running -> current.partialResult
+                    is AnalysisRunState.Cancelling -> current.partialResult
+                    is AnalysisRunState.Stalled -> current.partialResult
+                    else -> null
+                }
+                mutableState.value = AnalysisRunState.Cancelled(runId, target, partial)
                 store?.write(
                     AnalysisRunStore.CANCELLED,
                     runId,
