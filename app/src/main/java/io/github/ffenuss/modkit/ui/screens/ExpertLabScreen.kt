@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
+import io.github.ffenuss.modkit.analysis.ExpertCapabilityValidator
 import io.github.ffenuss.modkit.analysis.ExpertLabSession
 import io.github.ffenuss.modkit.analysis.ExpertLabSessionController
 import io.github.ffenuss.modkit.analysis.ProgressSink
@@ -389,6 +390,38 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 }
             }
 
+            val capabilityReport = ExpertCapabilityValidator.validate(
+                current.result.routingPlan,
+            )
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            "Capability validation",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            if (capabilityReport.valid) {
+                                "Router и реально зарегистрированные executors согласованы."
+                            } else {
+                                "Обнаружено несоответствие capability-модели; прямой запуск соответствующего backend заблокирован."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        capabilityReport.blockers.forEach {
+                            Text(
+                                "• " + it,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+
             item {
                 Text("Backend routing", fontWeight = FontWeight.SemiBold)
             }
@@ -424,9 +457,13 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         } else {
+                            val capability = capabilityReport.capabilities
+                                .singleOrNull { it.engineId == engine.id }
                             Button(
                                 onClick = { runEngine(engine.id) },
-                                enabled = engine.availableNow && !busy,
+                                enabled = engine.availableNow &&
+                                    capability?.consistent != false &&
+                                    !busy,
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text("Запустить только этот backend")
