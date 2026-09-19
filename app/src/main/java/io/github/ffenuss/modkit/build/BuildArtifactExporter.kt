@@ -8,6 +8,29 @@ import io.github.ffenuss.modkit.BuildConfig
 import java.util.ArrayList
 
 object BuildArtifactExporter {
+    fun shareReport(
+        context: Context,
+        result: VerifiedBuildResult,
+    ) {
+        require(result.reportFile.isFile) { "Build report is unavailable for export." }
+        val authority = BuildConfig.APPLICATION_ID + ".files"
+        val uri = FileProvider.getUriForFile(
+            context,
+            authority,
+            result.reportFile,
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, "ModKit verified build report")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(
+            Intent.createChooser(intent, "Экспорт отчёта сборки")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+
     fun share(
         context: Context,
         result: VerifiedBuildResult,
