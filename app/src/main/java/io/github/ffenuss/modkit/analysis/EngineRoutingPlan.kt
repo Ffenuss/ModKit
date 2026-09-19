@@ -59,8 +59,9 @@ object EngineRouter {
             targeted(
                 id = "il2cpp.fast-dump",
                 reason = "Validated global-metadata.dat + libil2cpp.so pair",
-                missingText = "IL2CPP fast dump / CodeGen exact binding is the next top-priority migration",
+                available = true,
             )
+            missing += "IL2CPP exact CodeGen / metadata-to-binary binding is not implemented yet"
         }
         if ("unity_mono" in runtimes || "dotnet_android" in runtimes) {
             targeted(
