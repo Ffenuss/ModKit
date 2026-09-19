@@ -1,9 +1,9 @@
-# ModKit / UniRevLab Security vNext — Canonical Technical Specification
+# ModKit — Canonical Technical Specification
 
 > **Status:** CANONICAL / source of truth for further development  
-> **Repository:** `Ffenuss/UniRevLab-Security`  
-> **Working branch:** `Modkit1`  
-> **Protected branch:** `main` — do not modify or merge without explicit user instruction.
+> **Repository:** `Ffenuss/ModKit`  
+> **Current development branch:** `main`  
+> This is the clean public ModKit repository. Legacy implementations may be reviewed selectively, but this repository is the source of truth for new development.
 
 ## 0. Non-negotiable interpretation rule
 
