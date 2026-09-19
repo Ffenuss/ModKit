@@ -31,8 +31,10 @@ fun AnalysisScreen(
     cancelled: Boolean,
     cancelling: Boolean,
     stalledAgeMs: Long?,
+    canSkipStalled: Boolean,
     onCancel: () -> Unit,
     onRetry: () -> Unit,
+    onSkip: () -> Unit,
     onBack: () -> Unit,
 ) {
     LazyColumn(
@@ -115,8 +117,13 @@ fun AnalysisScreen(
                                         Button(onClick = onRetry, modifier = Modifier.weight(1f)) {
                                             Text("Повторить")
                                         }
+                                        if (canSkipStalled) {
+                                            OutlinedButton(onClick = onSkip, modifier = Modifier.weight(1f)) {
+                                                Text("Пропустить")
+                                            }
+                                        }
                                         OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
-                                            Text("Остановить")
+                                            Text("Стоп")
                                         }
                                     }
                                 } else {
