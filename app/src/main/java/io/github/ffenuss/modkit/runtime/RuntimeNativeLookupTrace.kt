@@ -15,6 +15,11 @@ enum class RuntimeNativeTraceSource {
     ROOT_RUNTIME,
 }
 
+enum class RuntimeNativeAcquisitionMode {
+    PASSIVE_TRACE,
+    TARGETED_PROBE,
+}
+
 data class RuntimeNativeLookupEvent(
     val index: Int,
     val kind: RuntimeNativeLookupKind,
@@ -52,6 +57,8 @@ data class RuntimeNativeTraceCapture(
     val text: String,
     val sha256: String,
     val truncated: Boolean,
+    val acquisitionMode: RuntimeNativeAcquisitionMode =
+        RuntimeNativeAcquisitionMode.PASSIVE_TRACE,
 ) : Serializable
 
 data class RuntimeNativeTraceParseResult(
@@ -94,6 +101,8 @@ object RuntimeNativeTraceParser {
         source: RuntimeNativeTraceSource,
         text: String,
         capturedAtEpochMs: Long = System.currentTimeMillis(),
+        acquisitionMode: RuntimeNativeAcquisitionMode =
+            RuntimeNativeAcquisitionMode.PASSIVE_TRACE,
     ): RuntimeNativeTraceCapture {
         val bytes = text.toByteArray(Charsets.UTF_8)
         val truncated = bytes.size > MAX_TRACE_BYTES
@@ -112,6 +121,7 @@ object RuntimeNativeTraceParser {
             text = retained.toString(Charsets.UTF_8),
             sha256 = sha256(retained),
             truncated = truncated,
+            acquisitionMode = acquisitionMode,
         )
     }
 
@@ -345,7 +355,8 @@ object RuntimeNativeLookupValidator {
                 captureSha256 = capture.sha256,
                 captureSource = runtimeEvidence.captureSource,
                 capturedAtEpochMs = capture.capturedAtEpochMs,
-                summary = event.kind.name +
+                summary = capture.acquisitionMode.name +
+                    " " + event.kind.name +
                     " observed for " + event.displayIdentity +
                     " in " + event.moduleName +
                     " at 0x" + event.resolvedRuntimeAddress.toString(16),
@@ -353,6 +364,10 @@ object RuntimeNativeLookupValidator {
                     add("pid=" + capture.pid)
                     add("processIdentity=" + capture.processIdentity)
                     add("traceSource=" + capture.source.name)
+                    add(
+                        "acquisitionMode=" +
+                            capture.acquisitionMode.name,
+                    )
                     add("module=" + event.moduleName)
                     add(
                         "runtimeAddress=0x" +
@@ -403,6 +418,7 @@ enum class RuntimeNativeTraceCapability {
     REPACKED_TRACE_CAPTURE,
     NON_ROOT_TRACE_CAPTURE,
     ROOT_TRACE_CAPTURE,
+    REPACKED_TARGETED_DLSYM_PROBE,
 }
 
 object RuntimeNativeTraceCapabilityRegistry {
