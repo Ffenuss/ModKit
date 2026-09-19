@@ -33,12 +33,14 @@ object RoutedEngineScheduler {
         progress: ProgressSink,
         onPartial: (FastAnalysisResult) -> Unit,
         allowedScheduleClasses: Set<EngineScheduleClass> = EngineScheduleClass.entries.toSet(),
+        allowedEngineIds: Set<String>? = null,
     ): FastAnalysisResult {
         var result = initial
         val engines = initial.routingPlan.engines
             .asSequence()
             .filter { it.availableNow }
             .filter { it.scheduleClass in allowedScheduleClasses }
+            .filter { allowedEngineIds == null || it.id in allowedEngineIds }
             .filter { it.id != "artifact.fast-index" }
             .sortedWith(
                 compareBy<PlannedEngine> { executionOrder[it.scheduleClass] ?: Int.MAX_VALUE }
