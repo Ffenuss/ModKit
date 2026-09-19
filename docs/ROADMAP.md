@@ -68,19 +68,27 @@ Status: **ACTIVE**
 - [x] Source SHA revalidation is internal to preparation
 - [x] Fail-closed preparation plan with explicit blockers
 - [x] CHANGE_READY gate for automatic application
-- [ ] Automatically rerun any still-needed static confirmation during preparation
-- [ ] Concrete mutation selection/specification
-- [ ] Internal mutation preflight
-- [ ] One-click Build APK
+- [x] Automatically rerun any still-needed static confirmation during preparation
+- [x] Concrete mutation specification for the first exact IL2CPP native in-place executor
+- [x] Internal mutation preflight with SHA/range/conflict/executor gates
+- [x] Staging apply for supported mutation executors
+- [x] One-click Build APK after verified staging
+- [ ] Generic mutation selection/specification across the remaining backends
 
 ## Phase 5 — Verified build pipeline
-- [ ] Apply plan
-- [ ] Rebuild
-- [ ] Align
-- [ ] Sign
-- [ ] Verify
-- [ ] Mutation diff
-- [ ] Re-analyze built APK
+Status: **CORE DONE FOR CURRENT MUTATION EXECUTORS**
+
+- [x] Apply preflight-approved mutation plan to separate staging APK/APK-set
+- [x] Rewrite every APK-set member and strip stale signatures before resigning
+- [x] Pure-Java APK alignment with 16 KiB uncompressed native-library alignment checks
+- [x] Sign with app-private AndroidKeyStore development identity
+- [x] Verify APK signatures with Android apksig
+- [x] PackageManager installability sanity verification
+- [x] Mutation diff verification after signing
+- [x] Re-analyze final signed APK/APK-set
+- [x] Human-readable verified build report
+- [x] Export final APK/APK-set and build report through a scoped FileProvider
+- [ ] Customer/release signing identity selection/import
 
 ## Phase 6 — Expert Lab
 - [ ] Direct backend execution
