@@ -65,9 +65,9 @@ data class RepackedTestRuntimePlan(
  *
  * This planner never claims availability from design intent. A capability is
  * usable only when its concrete executor is supplied by the caller/registry.
- * Registered capabilities below correspond to concrete executors already
- * present in the clean repository. Instrumentation/launch/capture remain
- * unavailable until their executors exist.
+ * Registered capabilities below correspond only to concrete executors already
+ * present in the clean repository. Readiness still depends on a runtime need
+ * and each executor can fail closed on its own input/environment prerequisites.
  */
 object RepackedTestRuntimePlanner {
     val requiredCapabilities: Set<RepackedRuntimeCapability> = setOf(
