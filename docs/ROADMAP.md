@@ -116,6 +116,8 @@ Status: **ACTIVE**
 - [x] Versioned Expert Lab runtime report with explicit capture provenance and unresolved reasons
 - [x] Fail-closed repacked-test runtime architecture with explicit executor capability gates
 - [x] Verified read-only source-copy workspace with SHA revalidation and scoped cleanup
+- [x] Repacked test build tail reuses real signature-strip/alignment/signing/package-verification stages
+- [x] Repacked test build report records signer, alignment, signature and final APK SHA
 - [x] Non-root installed-app process discovery with exact `/proc/<pid>/cmdline` identity proof
 - [x] PID-reuse guard by rechecking process identity before and after bounded maps capture
 - [x] Automatic non-root maps capture/integration when the main process is uniquely confirmed and readable
