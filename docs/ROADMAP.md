@@ -120,7 +120,7 @@ Status: **ACTIVE**
 - [x] PID-reuse guard by rechecking process identity before and after bounded maps capture
 - [x] Automatic non-root maps capture/integration when the main process is uniquely confirmed and readable
 - [ ] Automatic in-process capture from a transparent repacked test runtime
-- [ ] Runtime memory-ELF validation for stripped/relocated modules
+- [x] Bounded runtime memory-ELF validation for special/deleted executable mappings without proof escalation
 - [ ] JNI/dlsym runtime confirmation where static evidence is insufficient
 - [ ] Root runtime only for evidence that remains unresolved after non-root stages
 
