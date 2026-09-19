@@ -41,5 +41,6 @@ data class FastAnalysisResult(
     val elapsedMs: Long,
     val il2cppFastDump: Il2CppFastDumpResult? = null,
     val il2cppBinaryBinding: Il2CppBinaryBindingResult? = null,
+    val il2cppEvidence: ExecutableBindingEvidence? = null,
     val engineWarnings: List<String> = emptyList(),
 )
