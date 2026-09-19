@@ -55,8 +55,9 @@ class RepackedRuntimeReportTest {
                     "BINARY_MANIFEST_REWRITE_NOT_REGISTERED",
                 ),
             )
+            assertTrue(text.contains("PROBE_PAYLOAD_INJECTION"))
             assertTrue(
-                text.contains(
+                !text.contains(
                     "PROBE_PAYLOAD_INJECTION_NOT_REGISTERED",
                 ),
             )
