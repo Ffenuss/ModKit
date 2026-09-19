@@ -51,6 +51,8 @@ class RuntimeEvidenceReportTest {
                             endExclusive = 0x70001000,
                             permissions = "r-xp",
                             path = null,
+                            fileOffset = 0,
+                            fileZeroAddressCandidate = 0x70000000,
                             reason = "Executable mapping has no file path.",
                         ),
                     ),
@@ -69,7 +71,7 @@ class RuntimeEvidenceReportTest {
 
             assertTrue(text.contains("schemaVersion: 2"))
             assertTrue(text.contains("engineVersion: expert-lab-report/2"))
-            assertTrue(text.contains("engineVersion: runtime.evidence/2"))
+            assertTrue(text.contains("engineVersion: runtime.evidence/3"))
             assertTrue(text.contains("captureSource: IMPORTED_SNAPSHOT"))
             assertTrue(text.contains("processIdentity: not_confirmed"))
             assertTrue(text.contains("processIdentityConfirmed: false"))
@@ -82,6 +84,8 @@ class RuntimeEvidenceReportTest {
             assertTrue(text.contains("PROCESS_OBSERVED"))
             assertTrue(text.contains("not_resolved"))
             assertTrue(text.contains("anonymous_or_special_mapping"))
+            assertTrue(text.contains("fileZeroAddressCandidate: 0x70000000"))
+            assertTrue(text.contains("MEMORY-BACKED ELF VALIDATION"))
             assertFalse(text.contains("loadBias: null"))
             assertFalse(text.contains("path: null"))
         } finally {
