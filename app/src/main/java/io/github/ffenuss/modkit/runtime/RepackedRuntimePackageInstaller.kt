@@ -235,7 +235,7 @@ object AndroidRepackedRuntimeInstaller {
         packageName: String,
     ): Intent =
         Intent(
-            Intent.ACTION_DELETE,
+            Intent.ACTION_UNINSTALL_PACKAGE,
             Uri.parse("package:$packageName"),
         ).apply {
             putExtra(Intent.EXTRA_RETURN_RESULT, false)
