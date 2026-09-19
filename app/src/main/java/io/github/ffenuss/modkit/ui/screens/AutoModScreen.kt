@@ -395,6 +395,11 @@ fun AutoModScreen(
                             "Mutation diff: подтверждён · файлов: " + built.files.size,
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        Text(
+                            "Устанавливаемость: подтверждена · package " +
+                                (built.installability.packageName ?: "не определён"),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                         val post = built.postBuildAnalysis
                         Text(
                             "Повторный анализ: runtime " +
