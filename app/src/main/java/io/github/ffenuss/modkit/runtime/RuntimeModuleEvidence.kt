@@ -7,11 +7,11 @@ import io.github.ffenuss.modkit.analysis.ElfImage
 import io.github.ffenuss.modkit.analysis.ElfLoadSegment
 import io.github.ffenuss.modkit.analysis.EvidenceFact
 import io.github.ffenuss.modkit.analysis.EvidenceGraph
-import io.github.ffenuss.modkit.analysis.EvidenceTarget
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.UserFindingStatus
 import io.github.ffenuss.modkit.domain.ProofLevel
 import java.io.File
+import java.io.Serializable
 import java.security.MessageDigest
 
 data class RuntimeModuleMappingEvidence(
@@ -25,7 +25,7 @@ data class RuntimeModuleMappingEvidence(
     val zeroOffsetMappingMatched: Boolean,
     val confirmed: Boolean,
     val blockers: List<String>,
-)
+) : Serializable
 
 data class RuntimeAddressConfirmation(
     val targetId: String,
@@ -34,7 +34,7 @@ data class RuntimeAddressConfirmation(
     val rva: Long,
     val runtimeVirtualAddress: Long,
     val executableMappingContainsAddress: Boolean,
-)
+) : Serializable
 
 data class RuntimeEvidenceBundle(
     val artifactSha256: String,
@@ -47,7 +47,8 @@ data class RuntimeEvidenceBundle(
     val captureSource: ProcMapsCaptureSource = ProcMapsCaptureSource.IMPORTED_SNAPSHOT,
     val capturePid: Int? = null,
     val capturedAtEpochMs: Long? = null,
-)
+    val additionalObservations: List<RuntimeEvidenceObservation> = emptyList(),
+) : Serializable
 
 /**
  * Reconciles /proc/<pid>/maps with ELF PT_LOAD segments.
@@ -303,15 +304,8 @@ object RuntimeEvidenceIntegrator {
         evidence: RuntimeEvidenceBundle,
         procMapsText: String,
     ): FastAnalysisResult {
-        if (!evidence.artifactSha256.equals(
-                result.index.artifactSha256,
-                ignoreCase = true,
-            )
-        ) {
-            return result.copy(
-                engineWarnings = result.engineWarnings +
-                    "runtime.evidence: artifact SHA mismatch",
-            )
+        if (!artifactMatches(result, evidence)) {
+            return artifactMismatch(result)
         }
         if (
             !evidence.procMapsSha256.equals(
@@ -325,7 +319,8 @@ object RuntimeEvidenceIntegrator {
             )
         }
 
-        val graph = result.evidenceGraph ?: return result
+        val graph = result.evidenceGraph
+            ?: return result.copy(runtimeEvidence = evidence)
         val regions = ProcMapsParser.parse(procMapsText)
         val confirmations = mutableListOf<RuntimeAddressConfirmation>()
 
@@ -398,12 +393,124 @@ object RuntimeEvidenceIntegrator {
                 targets = updatedTargets,
             ),
             runtimeEvidence = integrated,
-            confirmationQueue = result.confirmationQueue.filterNot { request ->
-                confirmations.any { it.targetId == request.targetId } &&
-                    request.requiredProofLevel.ordinal <=
-                    ProofLevel.RUNTIME_CONFIRMED.ordinal
-            },
+            confirmationQueue = removeSatisfiedRuntimeRequests(
+                result = result,
+                confirmations = integrated.addressConfirmations,
+            ),
         )
+    }
+
+    /**
+     * Restores historical runtime confirmation from the SHA-bound cache.
+     *
+     * No live-process claim is made here. A target is restored to
+     * RUNTIME_CONFIRMED only when the persisted module mapping and address
+     * confirmation are internally consistent with the freshly restored
+     * EXACT_BINARY target. CHANGE_READY is never granted by this path.
+     */
+    fun restorePersistedSnapshot(
+        result: FastAnalysisResult,
+        evidence: RuntimeEvidenceBundle,
+    ): FastAnalysisResult {
+        if (!artifactMatches(result, evidence)) {
+            return artifactMismatch(result)
+        }
+
+        val graph = result.evidenceGraph
+            ?: return result.copy(runtimeEvidence = evidence)
+
+        val accepted = mutableListOf<RuntimeAddressConfirmation>()
+        val updatedTargets = graph.targets.map { target ->
+            if (
+                target.proofLevel != ProofLevel.EXACT_BINARY ||
+                target.binaryVirtualAddress == null ||
+                target.artifact.isNullOrBlank()
+            ) {
+                return@map target
+            }
+
+            val confirmation = evidence.addressConfirmations.singleOrNull {
+                it.targetId == target.id &&
+                    it.binaryVirtualAddress == target.binaryVirtualAddress &&
+                    it.executableMappingContainsAddress
+            } ?: return@map target
+
+            val moduleName = target.artifact.substringAfterLast('/')
+            if (confirmation.moduleName != moduleName) return@map target
+
+            val mapping = evidence.moduleMappings.singleOrNull {
+                it.confirmed && it.moduleName == moduleName
+            } ?: return@map target
+            val loadBias = mapping.loadBias ?: return@map target
+            val imageBase = mapping.elfImageBaseVirtualAddress ?: return@map target
+            if (target.binaryVirtualAddress < imageBase) return@map target
+
+            val expectedRva = target.binaryVirtualAddress - imageBase
+            val expectedRuntimeVa = safeAdd(
+                loadBias,
+                target.binaryVirtualAddress,
+            ) ?: return@map target
+            if (
+                confirmation.rva != expectedRva ||
+                confirmation.runtimeVirtualAddress != expectedRuntimeVa
+            ) {
+                return@map target
+            }
+
+            accepted += confirmation
+            target.copy(
+                rva = expectedRva,
+                runtimeVirtualAddress = expectedRuntimeVa,
+                proofLevel = ProofLevel.RUNTIME_CONFIRMED,
+                userStatus = UserFindingStatus.CONFIRMED,
+                facts = target.facts + EvidenceFact(
+                    engineId = "runtime.module-map",
+                    kind = "runtime-address-restored-snapshot",
+                    summary = moduleName +
+                        " captureSha=" + evidence.procMapsSha256 +
+                        " RVA=0x" + expectedRva.toString(16) +
+                        " runtimeVA=0x" + expectedRuntimeVa.toString(16),
+                ),
+            )
+        }
+
+        return result.copy(
+            evidenceGraph = EvidenceGraph(
+                artifactSha256 = graph.artifactSha256,
+                targets = updatedTargets,
+            ),
+            runtimeEvidence = evidence,
+            confirmationQueue = removeSatisfiedRuntimeRequests(
+                result = result,
+                confirmations = accepted,
+            ),
+        )
+    }
+
+    private fun artifactMatches(
+        result: FastAnalysisResult,
+        evidence: RuntimeEvidenceBundle,
+    ): Boolean =
+        evidence.artifactSha256.equals(
+            result.index.artifactSha256,
+            ignoreCase = true,
+        )
+
+    private fun artifactMismatch(
+        result: FastAnalysisResult,
+    ): FastAnalysisResult =
+        result.copy(
+            engineWarnings = result.engineWarnings +
+                "runtime.evidence: artifact SHA mismatch",
+        )
+
+    private fun removeSatisfiedRuntimeRequests(
+        result: FastAnalysisResult,
+        confirmations: List<RuntimeAddressConfirmation>,
+    ) = result.confirmationQueue.filterNot { request ->
+        confirmations.any { it.targetId == request.targetId } &&
+            request.requiredProofLevel.ordinal <=
+            ProofLevel.RUNTIME_CONFIRMED.ordinal
     }
 
     private fun safeAdd(a: Long, b: Long): Long? =
