@@ -5,6 +5,8 @@ import android.net.Uri
 import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.runtime.AndroidNonRootProcessProbe
 import io.github.ffenuss.modkit.runtime.NonRootRuntimeCaptureCoordinator
+import io.github.ffenuss.modkit.runtime.ProcMemRuntimeMemoryReader
+import io.github.ffenuss.modkit.runtime.RuntimeMemoryElfValidator
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceBundle
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceIntegrator
 import io.github.ffenuss.modkit.runtime.RuntimeModuleEvidenceCollector
@@ -205,7 +207,7 @@ object ExpertLabSessionController {
         }
         val module = resolveIl2CppRuntimeModule(context, session.result)
         val evidence = withContext(Dispatchers.IO) {
-            RuntimeModuleEvidenceCollector.collect(
+            val collected = RuntimeModuleEvidenceCollector.collect(
                 artifactSha256 = session.result.index.artifactSha256,
                 moduleFile = module.file,
                 moduleName = module.moduleName,
@@ -213,10 +215,21 @@ object ExpertLabSessionController {
                 cancellation = cancellation,
                 artifactEntries = session.result.index.entries,
             )
-        }.copy(
-            processIdentity = packageName,
-            processIdentityConfirmed = true,
-        )
+            val memoryElf = if (collected.memoryMappingCandidates.isEmpty()) {
+                emptyList()
+            } else {
+                RuntimeMemoryElfValidator.validateCandidates(
+                    candidates = collected.memoryMappingCandidates,
+                    reader = ProcMemRuntimeMemoryReader(verifiedCapture.pid),
+                    cancellation = cancellation,
+                )
+            }
+            collected.copy(
+                memoryElfEvidence = memoryElf,
+                processIdentity = packageName,
+                processIdentityConfirmed = true,
+            )
+        }
         val integrated = RuntimeEvidenceIntegrator.integrate(
             result = session.result,
             evidence = evidence,
