@@ -15,6 +15,13 @@ data class RepackedRuntimeInstrumentationResult(
     val probeInjection: RepackedRuntimeProbeInjectionResult,
 ) : Serializable
 
+data class RepackedRuntimeNativeInstrumentationResult(
+    val artifactSha256: String,
+    val packageName: String,
+    val base: RepackedRuntimeInstrumentationResult,
+    val nativeProbeInjection: RepackedRuntimeNativeProbeInjectionResult,
+) : Serializable
+
 /**
  * Connects the already-verified repacked-test stages into one deterministic
  * instrumentation flow. It stops before signing/build finalization so callers
@@ -37,6 +44,75 @@ object RepackedRuntimeInstrumentationCoordinator {
             outputRoot = outputRoot,
             cancellation = cancellation,
         )
+    }
+
+    fun instrumentNativeLookup(
+        context: Context,
+        workspace: AnalysisWorkspace,
+        outputRoot: File,
+        cancellation: CancellationSignal,
+    ): RepackedRuntimeNativeInstrumentationResult {
+        val dexPayload = RuntimeProbePayloadSource.load(
+            context = context,
+            cancellation = cancellation,
+        )
+        val nativePayloads =
+            RuntimeProbeNativePayloadSource.loadAll(
+                context = context,
+                cancellation = cancellation,
+            )
+        return instrumentNativeLookupWithPayloads(
+            workspace = workspace,
+            dexPayload = dexPayload,
+            nativePayloads = nativePayloads,
+            outputRoot = outputRoot,
+            cancellation = cancellation,
+        )
+    }
+
+    fun instrumentNativeLookupWithPayloads(
+        workspace: AnalysisWorkspace,
+        dexPayload: RuntimeProbePayload,
+        nativePayloads: Map<String, RuntimeProbeNativePayload>,
+        outputRoot: File,
+        cancellation: CancellationSignal,
+    ): RepackedRuntimeNativeInstrumentationResult {
+        val base = instrumentWithPayload(
+            workspace = workspace,
+            payload = dexPayload,
+            outputRoot = outputRoot,
+            cancellation = cancellation,
+        )
+        try {
+            val nativeInjection =
+                RepackedRuntimeNativeProbeInjector.inject(
+                    dexInjection = base.probeInjection,
+                    payloads = nativePayloads,
+                    outputRoot = outputRoot,
+                    cancellation = cancellation,
+                )
+            val preflight =
+                RepackedRuntimeBuildPreflight.validateNativeProbeInjection(
+                    manifestInventory = base.manifestInventory,
+                    injection = nativeInjection,
+                )
+            require(preflight.ready) {
+                preflight.blockers.firstOrNull()
+                    ?: "Native lookup instrumentation build preflight failed."
+            }
+            return RepackedRuntimeNativeInstrumentationResult(
+                artifactSha256 = base.artifactSha256,
+                packageName = base.packageName,
+                base = base,
+                nativeProbeInjection = nativeInjection,
+            )
+        } catch (failure: Throwable) {
+            cleanupOwnedStages(
+                artifactSha256 = workspace.index.artifactSha256,
+                outputRoot = outputRoot,
+            )
+            throw failure
+        }
     }
 
     fun instrumentWithPayload(
@@ -131,6 +207,7 @@ object RepackedRuntimeInstrumentationCoordinator {
             File(testRoot, "source-copy"),
             File(testRoot, "manifest-rewrite"),
             File(testRoot, "probe-injection"),
+            File(testRoot, "native-probe-injection"),
         )
         var success = true
         owned.forEach { directory ->
