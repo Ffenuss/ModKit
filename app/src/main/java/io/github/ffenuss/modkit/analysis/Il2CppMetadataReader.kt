@@ -6,7 +6,7 @@ import io.github.ffenuss.modkit.domain.RunState
 import java.io.File
 import java.io.RandomAccessFile
 
-data class Il2CppTableRange(val name: String, val offset: Long, val sizeBytes: Long)
+data class Il2CppTableRange(val name: String, val offset: Long, val sizeBytes: Long) : java.io.Serializable
 
 data class Il2CppTypeDefinition(
     val index: Int,
@@ -18,7 +18,7 @@ data class Il2CppTypeDefinition(
     val fieldStart: Int,
     val fieldCount: Int,
     val token: Long,
-)
+) : java.io.Serializable
 
 data class Il2CppMethodDefinition(
     val index: Int,
@@ -28,7 +28,7 @@ data class Il2CppMethodDefinition(
     val parameterCount: Int,
     val token: Long,
     val flags: Int,
-)
+) : java.io.Serializable
 
 data class Il2CppFieldDefinition(
     val index: Int,
@@ -37,7 +37,7 @@ data class Il2CppFieldDefinition(
     val name: String,
     val typeIndex: Int,
     val token: Long,
-)
+) : java.io.Serializable
 
 data class Il2CppImageDefinition(
     val index: Int,
@@ -46,7 +46,7 @@ data class Il2CppImageDefinition(
     val typeStart: Int,
     val typeCount: Int,
     val token: Long,
-)
+) : java.io.Serializable
 
 data class Il2CppMetadataModel(
     val sizeBytes: Long,
@@ -65,7 +65,7 @@ data class Il2CppMetadataModel(
     val structuredSupported: Boolean,
     val truncated: Boolean,
     val warnings: List<String>,
-)
+) : java.io.Serializable
 
 object Il2CppMetadataReader {
     private const val MAGIC = 0xFAB11BAFL
