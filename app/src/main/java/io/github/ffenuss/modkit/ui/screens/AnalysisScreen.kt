@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
@@ -24,6 +26,7 @@ fun AnalysisScreen(
     title: String,
     progress: EngineProgress?,
     result: FastAnalysisResult?,
+    active: Boolean,
     error: String?,
     cancelled: Boolean,
     cancelling: Boolean,
@@ -32,121 +35,285 @@ fun AnalysisScreen(
     onRetry: () -> Unit,
     onBack: () -> Unit,
 ) {
-    Column(
-        Modifier.fillMaxSize().padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        item {
+            Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        }
+
         when {
-            result != null -> {
-                val index = result.index
-                Text("Быстрый анализ готов за ${result.elapsedMs} мс")
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("SHA-256", fontWeight = FontWeight.SemiBold)
-                        Text(index.artifactSha256, style = MaterialTheme.typography.bodySmall)
-                        Text("Файлов в индексе: ${index.entries.size}")
-                        Text("ABI: ${index.detectedAbis.ifEmpty { setOf("не определено") }.joinToString()}")
-                        Text("Runtime: ${index.runtimeProfiles.size}")
-                        if (index.truncated) Text("Индекс ограничен лимитом entries.", color = MaterialTheme.colorScheme.error)
+            error != null -> {
+                item {
+                    Text("Ошибка: " + error, color = MaterialTheme.colorScheme.error)
+                }
+                item {
+                    OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+                        Text("Назад")
                     }
                 }
-                index.runtimeProfiles.forEach { runtime ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(runtime.title, fontWeight = FontWeight.SemiBold)
-                            Text("${runtime.status} · ${runtime.confidence}", style = MaterialTheme.typography.bodySmall)
-                            runtime.evidence.take(3).forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
-                        }
+            }
+
+            cancelled -> {
+                item {
+                    Text("Анализ отменён. Частичные данные не выдаются как полный подтверждённый результат.")
+                }
+                item {
+                    OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+                        Text("Назад")
                     }
                 }
-                result.il2cppFastDump?.let { dump ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("IL2CPP fast dump", fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "metadata v" + (dump.metadata.metadataVersion ?: "?") +
-                                    " · types " + dump.metadata.types.size +
-                                    " · methods " + dump.metadata.methods.size +
-                                    " · fields " + dump.metadata.fields.size,
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                            Text(
-                                if (dump.metadata.structuredSupported) "Metadata reconstruction ready" else "Validated metadata; layout support pending",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                            Text("Dump: " + dump.dumpFilePath, style = MaterialTheme.typography.bodySmall)
-                            dump.warnings.take(3).forEach {
-                                Text("• " + it, style = MaterialTheme.typography.bodySmall)
+            }
+
+            else -> {
+                if (active) {
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(
+                                Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(7.dp),
+                            ) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                                Text(
+                                    when {
+                                        stalledAgeMs != null -> "Этап не отвечает"
+                                        cancelling -> "Отмена выполняется…"
+                                        else -> progress?.currentTask ?: "Подготовка анализа…"
+                                    },
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                progress?.currentArtifact?.let {
+                                    Text(it, style = MaterialTheme.typography.bodySmall)
+                                }
+                                progress?.processed?.let { processed ->
+                                    Text(
+                                        progress.total?.let { total -> "$processed / $total" }
+                                            ?: "Обработано: $processed",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                progress?.lastHeartbeatEpochMs?.let { heartbeat ->
+                                    val ageSeconds = ((System.currentTimeMillis() - heartbeat) / 1000L)
+                                        .coerceAtLeast(0L)
+                                    Text(
+                                        "Heartbeat: " + ageSeconds + " с назад",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+
+                                if (stalledAgeMs != null) {
+                                    Text(
+                                        "Нет heartbeat " + (stalledAgeMs / 1000L) + " с. Можно повторить этап или остановить анализ.",
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Row(
+                                        Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        Button(onClick = onRetry, modifier = Modifier.weight(1f)) {
+                                            Text("Повторить")
+                                        }
+                                        OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
+                                            Text("Остановить")
+                                        }
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = onCancel,
+                                        enabled = !cancelling,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(if (cancelling) "Отмена…" else "Отменить")
+                                    }
+                                }
                             }
                         }
                     }
                 }
-                if (result.engineWarnings.isNotEmpty()) {
-                    Text("Ошибки отдельных движков", fontWeight = FontWeight.SemiBold)
-                    result.engineWarnings.forEach {
-                        Text("• " + it, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
 
-                val targeted = result.routingPlan.targeted
-                if (targeted.isNotEmpty()) {
-                    Text("Следующие релевантные движки", fontWeight = FontWeight.SemiBold)
-                    targeted.forEach { engine ->
+                if (result != null) {
+                    item {
                         Text(
-                            "• ${engine.id}: ${if (engine.availableNow) "готов" else "ещё не перенесён"}",
-                            style = MaterialTheme.typography.bodySmall,
+                            if (active) "Ранние результаты" else "Результат анализа",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
                         )
                     }
-                }
-                if (result.routingPlan.missingCapabilities.isNotEmpty()) {
-                    Text("Что ещё нужно доделать", fontWeight = FontWeight.SemiBold)
-                    result.routingPlan.missingCapabilities.take(6).forEach {
-                        Text("• $it", style = MaterialTheme.typography.bodySmall)
+
+                    item {
+                        val index = result.index
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(
+                                Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text("FAST inventory", fontWeight = FontWeight.SemiBold)
+                                Text("Готов за " + result.elapsedMs + " мс")
+                                Text("SHA-256", fontWeight = FontWeight.SemiBold)
+                                Text(index.artifactSha256, style = MaterialTheme.typography.bodySmall)
+                                Text("Файлов в индексе: " + index.entries.size)
+                                Text(
+                                    "ABI: " + index.detectedAbis
+                                        .ifEmpty { setOf("не определено") }
+                                        .joinToString(),
+                                )
+                                Text("Runtime: " + index.runtimeProfiles.size)
+                                if (index.truncated) {
+                                    Text(
+                                        "Индекс ограничен безопасным лимитом.",
+                                        color = MaterialTheme.colorScheme.error,
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    items(result.index.runtimeProfiles, key = { it.runtimeId }) { runtime ->
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(
+                                Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(runtime.title, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    runtime.status.name + " · " + runtime.confidence.name,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                runtime.evidence.take(3).forEach {
+                                    Text(it, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
+
+                    result.il2cppFastDump?.let { dump ->
+                        item {
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(
+                                    Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text("IL2CPP fast dump", fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        "metadata v" + (dump.metadata.metadataVersion ?: "?") +
+                                            " · images " + dump.metadata.images.size +
+                                            " · types " + dump.metadata.types.size +
+                                            " · methods " + dump.metadata.methods.size +
+                                            " · fields " + dump.metadata.fields.size,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Text(
+                                        if (dump.metadata.structuredSupported) {
+                                            "EXACT_METADATA: структурная реконструкция готова"
+                                        } else {
+                                            "Metadata magic подтверждён; layout ещё не поддержан"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Text("Dump: " + dump.dumpFilePath, style = MaterialTheme.typography.bodySmall)
+                                    dump.warnings.take(3).forEach {
+                                        Text("• " + it, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    result.il2cppBinaryBinding?.let { binary ->
+                        item {
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(
+                                    Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text("IL2CPP binary confirmation", fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        if (binary.exactBindingAvailable) {
+                                            "EXACT_BINARY: подтверждено методов " + binary.exactBindingCount
+                                        } else {
+                                            "EXACT_BINARY пока не доказан"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Text(
+                                        "Проверено библиотек: " + binary.evidence.size,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    binary.evidence
+                                        .flatMap { it.bindings }
+                                        .take(5)
+                                        .forEach { binding ->
+                                            Text(
+                                                "• " + binding.managedIdentity +
+                                                    " · token 0x" + binding.metadataToken.toString(16) +
+                                                    " · VA 0x" + binding.functionVirtualAddress.toString(16) +
+                                                    (binding.functionFileOffset?.let {
+                                                        " · file+0x" + it.toString(16)
+                                                    } ?: ""),
+                                                style = MaterialTheme.typography.bodySmall,
+                                            )
+                                        }
+                                    binary.warnings.take(4).forEach {
+                                        Text("• " + it, style = MaterialTheme.typography.bodySmall)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (result.engineWarnings.isNotEmpty()) {
+                        item {
+                            Text("Ошибки отдельных движков", fontWeight = FontWeight.SemiBold)
+                        }
+                        items(result.engineWarnings) {
+                            Text("• " + it, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+
+                    val planned = result.routingPlan.engines.filter {
+                        it.scheduleClass != io.github.ffenuss.modkit.domain.EngineScheduleClass.FAST
+                    }
+                    if (planned.isNotEmpty()) {
+                        item {
+                            Text("План движков", fontWeight = FontWeight.SemiBold)
+                        }
+                        items(planned, key = { it.id }) { engine ->
+                            Text(
+                                "• " + engine.id + " · " + engine.scheduleClass.name +
+                                    " · " + if (engine.availableNow) "доступен" else "ещё не перенесён",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+
+                    if (result.routingPlan.missingCapabilities.isNotEmpty()) {
+                        item {
+                            Text("Что ещё не завершено", fontWeight = FontWeight.SemiBold)
+                        }
+                        items(result.routingPlan.missingCapabilities.take(8)) {
+                            Text("• " + it, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+
+                    if (result.index.warnings.isNotEmpty()) {
+                        item {
+                            Text("Предупреждения", fontWeight = FontWeight.SemiBold)
+                        }
+                        items(result.index.warnings) {
+                            Text("• " + it, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+
+                    if (!active) {
+                        item {
+                            Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+                                Text("Выбрать другую цель")
+                            }
+                        }
                     }
                 }
-                if (index.warnings.isNotEmpty()) {
-                    Text("Предупреждения", fontWeight = FontWeight.SemiBold)
-                    index.warnings.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
-                }
-                Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Выбрать другую цель") }
-            }
-            error != null -> {
-                Text("Ошибка: $error", color = MaterialTheme.colorScheme.error)
-                OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Назад") }
-            }
-            cancelled -> {
-                Text("Анализ отменён. Уже полученные данные не выдаются как полный подтверждённый результат.")
-                OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("Назад") }
-            }
-            stalledAgeMs != null -> {
-                Text(
-                    "Этап не присылал heartbeat ${stalledAgeMs / 1000} с.",
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                progress?.currentTask?.let { Text(it) }
-                progress?.currentArtifact?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = onRetry, modifier = Modifier.weight(1f)) { Text("Повторить") }
-                    OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) { Text("Остановить") }
-                }
-            }
-            else -> {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(if (cancelling) "Отмена выполняется…" else progress?.currentTask ?: "Подготовка быстрого анализа…")
-                progress?.currentArtifact?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                progress?.processed?.let { processed ->
-                    Text(
-                        progress.total?.let { total -> "$processed / $total" } ?: "Обработано: $processed",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                Button(
-                    onClick = onCancel,
-                    enabled = !cancelling,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (cancelling) "Отмена…" else "Отменить") }
             }
         }
     }
