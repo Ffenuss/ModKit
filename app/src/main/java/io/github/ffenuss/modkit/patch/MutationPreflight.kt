@@ -12,6 +12,16 @@ enum class MutationKind {
     CONFIG_VALUE,
 }
 
+object MutationExecutorRegistry {
+    private val supported = setOf(
+        MutationKind.NATIVE_IN_PLACE_BYTES,
+        MutationKind.RESOURCE_REPLACE,
+        MutationKind.FILE_REPLACE,
+    )
+
+    fun isImplemented(kind: MutationKind): Boolean = kind in supported
+}
+
 data class MutationPayloadRef(
     val sha256: String,
     val size: Long,
@@ -97,6 +107,40 @@ object MutationPreflightEngine {
             if (duplicateTargets.isNotEmpty()) {
                 add("Для одной цели нельзя одновременно применять несколько конфликтующих изменений.")
             }
+
+            val preparedById = preparation.targets.associateBy { it.target.id }
+            val byArtifact = requests.groupBy { request ->
+                preparedById[request.targetId]?.target?.artifact
+            }
+            byArtifact.forEach { (artifact, group) ->
+                if (artifact == null || group.size < 2) return@forEach
+                val wholeEntry = group.any {
+                    it.kind == MutationKind.FILE_REPLACE ||
+                        it.kind == MutationKind.RESOURCE_REPLACE
+                }
+                if (wholeEntry) {
+                    add("Полная замена файла конфликтует с другими изменениями того же artifact.")
+                    return@forEach
+                }
+
+                val native = group.filter { it.kind == MutationKind.NATIVE_IN_PLACE_BYTES }
+                    .mapNotNull { request ->
+                        val target = preparedById[request.targetId]?.target ?: return@mapNotNull null
+                        val start = target.fileOffset ?: return@mapNotNull null
+                        val size = request.expectedOriginalSize ?: return@mapNotNull null
+                        if (size <= 0L) return@mapNotNull null
+                        Triple(request.id, start, start + size)
+                    }
+                    .sortedBy { it.second }
+                for (index in 1 until native.size) {
+                    val previous = native[index - 1]
+                    val current = native[index]
+                    if (current.second < previous.third) {
+                        add("Диапазоны native patch в одном файле пересекаются.")
+                        break
+                    }
+                }
+            }
         }.distinct()
 
         val targets = preparation.targets.associateBy { it.target.id }
@@ -109,6 +153,9 @@ object MutationPreflightEngine {
                 if (prepared == null) {
                     add("Цель изменения отсутствует в текущем плане подтверждений.")
                 } else {
+                    if (!MutationExecutorRegistry.isImplemented(request.kind)) {
+                        add("Исполнитель для выбранного типа изменения ещё не подключён.")
+                    }
                     if (
                         prepared.status != PreparationTargetStatus.CONFIRMED_NEEDS_CHANGE &&
                         prepared.status != PreparationTargetStatus.READY
