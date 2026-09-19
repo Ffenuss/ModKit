@@ -36,13 +36,40 @@ fun RecoveryScreen(
         Button(onClick = onResume, modifier = Modifier.fillMaxWidth()) {
             Text("Продолжить анализ")
         }
-        if (state.partialResult != null) {
+        if (state.partialAvailable) {
             OutlinedButton(onClick = onOpenPartial, modifier = Modifier.fillMaxWidth()) {
                 Text("Открыть частичные результаты")
             }
         }
         OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
             Text("Удалить состояние")
+        }
+    }
+}
+
+
+@Composable
+fun RestoringPartialScreen(
+    state: AnalysisRunState.RestoringPartial,
+) {
+    Column(
+        Modifier.fillMaxSize().padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text(
+            "Восстановление результатов",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+        )
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(state.target.label, fontWeight = FontWeight.SemiBold)
+                Text(state.message)
+                Text(
+                    "Файлы APK повторно не анализируются: читаются только завершённые SHA-привязанные стадии.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }
