@@ -60,43 +60,51 @@ object RuntimeEvidenceContract {
     ): List<RuntimeEvidenceObservation> {
         val projected = mutableListOf<RuntimeEvidenceObservation>()
 
+        val processIdentityConfirmed =
+            bundle.captureSource != ProcMapsCaptureSource.IMPORTED_SNAPSHOT &&
+                bundle.capturePid != null &&
+                !bundle.processIdentity.isNullOrBlank() &&
+                bundle.processIdentityConfirmed
+
         projected += RuntimeEvidenceObservation(
             id = "runtime:process:" +
                 bundle.captureSource.name.lowercase() + ":" +
                 (bundle.capturePid?.toString() ?: "unknown") + ":" +
                 bundle.procMapsSha256.take(16),
             kind = RuntimeEvidenceObservationKind.PROCESS_OBSERVED,
-            strength = if (
-                bundle.captureSource == ProcMapsCaptureSource.IMPORTED_SNAPSHOT
-            ) {
-                RuntimeEvidenceObservationStrength.OBSERVED
-            } else {
+            strength = if (processIdentityConfirmed) {
                 RuntimeEvidenceObservationStrength.CONFIRMED
+            } else {
+                RuntimeEvidenceObservationStrength.OBSERVED
             },
             subjectId = bundle.capturePid?.let { "pid:$it" },
             artifactSha256 = bundle.artifactSha256,
             captureSha256 = bundle.procMapsSha256,
             captureSource = bundle.captureSource,
             capturedAtEpochMs = bundle.capturedAtEpochMs,
-            summary = if (
-                bundle.captureSource == ProcMapsCaptureSource.IMPORTED_SNAPSHOT
-            ) {
-                "Imported process-maps snapshot observed; process identity was not captured by ModKit."
-            } else {
-                "Process-maps snapshot captured directly by ModKit."
+            summary = when {
+                bundle.captureSource == ProcMapsCaptureSource.IMPORTED_SNAPSHOT ->
+                    "Imported process-maps snapshot observed; process identity was not captured by ModKit."
+                processIdentityConfirmed ->
+                    "Process identity and process-maps snapshot were independently confirmed by ModKit."
+                else ->
+                    "Process maps were captured by ModKit, but process identity was not independently confirmed."
             },
             supportingFacts = buildList {
                 add("procMapsSha256=" + bundle.procMapsSha256)
                 bundle.capturePid?.let { add("pid=$it") }
+                bundle.processIdentity?.let { add("processIdentity=$it") }
             },
-            blockers = if (
-                bundle.captureSource == ProcMapsCaptureSource.IMPORTED_SNAPSHOT
-            ) {
-                listOf(
-                    "Process identity is externally supplied; live-process identity is not independently confirmed.",
-                )
-            } else {
-                emptyList()
+            blockers = when {
+                processIdentityConfirmed -> emptyList()
+                bundle.captureSource == ProcMapsCaptureSource.IMPORTED_SNAPSHOT ->
+                    listOf(
+                        "Process identity is externally supplied; live-process identity is not independently confirmed.",
+                    )
+                else ->
+                    listOf(
+                        "Direct process-map capture alone does not prove that the PID belongs to the requested target.",
+                    )
             },
         )
 
