@@ -116,6 +116,9 @@ Status: **ACTIVE**
 - [x] Versioned Expert Lab runtime report with explicit capture provenance and unresolved reasons
 - [x] Fail-closed repacked-test runtime architecture with explicit executor capability gates
 - [x] Verified read-only source-copy workspace with SHA revalidation and scoped cleanup
+- [x] Bounded binary AndroidManifest identity parser with exact package/application extraction
+- [x] Verified APK-set manifest inventory with one-base/unique-split/package consistency gates
+- [x] Repacked build preflight is bound to the verified manifest inventory and source relationships
 - [x] Repacked test build tail reuses real signature-strip/alignment/signing/package-verification stages
 - [x] Repacked test build report records signer, alignment, signature and final APK SHA
 - [x] Non-root installed-app process discovery with exact `/proc/<pid>/cmdline` identity proof
