@@ -100,7 +100,7 @@ class RuntimeMemoryElfTest {
         val image = elf64(
             executableOffset = 0,
             programHeaderCount = 1024,
-            programHeaderEntrySize = 256,
+            programHeaderEntrySize = 257,
         )
         val reader = ByteArrayReader(BASE, image)
 
