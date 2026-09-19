@@ -7,6 +7,8 @@ data class RuntimeMemoryMappingCandidate(
     val endExclusive: Long,
     val permissions: String,
     val path: String?,
+    val fileOffset: Long,
+    val fileZeroAddressCandidate: Long,
     val reason: String,
 ) : Serializable {
     val size: Long get() = endExclusive - start
@@ -16,7 +18,7 @@ data class RuntimeMemoryMappingCandidate(
  * Finds executable mappings that are not ordinary file-backed modules.
  *
  * This is only a candidate list. No mapping is called an ELF until a later
- * memory-header reader validates the ELF magic/header from that address.
+ * memory-header reader validates the ELF magic/header from a bounded address.
  */
 object RuntimeMemoryMappingDetector {
     fun candidates(
@@ -38,6 +40,8 @@ object RuntimeMemoryMappingDetector {
                     endExclusive = region.endExclusive,
                     permissions = region.permissions,
                     path = region.path,
+                    fileOffset = region.fileOffset,
+                    fileZeroAddressCandidate = region.fileZeroBaseCandidate,
                     reason = when {
                         region.path == null ->
                             "Executable mapping has no file path."
