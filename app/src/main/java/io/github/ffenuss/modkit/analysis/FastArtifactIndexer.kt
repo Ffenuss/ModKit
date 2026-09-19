@@ -72,7 +72,7 @@ object FastArtifactIndexer {
         val setSha = artifactSha256(sources)
         val cachedIndex = cache
             ?.loadArtifactIndex(setSha)
-            ?.takeIf { it.sources == sources }
+            ?.takeIf { cached -> sameSourceContent(cached.sources, sources) }
 
         if (cachedIndex != null) {
             progress.publish(
@@ -258,6 +258,16 @@ object FastArtifactIndexer {
             }
             digest.digest().toHex()
         }
+
+    private fun sameSourceContent(
+        cached: List<ArtifactSource>,
+        current: List<ArtifactSource>,
+    ): Boolean {
+        if (cached.size != current.size) return false
+        fun identities(values: List<ArtifactSource>) =
+            values.map { it.sha256.lowercase() to it.size }.sortedBy { it.first }
+        return identities(cached) == identities(current)
+    }
 
     private data class Classification(
         val format: BinaryFormat,
