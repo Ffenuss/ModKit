@@ -66,6 +66,23 @@ class RuntimeStageAttemptLedgerTest {
         )
     }
 
+    @Test
+    fun missingInstalledRepackedTestBuildIsInvalidInputNotRootEvidence() {
+        val attempt = RuntimeStageAttemptRecorder.blockedAttempt(
+            stage = RuntimeEscalationStage.REPACKED_TEST_RUNTIME,
+            requestedTargetIds = setOf("target"),
+            failure = IllegalStateException(
+                "Installed repacked test probe provider was not found.",
+            ),
+            attemptedAtEpochMs = 1234,
+        )
+
+        assertEquals(
+            RuntimeStageBlockerCategory.INVALID_INPUT,
+            attempt.blockers.single().category,
+        )
+    }
+
     companion object {
         private const val SHA =
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
