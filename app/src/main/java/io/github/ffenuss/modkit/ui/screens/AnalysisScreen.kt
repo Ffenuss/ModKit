@@ -33,6 +33,7 @@ fun AnalysisScreen(
     cancelling: Boolean,
     stalledAgeMs: Long?,
     canSkipStalled: Boolean,
+    partialNotice: String? = null,
     onCancel: () -> Unit,
     onRetry: () -> Unit,
     onSkip: () -> Unit,
@@ -79,6 +80,20 @@ fun AnalysisScreen(
                         }
                     }
                 }
+                if (partialNotice != null) {
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(
+                                Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text("Частичные результаты", fontWeight = FontWeight.SemiBold)
+                                Text(partialNotice, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+
                 if (active) {
                     item {
                         Card(Modifier.fillMaxWidth()) {
@@ -153,7 +168,11 @@ fun AnalysisScreen(
                 if (result != null) {
                     item {
                         Text(
-                            if (active) "Ранние результаты" else "Результат анализа",
+                            when {
+                                active -> "Ранние результаты"
+                                partialNotice != null -> "Сохранённые результаты"
+                                else -> "Результат анализа"
+                            },
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.SemiBold,
                         )
