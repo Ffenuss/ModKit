@@ -55,7 +55,25 @@ fun ModKitApp() {
         is AnalysisRunState.Interrupted -> RecoveryScreen(
             state = state,
             onResume = { AnalysisManager.resumeInterrupted() },
+            onOpenPartial = { AnalysisManager.openInterruptedPartial() },
             onDelete = { AnalysisManager.dismissInterrupted() },
+        )
+
+        is AnalysisRunState.RecoveredPartial -> AnalysisScreen(
+            title = state.target.label,
+            progress = null,
+            result = state.result,
+            active = false,
+            error = null,
+            cancelled = false,
+            cancelling = false,
+            stalledAgeMs = null,
+            canSkipStalled = false,
+            partialNotice = state.message,
+            onCancel = AnalysisManager::cancel,
+            onRetry = AnalysisManager::retryStalled,
+            onSkip = AnalysisManager::skipStalled,
+            onBack = { AnalysisManager.closeRecoveredPartial() },
         )
 
         is AnalysisRunState.Running -> AnalysisScreen(
