@@ -110,8 +110,11 @@ class RuntimeEvidenceRestoreTest {
                 ),
             ),
             blockers = emptyList(),
-            captureSource = ProcMapsCaptureSource.IMPORTED_SNAPSHOT,
+            captureSource = ProcMapsCaptureSource.NON_ROOT_PROCESS,
+            capturePid = 456,
             capturedAtEpochMs = 1234,
+            processIdentity = "com.example.target",
+            processIdentityConfirmed = true,
         )
 
     companion object {
