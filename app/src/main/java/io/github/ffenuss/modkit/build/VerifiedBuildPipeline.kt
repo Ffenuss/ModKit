@@ -31,6 +31,7 @@ data class VerifiedBuildResult(
     val signerAlias: String,
     val signerCertificateSha256: List<String>,
     val postBuildAnalysis: FastAnalysisResult,
+    val reportFile: File,
     val builtAtEpochMs: Long,
 )
 
@@ -188,6 +189,21 @@ object VerifiedBuildPipeline {
                 ),
             )
 
+            val builtAt = System.currentTimeMillis()
+            val reportFile = withContext(Dispatchers.IO) {
+                BuildReportWriter.write(
+                    outputDir = File(root, "report"),
+                    sourceArtifactSha256 = artifactSha,
+                    files = built,
+                    mutationDiffs = staging.diffs,
+                    diffVerification = diffVerification,
+                    signerAlias = identity.alias,
+                    signerCertificateSha256 = signerFingerprints,
+                    postBuildAnalysis = postBuildAnalysis,
+                    builtAtEpochMs = builtAt,
+                )
+            }
+
             return VerifiedBuildResult(
                 artifactSha256 = artifactSha,
                 files = built,
@@ -196,7 +212,8 @@ object VerifiedBuildPipeline {
                 signerAlias = identity.alias,
                 signerCertificateSha256 = signerFingerprints,
                 postBuildAnalysis = postBuildAnalysis,
-                builtAtEpochMs = System.currentTimeMillis(),
+                reportFile = reportFile,
+                builtAtEpochMs = builtAt,
             )
         } catch (failure: Throwable) {
             built.forEach { it.file.delete() }
