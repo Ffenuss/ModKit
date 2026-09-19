@@ -18,6 +18,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.github.ffenuss.modkit.analysis.DetectionConfidence
+import io.github.ffenuss.modkit.analysis.DetectionStatus
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.UserFindingStatus
 import io.github.ffenuss.modkit.domain.EngineProgress
@@ -186,7 +188,7 @@ fun AnalysisScreen(
                                 Modifier.padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
-                                Text("FAST inventory", fontWeight = FontWeight.SemiBold)
+                                Text("Быстрый анализ", fontWeight = FontWeight.SemiBold)
                                 Text("Готов за " + result.elapsedMs + " мс")
                                 Text("SHA-256", fontWeight = FontWeight.SemiBold)
                                 Text(index.artifactSha256, style = MaterialTheme.typography.bodySmall)
@@ -216,11 +218,12 @@ fun AnalysisScreen(
                                 ) {
                                     Text("Переиспользовано", fontWeight = FontWeight.SemiBold)
                                     Text(
-                                        result.engineCacheHits.sorted().joinToString(),
+                                        "Повторно использовано завершённых стадий: " +
+                                            result.engineCacheHits.size,
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                     Text(
-                                        "Результаты привязаны к SHA цели и версии движка.",
+                                        "Повторное использование разрешено только при совпадении SHA цели и версии движка.",
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                 }
@@ -312,7 +315,8 @@ fun AnalysisScreen(
                             ) {
                                 Text(runtime.title, fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    runtime.status.name + " · " + runtime.confidence.name,
+                                    detectionStatusLabel(runtime.status) +
+                                        " · уверенность: " + confidenceLabel(runtime.confidence),
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                                 runtime.evidence.take(3).forEach {
@@ -329,7 +333,7 @@ fun AnalysisScreen(
                                     Modifier.padding(14.dp),
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
-                                    Text("IL2CPP fast dump", fontWeight = FontWeight.SemiBold)
+                                    Text("IL2CPP dump", fontWeight = FontWeight.SemiBold)
                                     Text(
                                         "metadata v" + (dump.metadata.metadataVersion ?: "?") +
                                             " · images " + dump.metadata.images.size +
@@ -362,7 +366,7 @@ fun AnalysisScreen(
                                     Modifier.padding(14.dp),
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
-                                    Text("Evidence Graph", fontWeight = FontWeight.SemiBold)
+                                    Text("Подтверждения", fontWeight = FontWeight.SemiBold)
                                     Text(
                                         if (evidence.changeReady) {
                                             "Статус: готово к применению"
@@ -407,7 +411,7 @@ fun AnalysisScreen(
                                     Modifier.padding(14.dp),
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
-                                    Text("IL2CPP binary confirmation", fontWeight = FontWeight.SemiBold)
+                                    Text("IL2CPP: точная привязка", fontWeight = FontWeight.SemiBold)
                                     Text(
                                         if (binary.exactBindingAvailable) {
                                             "Точно подтверждено методов: " + binary.exactBindingCount
@@ -425,12 +429,7 @@ fun AnalysisScreen(
                                         .take(5)
                                         .forEach { binding ->
                                             Text(
-                                                "• " + binding.managedIdentity +
-                                                    " · token 0x" + binding.metadataToken.toString(16) +
-                                                    " · VA 0x" + binding.functionVirtualAddress.toString(16) +
-                                                    (binding.functionFileOffset?.let {
-                                                        " · file+0x" + it.toString(16)
-                                                    } ?: ""),
+                                                "• " + binding.managedIdentity + " · подтверждено",
                                                 style = MaterialTheme.typography.bodySmall,
                                             )
                                         }
@@ -444,35 +443,20 @@ fun AnalysisScreen(
 
                     if (result.engineWarnings.isNotEmpty()) {
                         item {
-                            Text("Ошибки отдельных движков", fontWeight = FontWeight.SemiBold)
-                        }
-                        items(result.engineWarnings) {
-                            Text("• " + it, style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-
-                    val planned = result.routingPlan.engines.filter {
-                        it.scheduleClass != io.github.ffenuss.modkit.domain.EngineScheduleClass.FAST
-                    }
-                    if (planned.isNotEmpty()) {
-                        item {
-                            Text("План движков", fontWeight = FontWeight.SemiBold)
-                        }
-                        items(planned, key = { it.id }) { engine ->
-                            Text(
-                                "• " + engine.id + " · " + engine.scheduleClass.name +
-                                    " · " + if (engine.availableNow) "доступен" else "ещё не перенесён",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                    }
-
-                    if (result.routingPlan.missingCapabilities.isNotEmpty()) {
-                        item {
-                            Text("Что ещё не завершено", fontWeight = FontWeight.SemiBold)
-                        }
-                        items(result.routingPlan.missingCapabilities.take(8)) {
-                            Text("• " + it, style = MaterialTheme.typography.bodySmall)
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(
+                                    Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text("Предупреждения анализа", fontWeight = FontWeight.SemiBold)
+                                    result.engineWarnings.take(4).forEach { warning ->
+                                        Text(
+                                            "• " + warning.substringAfter(": ", warning),
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -512,6 +496,18 @@ fun AnalysisScreen(
             }
         }
     }
+}
+
+private fun detectionStatusLabel(status: DetectionStatus): String = when (status) {
+    DetectionStatus.CONFIRMED -> "Подтверждено"
+    DetectionStatus.LIKELY -> "Вероятно"
+    DetectionStatus.SIGNAL -> "Есть признаки"
+}
+
+private fun confidenceLabel(confidence: DetectionConfidence): String = when (confidence) {
+    DetectionConfidence.HIGH -> "высокая"
+    DetectionConfidence.MEDIUM -> "средняя"
+    DetectionConfidence.LOW -> "низкая"
 }
 
 private fun findingStatusLabel(status: UserFindingStatus): String = when (status) {
