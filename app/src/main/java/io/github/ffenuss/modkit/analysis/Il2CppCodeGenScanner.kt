@@ -97,6 +97,7 @@ object Il2CppCodeGenScanner {
                 )
                 if (candidate != null) {
                     blockers.remove("CODE_REGISTRATION_SYMBOL_UNRESOLVED")
+                    blockers.remove("CODEGEN_MODULE_ARRAY_UNRESOLVED")
                 }
             }
 
