@@ -1,5 +1,7 @@
 package io.github.ffenuss.modkit.analysis
 
+import io.github.ffenuss.modkit.runtime.RuntimeEvidenceBundle
+import io.github.ffenuss.modkit.runtime.RuntimeEvidenceIntegrator
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -50,11 +52,13 @@ class EngineResultCache(
         val elfInventory = loadUniversalElfInventory(artifactSha256)
         val dump = loadIl2CppFastDump(artifactSha256)
         val binding = loadIl2CppBinaryBinding(artifactSha256)
+        val runtimeEvidence = loadRuntimeEvidence(artifactSha256)
         val cacheHits = buildSet {
             add(ARTIFACT_INDEX_ENGINE_ID)
             if (elfInventory != null) add(UNIVERSAL_ELF_INVENTORY_ENGINE_ID)
             if (dump != null) add(IL2CPP_FAST_DUMP_ENGINE_ID)
             if (binding != null) add(IL2CPP_BINARY_BINDING_ENGINE_ID)
+            if (runtimeEvidence != null) add(RUNTIME_EVIDENCE_ENGINE_ID)
         }
 
         var result = FastAnalysisResult(
@@ -85,9 +89,14 @@ class EngineResultCache(
                 ),
             ).withEvidenceGraph()
         }
+        if (runtimeEvidence != null) {
+            result = RuntimeEvidenceIntegrator.restorePersistedSnapshot(
+                result = result,
+                evidence = runtimeEvidence,
+            )
+        }
         return result
     }
-
 
     fun saveArtifactIndex(
         artifactSha256: String,
@@ -165,6 +174,31 @@ class EngineResultCache(
         engineVersion = IL2CPP_BINARY_BINDING_ENGINE_VERSION,
         payload = result,
     )
+
+    fun loadRuntimeEvidence(
+        artifactSha256: String,
+    ): RuntimeEvidenceBundle? =
+        load(
+            artifactSha256 = artifactSha256,
+            engineId = RUNTIME_EVIDENCE_ENGINE_ID,
+            engineVersion = RUNTIME_EVIDENCE_ENGINE_VERSION,
+            type = RuntimeEvidenceBundle::class.java,
+        )
+
+    fun saveRuntimeEvidence(
+        artifactSha256: String,
+        result: RuntimeEvidenceBundle,
+    ): Boolean {
+        if (!result.artifactSha256.equals(artifactSha256, ignoreCase = true)) {
+            return false
+        }
+        return save(
+            artifactSha256 = artifactSha256,
+            engineId = RUNTIME_EVIDENCE_ENGINE_ID,
+            engineVersion = RUNTIME_EVIDENCE_ENGINE_VERSION,
+            payload = result,
+        )
+    }
 
     private fun <T : Serializable> load(
         artifactSha256: String,
@@ -280,5 +314,8 @@ class EngineResultCache(
 
         const val IL2CPP_BINARY_BINDING_ENGINE_ID = "il2cpp.codegen-bind"
         const val IL2CPP_BINARY_BINDING_ENGINE_VERSION = "2"
+
+        const val RUNTIME_EVIDENCE_ENGINE_ID = "runtime.evidence"
+        const val RUNTIME_EVIDENCE_ENGINE_VERSION = "1"
     }
 }
