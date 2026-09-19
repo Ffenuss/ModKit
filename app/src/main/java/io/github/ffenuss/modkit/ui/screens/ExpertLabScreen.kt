@@ -42,6 +42,8 @@ import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.runtime.ProcMapsCaptureSource
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceContract
+import io.github.ffenuss.modkit.runtime.RuntimeEscalationPlanner
+import io.github.ffenuss.modkit.runtime.RuntimeEscalationStage
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -211,6 +213,53 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 error = "Non-root runtime-проверка отменена."
             } catch (failure: Throwable) {
                 error = failure.message ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun buildRepackedTestRuntime() {
+        val current = session ?: return
+        val signal = beginOperation("runtime.repacked-build") ?: return
+        scope.launch {
+            try {
+                session =
+                    ExpertLabSessionController.buildRepackedTestRuntime(
+                        context = appContext,
+                        session = current,
+                        cancellation = signal,
+                        progress = ProgressSink { update ->
+                            scope.launch { progress = update }
+                        },
+                    )
+            } catch (_: AnalysisCancelledException) {
+                error = "Сборка repacked test runtime отменена."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun integrateRepackedTestRuntime() {
+        val current = session ?: return
+        val signal = beginOperation("runtime.repacked-capture") ?: return
+        scope.launch {
+            try {
+                session =
+                    ExpertLabSessionController.integrateRepackedTestRuntime(
+                        context = appContext,
+                        session = current,
+                        cancellation = signal,
+                    )
+            } catch (_: AnalysisCancelledException) {
+                error = "Repacked runtime capture отменён."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message ?: failure.javaClass.simpleName
             } finally {
                 finishOperation()
             }
@@ -619,6 +668,64 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                     "вставленный вручную maps остаётся диагностическим snapshot и сам по себе не повышает proof.",
                                 style = MaterialTheme.typography.bodySmall,
                             )
+                            val repackedPlan =
+                                RuntimeEscalationPlanner.plan(current.result)
+                            val needsRepacked =
+                                repackedPlan.needs.any {
+                                    it.firstStage ==
+                                        RuntimeEscalationStage.REPACKED_TEST_RUNTIME
+                                }
+                            if (needsRepacked) {
+                                Text(
+                                    "Repacked test runtime",
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Button(
+                                    onClick = ::buildRepackedTestRuntime,
+                                    enabled = !busy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        if (current.repackedRuntimeBuild == null) {
+                                            "Собрать test runtime APK"
+                                        } else {
+                                            "Пересобрать test runtime APK"
+                                        },
+                                    )
+                                }
+                                current.repackedRuntimeBuild?.let { build ->
+                                    Text(
+                                        "package: " + build.packageName +
+                                            " · signer: " + build.signerAlias,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    build.signedApks.forEach { apk ->
+                                        Text(
+                                            "• " + apk.sourceDisplayName +
+                                                " → " + apk.signedPath +
+                                                " · SHA " +
+                                                apk.signedSha256.take(16) + "…",
+                                            style =
+                                                MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                    Text(
+                                        "Установите именно эту подписанную test-копию. " +
+                                            "При следующей проверке ModKit сверит package, provider и signer; " +
+                                            "оригинальная или чужая сборка будет отклонена.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Button(
+                                        onClick = ::integrateRepackedTestRuntime,
+                                        enabled = !busy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(
+                                            "Проверить установленную test-копию",
+                                        )
+                                    }
+                                }
+                            }
                             if (current.packageName != null) {
                                 Button(
                                     onClick = ::integrateNonRootRuntime,
