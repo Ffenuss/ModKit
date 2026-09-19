@@ -42,11 +42,24 @@ class RepackedRuntimeReportTest {
             assertTrue(text.contains("sourcePolicy: READ_ONLY_COPY_ONLY"))
             assertTrue(text.contains("readyToBuildTestCopy: false"))
             assertTrue(text.contains("registeredCapabilities: SOURCE_COPY"))
+            assertTrue(text.contains("OLD_SIGNATURE_REMOVAL"))
+            assertTrue(text.contains("APK_ALIGNMENT"))
+            assertTrue(text.contains("APK_SIGNING"))
+            assertTrue(text.contains("PACKAGE_VERIFY"))
+            assertTrue(text.contains("REPORT_WRITE"))
+            assertTrue(text.contains("CLEANUP"))
             assertTrue(
                 text.contains(
                     "BINARY_MANIFEST_REWRITE_NOT_REGISTERED",
                 ),
             )
+            assertTrue(
+                text.contains(
+                    "PROBE_PAYLOAD_INJECTION_NOT_REGISTERED",
+                ),
+            )
+            assertTrue(text.contains("TEST_LAUNCH_NOT_REGISTERED"))
+            assertTrue(text.contains("RUNTIME_EVIDENCE_CAPTURE_NOT_REGISTERED"))
             assertTrue(text.contains("fallbackStage: NON_ROOT_RUNTIME"))
         } finally {
             root.deleteRecursively()
