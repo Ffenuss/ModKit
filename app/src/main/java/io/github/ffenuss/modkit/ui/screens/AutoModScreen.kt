@@ -28,6 +28,8 @@ import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
+import io.github.ffenuss.modkit.build.VerifiedBuildPipeline
+import io.github.ffenuss.modkit.build.VerifiedBuildResult
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.AutoModPreparationCoordinator
 import io.github.ffenuss.modkit.patch.MutationApplyOutcome
@@ -53,13 +55,17 @@ fun AutoModScreen(
     var stagingOutcome by remember(result.index.artifactSha256) {
         mutableStateOf<MutationApplyOutcome?>(null)
     }
+    var building by remember(result.index.artifactSha256) { mutableStateOf(false) }
+    var buildResult by remember(result.index.artifactSha256) {
+        mutableStateOf<VerifiedBuildResult?>(null)
+    }
     var error by remember(result.index.artifactSha256) { mutableStateOf<String?>(null) }
     var cancellation by remember(result.index.artifactSha256) {
         mutableStateOf<AtomicCancellationSignal?>(null)
     }
 
     fun prepareChanges() {
-        if (preparing) return
+        if (preparing || building) return
         val signal = AtomicCancellationSignal()
         cancellation = signal
         preparing = true
@@ -79,6 +85,8 @@ fun AutoModScreen(
                 )
                 analysisResult = prepared.analysisResult
                 plan = prepared.plan
+                stagingOutcome = null
+                buildResult = null
                 confirmationNote = when {
                     prepared.requestedStaticConfirmations <= 0 -> null
                     prepared.remainingStaticConfirmations == 0 ->
@@ -92,6 +100,38 @@ fun AutoModScreen(
                 error = failure.message ?: failure.javaClass.simpleName
             } finally {
                 preparing = false
+                cancellation = null
+            }
+        }
+    }
+
+    fun buildApk() {
+        val staged = stagingOutcome
+        if (staged?.applied != true || preparing || building) return
+
+        val signal = AtomicCancellationSignal()
+        cancellation = signal
+        building = true
+        error = null
+        progress = null
+        buildResult = null
+
+        scope.launch {
+            try {
+                buildResult = VerifiedBuildPipeline.build(
+                    context = context,
+                    stagingOutcome = staged,
+                    cancellation = signal,
+                    progress = ProgressSink { update ->
+                        scope.launch { progress = update }
+                    },
+                )
+            } catch (_: AnalysisCancelledException) {
+                error = "Сборка отменена. Staging APK сохранён."
+            } catch (failure: Throwable) {
+                error = failure.message ?: failure.javaClass.simpleName
+            } finally {
+                building = false
                 cancellation = null
             }
         }
@@ -153,7 +193,7 @@ fun AutoModScreen(
             }
         }
 
-        if (preparing) {
+        if (preparing || building) {
             item {
                 Card(Modifier.fillMaxWidth()) {
                     Column(
@@ -162,7 +202,7 @@ fun AutoModScreen(
                     ) {
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                         Text(
-                            progress?.currentTask ?: "Подготовка изменений…",
+                            progress?.currentTask ?: if (building) "Сборка APK…" else "Подготовка изменений…",
                             fontWeight = FontWeight.SemiBold,
                         )
                         progress?.currentArtifact?.let {
@@ -179,7 +219,7 @@ fun AutoModScreen(
                             onClick = { cancellation?.cancel() },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("Отменить подготовку")
+                            Text(if (building) "Отменить сборку" else "Отменить подготовку")
                         }
                     }
                 }
@@ -283,6 +323,7 @@ fun AutoModScreen(
                         preparation = prepared,
                         onStagingReady = { outcome ->
                             stagingOutcome = outcome
+                            buildResult = null
                         },
                     )
                 }
@@ -292,7 +333,7 @@ fun AutoModScreen(
         item {
             Button(
                 onClick = ::prepareChanges,
-                enabled = !preparing,
+                enabled = !preparing && !building,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(if (plan == null) "Подготовить изменения" else "Обновить подготовку")
@@ -301,25 +342,61 @@ fun AutoModScreen(
 
         item {
             Button(
-                onClick = { },
-                enabled = false,
+                onClick = ::buildApk,
+                enabled = stagingOutcome?.applied == true && !preparing && !building,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Собрать APK")
+                Text(if (building) "Сборка…" else "Собрать APK")
             }
             Text(
                 when {
+                    buildResult != null ->
+                        "APK собран, выровнен, подписан и проверен."
                     plan == null ->
                         "Сначала выполните подготовку изменений."
                     stagingOutcome?.applied == true ->
-                        "Staging APK готов. Следующий обязательный этап: align → sign → verify."
+                        "Staging проверен. Сборка выполнит align → sign → verify → mutation diff check."
                     plan?.automaticApplyAllowed != true ->
-                        "Сборка остаётся заблокированной, пока нет изменений, полностью готовых к безопасному применению."
+                        "Сборка заблокирована, пока нет полностью подготовленного изменения."
                     else ->
-                        "Конвейер сборки APK ещё не подключён к этому экрану."
+                        "Нужно сначала применить проверенное изменение в staging APK."
                 },
                 style = MaterialTheme.typography.bodySmall,
             )
+        }
+
+        buildResult?.let { built ->
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
+                    ) {
+                        Text("Готовый APK", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Подпись: " + built.signerAlias,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        built.signerCertificateSha256.firstOrNull()?.let { fingerprint ->
+                            Text(
+                                "Сертификат SHA-256: " + fingerprint.take(20) + "…",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        built.files.forEach { file ->
+                            Text(
+                                file.file.name + " · " + file.file.length() +
+                                    " байт · SHA-256 " + file.sha256.take(20) + "…",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Text(
+                            "Mutation diff: подтверждён · файлов: " + built.files.size,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
         }
     }
 }
