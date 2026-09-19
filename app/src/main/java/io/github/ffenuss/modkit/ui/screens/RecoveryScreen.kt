@@ -20,6 +20,7 @@ import io.github.ffenuss.modkit.analysis.AnalysisRunState
 fun RecoveryScreen(
     state: AnalysisRunState.Interrupted,
     onResume: () -> Unit,
+    onOpenPartial: () -> Unit,
     onDelete: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -32,7 +33,16 @@ fun RecoveryScreen(
                 state.previousProgress?.currentArtifact?.let { Text("Последний файл: $it", style = MaterialTheme.typography.bodySmall) }
             }
         }
-        Button(onClick = onResume, modifier = Modifier.fillMaxWidth()) { Text("Продолжить / запустить цель снова") }
-        OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) { Text("Удалить состояние") }
+        Button(onClick = onResume, modifier = Modifier.fillMaxWidth()) {
+            Text("Продолжить анализ")
+        }
+        if (state.partialResult != null) {
+            OutlinedButton(onClick = onOpenPartial, modifier = Modifier.fillMaxWidth()) {
+                Text("Открыть частичные результаты")
+            }
+        }
+        OutlinedButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) {
+            Text("Удалить состояние")
+        }
     }
 }
