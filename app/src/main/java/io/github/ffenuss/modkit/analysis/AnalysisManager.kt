@@ -105,6 +105,20 @@ object AnalysisManager {
         }
     }
 
+    fun closeRecoveredPartial() {
+        synchronized(lock) {
+            val current = mutableState.value as? AnalysisRunState.RecoveredPartial ?: return
+            val saved = store?.load()
+            mutableState.value = AnalysisRunState.Interrupted(
+                runId = current.runId,
+                target = current.target,
+                previousProgress = saved?.progress,
+                partialResult = current.result,
+                message = "Предыдущий анализ был прерван. Готовые стадии сохранены; можно продолжить анализ, снова открыть результаты или удалить состояние.",
+            )
+        }
+    }
+
     fun dismissInterrupted() {
         synchronized(lock) {
             if (activeJob == null) {
