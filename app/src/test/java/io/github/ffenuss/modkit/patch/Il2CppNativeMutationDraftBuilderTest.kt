@@ -1,5 +1,7 @@
 package io.github.ffenuss.modkit.patch
 
+import java.nio.file.Files
+
 import io.github.ffenuss.modkit.analysis.ArtifactIndex
 import io.github.ffenuss.modkit.analysis.ArtifactSource
 import io.github.ffenuss.modkit.analysis.EngineRoutingPlan
@@ -18,7 +20,7 @@ import org.junit.Test
 class Il2CppNativeMutationDraftBuilderTest {
     @Test
     fun buildsDraftFromExactBinaryTargetAndExtractedLibrary() {
-        val root = createTempDir(prefix = "modkit-native-draft-")
+        val root = Files.createTempDirectory("modkit-native-draft-").toFile()
         try {
             val analysisRoot = File(root, "analysis-results")
             val nativeDir = File(
@@ -63,7 +65,7 @@ class Il2CppNativeMutationDraftBuilderTest {
 
     @Test(expected = IllegalArgumentException::class)
     fun refusesMetadataOnlyTarget() {
-        val root = createTempDir(prefix = "modkit-native-draft-block-")
+        val root = Files.createTempDirectory("modkit-native-draft-block-").toFile()
         try {
             val result = analysisResult(
                 proof = ProofLevel.EXACT_METADATA,
