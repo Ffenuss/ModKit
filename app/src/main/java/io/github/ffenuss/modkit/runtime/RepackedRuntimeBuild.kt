@@ -206,6 +206,89 @@ data class RepackedRuntimeBuildPreflightResult(
 )
 
 object RepackedRuntimeBuildPreflight {
+    fun validateNativeProbeInjection(
+        manifestInventory: RepackedRuntimeManifestInventory,
+        injection: RepackedRuntimeNativeProbeInjectionResult,
+    ): RepackedRuntimeBuildPreflightResult {
+        val blockers = mutableListOf<String>()
+
+        if (!injection.artifactSha256.equals(
+                manifestInventory.artifactSha256,
+                ignoreCase = true,
+            )
+        ) {
+            blockers +=
+                "Native probe injection artifact SHA does not match manifest inventory."
+        }
+        if (injection.packageName != manifestInventory.packageName) {
+            blockers +=
+                "Native probe injection package does not match manifest inventory."
+        }
+        if (
+            injection.baseSourceDisplayName !=
+            manifestInventory.baseSourceDisplayName
+        ) {
+            blockers +=
+                "Native probe injection base APK identity does not match manifest inventory."
+        }
+        if (injection.selectedAbis.isEmpty()) {
+            blockers += "Native probe injection selected no ABI payloads."
+        }
+        if (injection.payloadSha256ByAbi.keys != injection.selectedAbis) {
+            blockers +=
+                "Native probe payload SHA map does not match selected ABI set."
+        }
+
+        val basePayload = injection.sources.singleOrNull {
+            it.sourceDisplayName == injection.baseSourceDisplayName
+        }
+        if (
+            basePayload == null ||
+            basePayload.nativePayloadAbis != injection.selectedAbis
+        ) {
+            blockers +=
+                "Native probe base APK does not contain the declared ABI helper set."
+        }
+        if (
+            injection.sources
+                .filter {
+                    it.sourceDisplayName !=
+                        injection.baseSourceDisplayName
+                }
+                .any { it.nativePayloadAbis.isNotEmpty() }
+        ) {
+            blockers +=
+                "Native probe helpers must be injected only into the base APK."
+        }
+
+        val generic = validate(
+            artifactSha256 = injection.artifactSha256,
+            manifestInventory = manifestInventory,
+            instrumentedApks = injection.sources.map {
+                it.sourceDisplayName to File(it.outputPath)
+            },
+        )
+        blockers += generic.blockers
+
+        injection.sources.forEach { source ->
+            val file = File(source.outputPath)
+            if (file.isFile && file.canRead()) {
+                val actual = sha256ForPreflight(file)
+                if (!actual.equals(source.outputSha256, ignoreCase = true)) {
+                    blockers +=
+                        "Native-probe-injected APK changed before build: " +
+                            source.sourceDisplayName
+                }
+            }
+        }
+
+        return RepackedRuntimeBuildPreflightResult(
+            ready = blockers.isEmpty() && generic.ready,
+            packageName = generic.packageName,
+            blockers = blockers.distinct(),
+        )
+    }
+
     fun validateProbeInjection(
         manifestInventory: RepackedRuntimeManifestInventory,
         injection: RepackedRuntimeProbeInjectionResult,
@@ -343,6 +426,37 @@ object RepackedRuntimeBuildPreflight {
  * development signing, package verification and report generation.
  */
 object RepackedRuntimeBuildCoordinator {
+    fun buildNativeProbeInjected(
+        context: Context,
+        manifestInventory: RepackedRuntimeManifestInventory,
+        injection: RepackedRuntimeNativeProbeInjectionResult,
+        outputRoot: File,
+        cancellation: CancellationSignal,
+        progress: ProgressSink,
+    ): RepackedRuntimeBuildResult {
+        val preflight =
+            RepackedRuntimeBuildPreflight.validateNativeProbeInjection(
+                manifestInventory = manifestInventory,
+                injection = injection,
+            )
+        require(preflight.ready) {
+            preflight.blockers.firstOrNull()
+                ?: "Native-probe-injected repacked build preflight is not ready."
+        }
+
+        return build(
+            context = context,
+            artifactSha256 = injection.artifactSha256,
+            manifestInventory = manifestInventory,
+            instrumentedApks = injection.sources.map {
+                it.sourceDisplayName to File(it.outputPath)
+            },
+            outputRoot = outputRoot,
+            cancellation = cancellation,
+            progress = progress,
+        )
+    }
+
     fun buildProbeInjected(
         context: Context,
         manifestInventory: RepackedRuntimeManifestInventory,
