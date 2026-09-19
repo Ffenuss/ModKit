@@ -1,5 +1,6 @@
 package io.github.ffenuss.modkit.analysis
 
+import io.github.ffenuss.modkit.runtime.RuntimeEvidenceContract
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -7,6 +8,9 @@ import java.util.Locale
 import java.util.TimeZone
 
 object ExpertLabReportWriter {
+    private const val REPORT_SCHEMA_VERSION = 2
+    private const val REPORT_ENGINE_VERSION = "expert-lab-report/2"
+
     fun write(
         outputDir: File,
         label: String,
@@ -24,10 +28,17 @@ object ExpertLabReportWriter {
         val capability = ExpertCapabilityValidator.validate(result.routingPlan)
         val content = buildString {
             appendLine("ModKit Expert Lab technical report")
-            appendLine("Format: 1")
+            appendLine("schemaVersion: " + REPORT_SCHEMA_VERSION)
+            appendLine("engineVersion: " + REPORT_ENGINE_VERSION)
             appendLine("Generated: " + formatter.format(Date()))
             appendLine("Target: " + label)
             appendLine("Artifact SHA-256: " + result.index.artifactSha256)
+            appendLine(
+                "Input relationships: " +
+                    result.index.sources.joinToString { source ->
+                        source.displayName + "@" + source.sha256.take(12)
+                    }.ifBlank { "not_available" },
+            )
             appendLine()
 
             appendLine("SOURCES")
@@ -43,7 +54,7 @@ object ExpertLabReportWriter {
             appendLine("truncated: " + result.index.truncated)
             appendLine(
                 "ABIs: " + result.index.detectedAbis.sorted().joinToString()
-                    .ifBlank { "none" },
+                    .ifBlank { "none_detected" },
             )
             result.index.warnings.forEach {
                 appendLine("warning: " + it)
@@ -91,32 +102,46 @@ object ExpertLabReportWriter {
                 appendLine("  display: " + target.displayName)
                 appendLine("  proof: " + target.proofLevel.name)
                 appendLine("  status: " + target.userStatus.name)
-                appendLine("  artifact: " + (target.artifact ?: "null"))
-                appendLine("  abi: " + (target.abi ?: "null"))
+                appendLine(
+                    "  artifact: " +
+                        (target.artifact ?: "not_applicable_or_not_resolved"),
+                )
+                appendLine(
+                    "  abi: " +
+                        (target.abi ?: "not_applicable_or_not_resolved"),
+                )
                 appendLine(
                     "  token: " + target.metadataToken?.let {
                         "0x" + it.toString(16)
-                    }.orEmpty().ifBlank { "null" },
+                    }.orEmpty().ifBlank { "not_applicable_or_not_resolved" },
                 )
                 appendLine(
                     "  rva: " + target.rva?.let {
                         "0x" + it.toString(16)
-                    }.orEmpty().ifBlank { "null" },
+                    }.orEmpty().ifBlank { "not_resolved" },
                 )
                 appendLine(
                     "  binaryVA: " + target.binaryVirtualAddress?.let {
                         "0x" + it.toString(16)
-                    }.orEmpty().ifBlank { "null" },
+                    }.orEmpty().ifBlank { "not_resolved" },
                 )
                 appendLine(
                     "  runtimeVA: " + target.runtimeVirtualAddress?.let {
                         "0x" + it.toString(16)
-                    }.orEmpty().ifBlank { "null" },
+                    }.orEmpty().ifBlank {
+                        if (target.proofLevel.ordinal <
+                            io.github.ffenuss.modkit.domain.ProofLevel.RUNTIME_CONFIRMED.ordinal
+                        ) {
+                            "runtime_not_confirmed"
+                        } else {
+                            "not_resolved"
+                        }
+                    },
                 )
                 appendLine(
                     "  fileOffset: " + target.fileOffset?.let {
                         "0x" + it.toString(16)
-                    }.orEmpty().ifBlank { "null" },
+                    }.orEmpty().ifBlank { "not_resolved" },
                 )
                 target.facts.forEach { fact ->
                     appendLine(
@@ -169,21 +194,24 @@ object ExpertLabReportWriter {
                     appendLine("  pointerSize: " + item.pointerSize)
                     appendLine(
                         "  codeRegistrationVA: " +
-                            item.codeRegistrationVirtualAddress?.let {
-                                "0x" + it.toString(16)
-                            },
+                            hexOrReason(
+                                item.codeRegistrationVirtualAddress,
+                                "not_resolved",
+                            ),
                     )
                     appendLine(
                         "  metadataRegistrationVA: " +
-                            item.metadataRegistrationVirtualAddress?.let {
-                                "0x" + it.toString(16)
-                            },
+                            hexOrReason(
+                                item.metadataRegistrationVirtualAddress,
+                                "not_resolved",
+                            ),
                     )
                     appendLine(
                         "  codegenRegisterVA: " +
-                            item.codegenRegisterVirtualAddress?.let {
-                                "0x" + it.toString(16)
-                            },
+                            hexOrReason(
+                                item.codegenRegisterVirtualAddress,
+                                "not_resolved",
+                            ),
                     )
                     appendLine("  modules: " + item.modules.size)
                     appendLine("  bindings: " + item.bindings.size)
@@ -194,7 +222,7 @@ object ExpertLabReportWriter {
                                 " VA=0x" + method.functionVirtualAddress.toString(16) +
                                 (method.functionFileOffset?.let {
                                     " file+0x" + it.toString(16)
-                                } ?: ""),
+                                } ?: " fileOffset=not_resolved"),
                         )
                     }
                     item.blockers.forEach {
@@ -207,23 +235,50 @@ object ExpertLabReportWriter {
 
             result.runtimeEvidence?.let { runtime ->
                 appendLine("RUNTIME EVIDENCE")
+                appendLine("engineVersion: runtime.evidence/1")
+                appendLine("artifactSha256: " + runtime.artifactSha256)
                 appendLine("procMapsSha256: " + runtime.procMapsSha256)
+                appendLine("captureSource: " + runtime.captureSource.name)
+                appendLine(
+                    "capturePid: " +
+                        (runtime.capturePid?.toString()
+                            ?: if (
+                                runtime.captureSource ==
+                                io.github.ffenuss.modkit.runtime.ProcMapsCaptureSource.IMPORTED_SNAPSHOT
+                            ) {
+                                "not_available_imported_snapshot"
+                            } else {
+                                "not_recorded"
+                            }),
+                )
+                appendLine(
+                    "capturedAtEpochMs: " +
+                        (runtime.capturedAtEpochMs?.toString() ?: "not_recorded"),
+                )
                 runtime.moduleMappings.forEach { mapping ->
+                    val firstBlocker = mapping.blockers.firstOrNull()
+                        ?: "not_resolved"
                     appendLine("- module: " + mapping.moduleName)
-                    appendLine("  path: " + mapping.mappedPath)
+                    appendLine(
+                        "  path: " +
+                            mapping.mappedPath.ifBlank { "not_resolved" },
+                    )
                     appendLine("  confirmed: " + mapping.confirmed)
                     appendLine(
-                        "  loadBias: " + mapping.loadBias?.let {
-                            "0x" + it.toString(16)
-                        },
+                        "  loadBias: " +
+                            hexOrReason(mapping.loadBias, firstBlocker),
                     )
                     appendLine(
                         "  imageBaseVA: " +
-                            mapping.elfImageBaseVirtualAddress?.let {
-                                "0x" + it.toString(16)
-                            },
+                            hexOrReason(
+                                mapping.elfImageBaseVirtualAddress,
+                                firstBlocker,
+                            ),
                     )
-                    appendLine("  pageSize: " + mapping.pageSize)
+                    appendLine(
+                        "  pageSize: " +
+                            (mapping.pageSize?.toString() ?: firstBlocker),
+                    )
                     appendLine(
                         "  matchedLoadSegments: " +
                             mapping.matchedLoadSegments,
@@ -257,6 +312,33 @@ object ExpertLabReportWriter {
                             address.executableMappingContainsAddress,
                     )
                 }
+
+                appendLine("RUNTIME EVIDENCE CONTRACT")
+                RuntimeEvidenceContract.observations(runtime).forEach { observation ->
+                    appendLine("- id: " + observation.id)
+                    appendLine("  kind: " + observation.kind.name)
+                    appendLine("  strength: " + observation.strength.name)
+                    appendLine(
+                        "  independentlyConfirmed: " +
+                            observation.independentlyConfirmed,
+                    )
+                    appendLine(
+                        "  subject: " +
+                            (observation.subjectId ?: "not_applicable"),
+                    )
+                    appendLine(
+                        "  proofLevel: " +
+                            (observation.proofLevel?.name ?: "not_applicable"),
+                    )
+                    appendLine("  summary: " + observation.summary)
+                    observation.supportingFacts.forEach {
+                        appendLine("  fact: " + it)
+                    }
+                    observation.blockers.forEach {
+                        appendLine("  blocker: " + it)
+                    }
+                }
+
                 appendLine("RUNTIME MODULE INVENTORY")
                 runtime.moduleInventory.forEach { module ->
                     appendLine("- " + module.path)
@@ -280,7 +362,10 @@ object ExpertLabReportWriter {
                             "-0x" + candidate.endExclusive.toString(16),
                     )
                     appendLine("  permissions: " + candidate.permissions)
-                    appendLine("  path: " + (candidate.path ?: "null"))
+                    appendLine(
+                        "  path: " +
+                            (candidate.path ?: "anonymous_or_special_mapping"),
+                    )
                     appendLine("  reason: " + candidate.reason)
                     appendLine(
                         "  status: candidate_only_until_memory_ELF_header_validation",
@@ -310,4 +395,10 @@ object ExpertLabReportWriter {
         }
         return report
     }
+
+    private fun hexOrReason(
+        value: Long?,
+        reason: String,
+    ): String =
+        value?.let { "0x" + it.toString(16) } ?: reason
 }
