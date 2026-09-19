@@ -127,6 +127,106 @@ class EngineResultCacheTest {
         }
     }
 
+
+
+    @Test
+    fun restorePartialResultRebuildsEvidenceGraphFromCompletedCacheStages() {
+        val root = Files.createTempDirectory("modkit-partial-restore").toFile()
+        try {
+            val artifactSha =
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            val dumpFile = File(root, "dump.cs").apply { writeText("// restored") }
+            val index = ArtifactIndex(
+                artifactSha256 = artifactSha,
+                sources = listOf(ArtifactSource("base.apk", 321, artifactSha)),
+                entries = emptyList(),
+                detectedAbis = setOf("arm64-v8a"),
+                runtimeProfiles = listOf(
+                    RuntimeProfile(
+                        runtimeId = "unity_il2cpp",
+                        title = "Unity IL2CPP",
+                        status = DetectionStatus.CONFIRMED,
+                        confidence = DetectionConfidence.HIGH,
+                        evidence = listOf(
+                            "base.apk:assets/bin/Data/Managed/Metadata/global-metadata.dat",
+                            "base.apk:lib/arm64-v8a/libil2cpp.so",
+                        ),
+                    ),
+                ),
+            )
+            val dump = Il2CppFastDumpResult(
+                metadataEntry = "base.apk:global-metadata.dat",
+                libraryEntries = listOf("base.apk:lib/arm64-v8a/libil2cpp.so"),
+                metadata = metadataModel(),
+                dumpFilePath = dumpFile.absolutePath,
+                preview = "restored",
+                warnings = emptyList(),
+            )
+            val binary = Il2CppBinaryBindingResult(
+                evidence = listOf(
+                    Il2CppBinaryEvidence(
+                        libraryEntry = "base.apk:lib/arm64-v8a/libil2cpp.so",
+                        machine = 183,
+                        pointerSize = 8,
+                        codeRegistrationVirtualAddress = 0x1000,
+                        metadataRegistrationVirtualAddress = 0x2000,
+                        codegenRegisterVirtualAddress = 0x3000,
+                        moduleArrayDiscovery = "CODE_REGISTRATION_PAIR_0",
+                        modules = listOf(
+                            Il2CppCodeGenModuleEvidence(
+                                moduleName = "Assembly-CSharp.dll",
+                                moduleVirtualAddress = 0x4000,
+                                methodPointerCount = 1,
+                                methodPointersVirtualAddress = 0x5000,
+                                sampledPointers = 1,
+                                executablePointers = 1,
+                            ),
+                        ),
+                        bindings = listOf(
+                            Il2CppMethodBinaryBinding(
+                                methodIndex = 0,
+                                managedIdentity = "Game.Player.Hit",
+                                metadataToken = 0x06000001,
+                                imageName = "Assembly-CSharp.dll",
+                                moduleName = "Assembly-CSharp.dll",
+                                slotIndex = 0,
+                                functionVirtualAddress = 0x6000,
+                                functionFileOffset = 0x800,
+                            ),
+                        ),
+                        blockers = emptyList(),
+                    ),
+                ),
+                exactBindingCount = 1,
+                warnings = emptyList(),
+            )
+            val cache = EngineResultCache(File(root, "cache"))
+
+            assertTrue(cache.saveArtifactIndex(artifactSha, index))
+            assertTrue(cache.saveIl2CppFastDump(artifactSha, dump))
+            assertTrue(cache.saveIl2CppBinaryBinding(artifactSha, binary))
+
+            val restored = requireNotNull(cache.restorePartialResult(artifactSha))
+            assertEquals(artifactSha, restored.index.artifactSha256)
+            assertEquals(
+                setOf(
+                    EngineResultCache.ARTIFACT_INDEX_ENGINE_ID,
+                    EngineResultCache.IL2CPP_FAST_DUMP_ENGINE_ID,
+                    EngineResultCache.IL2CPP_BINARY_BINDING_ENGINE_ID,
+                ),
+                restored.engineCacheHits,
+            )
+            assertEquals(1, restored.evidenceGraph?.targets?.size)
+            assertEquals(
+                UserFindingStatus.CONFIRMED,
+                restored.evidenceGraph?.targets?.single()?.userStatus,
+            )
+            assertTrue(restored.confirmationQueue.isEmpty())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun metadataModel() = Il2CppMetadataModel(
         sizeBytes = 1024,
         magicValid = true,
