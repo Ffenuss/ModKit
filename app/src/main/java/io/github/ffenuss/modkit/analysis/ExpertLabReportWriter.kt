@@ -2,6 +2,9 @@ package io.github.ffenuss.modkit.analysis
 
 import io.github.ffenuss.modkit.runtime.RepackedTestRuntimePlanner
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceContract
+import io.github.ffenuss.modkit.runtime.RuntimeNativeTraceCapability
+import io.github.ffenuss.modkit.runtime.RuntimeNativeTraceCapabilityRegistry
+import io.github.ffenuss.modkit.runtime.RuntimeNativeTraceSource
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -502,6 +505,21 @@ object ExpertLabReportWriter {
                 }
                 appendLine()
             }
+
+            appendLine("RUNTIME NATIVE TRACE CAPABILITIES")
+            RuntimeNativeTraceCapability.entries.forEach { capability ->
+                appendLine(
+                    "- " + capability.name + ": " +
+                        (capability in RuntimeNativeTraceCapabilityRegistry.registered),
+                )
+            }
+            RuntimeNativeTraceSource.entries.forEach { source ->
+                appendLine(
+                    "capture-" + source.name + ": " +
+                        RuntimeNativeTraceCapabilityRegistry.captureAvailable(source),
+                )
+            }
+            appendLine()
 
             appendLine("ENGINE DIAGNOSTICS")
             result.engineCacheHits.sorted().forEach {
