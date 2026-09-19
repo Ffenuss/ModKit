@@ -1,6 +1,8 @@
 package io.github.ffenuss.modkit.analysis
 
+import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.domain.EngineScheduleClass
+import io.github.ffenuss.modkit.domain.RunState
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +29,7 @@ object RoutedEngineScheduler {
         outputRoot: File,
         cancellation: CancellationSignal,
         skipController: EngineSkipController,
+        cache: EngineResultCache? = null,
         progress: ProgressSink,
         onPartial: (FastAnalysisResult) -> Unit,
     ): FastAnalysisResult {
@@ -51,16 +54,34 @@ object RoutedEngineScheduler {
             result = try {
                 when (engine.id) {
                     "il2cpp.fast-dump" -> {
-                        val dump = withContext(Dispatchers.IO) {
+                        val cached = withContext(Dispatchers.IO) {
+                            cache?.loadIl2CppFastDump(result.index.artifactSha256)
+                        }
+                        val dump = cached ?: withContext(Dispatchers.IO) {
                             Il2CppFastDumpEngine.analyze(
                                 workspace = workspace,
                                 outputRoot = outputRoot,
                                 cancellation = engineCancellation,
                                 progress = progress,
                             )
+                        }.also { produced ->
+                            withContext(Dispatchers.IO) {
+                                cache?.saveIl2CppFastDump(
+                                    result.index.artifactSha256,
+                                    produced,
+                                )
+                            }
+                        }
+                        if (cached != null) {
+                            publishCacheHit(progress, engine, result.index.artifactSha256)
                         }
                         result.copy(
                             il2cppFastDump = dump,
+                            engineCacheHits = if (cached != null) {
+                                result.engineCacheHits + engine.id
+                            } else {
+                                result.engineCacheHits
+                            },
                             il2cppEvidence = EvidenceGate.evaluate(
                                 artifactSha256 = result.index.artifactSha256,
                                 metadataIdentityExact = dump.metadata.magicValid &&
@@ -82,7 +103,10 @@ object RoutedEngineScheduler {
                                 "Skipped because IL2CPP metadata reconstruction did not complete.",
                             )
                         } else {
-                            val binding = withContext(Dispatchers.IO) {
+                            val cached = withContext(Dispatchers.IO) {
+                                cache?.loadIl2CppBinaryBinding(result.index.artifactSha256)
+                            }
+                            val binding = cached ?: withContext(Dispatchers.IO) {
                                 Il2CppBinaryBindingEngine.analyze(
                                     workspace = workspace,
                                     metadata = dump.metadata,
@@ -90,9 +114,24 @@ object RoutedEngineScheduler {
                                     cancellation = engineCancellation,
                                     progress = progress,
                                 )
+                            }.also { produced ->
+                                withContext(Dispatchers.IO) {
+                                    cache?.saveIl2CppBinaryBinding(
+                                        result.index.artifactSha256,
+                                        produced,
+                                    )
+                                }
+                            }
+                            if (cached != null) {
+                                publishCacheHit(progress, engine, result.index.artifactSha256)
                             }
                             result.copy(
                                 il2cppBinaryBinding = binding,
+                                engineCacheHits = if (cached != null) {
+                                    result.engineCacheHits + engine.id
+                                } else {
+                                    result.engineCacheHits
+                                },
                                 il2cppEvidence = EvidenceGate.evaluate(
                                     artifactSha256 = result.index.artifactSha256,
                                     metadataIdentityExact = dump.metadata.magicValid &&
@@ -131,6 +170,23 @@ object RoutedEngineScheduler {
         }
 
         return result
+    }
+
+    private fun publishCacheHit(
+        progress: ProgressSink,
+        engine: PlannedEngine,
+        artifactSha256: String,
+    ) {
+        progress.publish(
+            EngineProgress(
+                engineId = engine.id,
+                scheduleClass = engine.scheduleClass,
+                state = RunState.COMPLETED,
+                currentTask = "Результат восстановлен из content-addressed cache",
+                currentArtifact = artifactSha256.take(16),
+                lastHeartbeatEpochMs = System.currentTimeMillis(),
+            ),
+        )
     }
 
     private fun FastAnalysisResult.withEngineWarning(
