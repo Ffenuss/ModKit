@@ -8,7 +8,7 @@ import org.junit.Test
 
 class EvidenceGateTest {
     @Test
-    fun requestedChangeReadyGetsExplicitBlockersWhenBinaryProofIsMissing() {
+    fun requestedChangeReadyGetsImmediateBinaryBlockerWhenBinaryProofIsMissing() {
         val evidence = EvidenceGate.evaluate(
             artifactSha256 = "abc",
             metadataIdentityExact = true,
@@ -20,8 +20,8 @@ class EvidenceGateTest {
 
         assertFalse(evidence.changeReady)
         assertEquals(ProofLevel.EXACT_METADATA, evidence.proofLevel)
-        assertTrue(evidence.blockers.any { it.code == "EXECUTABLE_BINDING_MISSING" })
-        assertTrue(evidence.blockers.any { it.code == "MUTATION_NOT_VALIDATED" })
+        assertEquals(1, evidence.blockers.size)
+        assertEquals("EXECUTABLE_BINDING_MISSING", evidence.blockers.single().code)
     }
 
     @Test
