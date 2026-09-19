@@ -90,6 +90,7 @@ object RepackedTestRuntimePlanner {
             RepackedRuntimeCapability.SOURCE_COPY,
             RepackedRuntimeCapability.MANIFEST_IDENTITY_INSPECTION,
             RepackedRuntimeCapability.BINARY_MANIFEST_REWRITE,
+            RepackedRuntimeCapability.PROBE_PAYLOAD_INJECTION,
             RepackedRuntimeCapability.OLD_SIGNATURE_REMOVAL,
             RepackedRuntimeCapability.APK_ALIGNMENT,
             RepackedRuntimeCapability.APK_SIGNING,
