@@ -122,6 +122,10 @@ Status: **ACTIVE**
 - [ ] Automatic in-process capture from a transparent repacked test runtime
 - [x] Bounded runtime memory-ELF validation for special/deleted executable mappings without proof escalation
 - [ ] JNI/dlsym runtime confirmation where static evidence is insufficient
+  - [x] Bounded trace parser and SHA/process/PID binding contract
+  - [x] Executable mapping + independently confirmed ELF module validation
+  - [x] JNI/dlsym observations remain proof-neutral and cannot grant method execution or CHANGE_READY
+  - [ ] Repacked/non-root/root trace capture executors
 - [ ] Root runtime only for evidence that remains unresolved after non-root stages
 
 ## Phase 8 — Non-ARM64 deep completion
