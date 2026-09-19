@@ -129,8 +129,10 @@ Status: **ACTIVE**
 - [x] Repacked test build report records signer, alignment, signature and final APK SHA
 - [x] Signed installed-test identity verification: package/provider/authority/signer before activation
 - [x] Provider activation performs test-process launch and bounded `/proc/self/maps` evidence capture
+- [x] PackageInstaller session revalidates staged APK SHA/signers immediately before install
+- [x] Unknown-source permission and incompatible installed-signature flows stay explicit and user-confirmed
 - [x] Repacked capture feeds Evidence Graph and persisted stage-attempt history
-- [ ] In-app install handoff/PackageInstaller flow for the signed test APK/APK-set
+- [x] In-app PackageInstaller handoff for signed test APK/APK-set with user confirmation and signature-conflict handling
 - [x] Non-root installed-app process discovery with exact `/proc/<pid>/cmdline` identity proof
 - [x] PID-reuse guard by rechecking process identity before and after bounded maps capture
 - [x] Automatic non-root maps capture/integration when the main process is uniquely confirmed and readable
