@@ -93,15 +93,39 @@ val generateRuntimeProbeDexAsset =
             temp.delete()
             output.delete()
 
+            val providerMarker =
+                "RuntimeEvidenceProvider".toByteArray(Charsets.UTF_8)
+            val matchingDex = mutableListOf<ByteArray>()
             ZipFile(payloadApk).use { zip ->
-                val dex = checkNotNull(zip.getEntry("classes.dex")) {
-                    "Runtime probe APK has no classes.dex."
-                }
-                zip.getInputStream(dex).use { input ->
-                    temp.outputStream().buffered().use { target ->
-                        input.copyTo(target)
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (
+                        !entry.isDirectory &&
+                        Regex("""classes(?:\\d*)?\\.dex""")
+                            .matches(entry.name)
+                    ) {
+                        val bytes = zip.getInputStream(entry).use {
+                            it.readBytes()
+                        }
+                        val markerFound =
+                            bytes.indices.any { start ->
+                                start + providerMarker.size <= bytes.size &&
+                                    providerMarker.indices.all { offset ->
+                                        bytes[start + offset] ==
+                                            providerMarker[offset]
+                                    }
+                            }
+                        if (markerFound) matchingDex += bytes
                     }
                 }
+            }
+            check(matchingDex.size == 1) {
+                "Runtime probe provider must resolve to exactly one DEX; found " +
+                    matchingDex.size
+            }
+            temp.outputStream().buffered().use { target ->
+                target.write(matchingDex.single())
             }
 
             val magic = ByteArray(4)
@@ -115,11 +139,6 @@ val generateRuntimeProbeDexAsset =
                     ),
             ) {
                 "Generated runtime probe payload is not a DEX file."
-            }
-            val descriptor = temp.readBytes()
-                .toString(Charsets.ISO_8859_1)
-            check("RuntimeEvidenceProvider" in descriptor) {
-                "Generated runtime probe DEX lacks RuntimeEvidenceProvider."
             }
             check(temp.renameTo(output)) {
                 temp.delete()
