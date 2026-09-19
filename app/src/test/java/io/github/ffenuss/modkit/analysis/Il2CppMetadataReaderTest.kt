@@ -29,6 +29,9 @@ class Il2CppMetadataReaderTest {
             assertEquals("health", model.fields.single().name)
             assertEquals("Game.Player", model.methods.single().declaringType)
             assertEquals("Game.Player", model.fields.single().declaringType)
+            assertEquals("Assembly-CSharp.dll", model.images.single().name)
+            assertEquals(0, model.images.single().typeStart)
+            assertEquals(1, model.images.single().typeCount)
         } finally {
             file.delete()
         }
@@ -68,6 +71,7 @@ class Il2CppMetadataReaderTest {
         pair(5, 500, 32)
         pair(11, 600, 12)
         pair(19, 700, 88)
+        pair(20, 800, 40)
 
         val strings = byteArrayOf(
             'P'.code.toByte(), 'l'.code.toByte(), 'a'.code.toByte(), 'y'.code.toByte(),
@@ -76,6 +80,11 @@ class Il2CppMetadataReaderTest {
             'H'.code.toByte(), 'i'.code.toByte(), 't'.code.toByte(), 0,
             'h'.code.toByte(), 'e'.code.toByte(), 'a'.code.toByte(), 'l'.code.toByte(),
             't'.code.toByte(), 'h'.code.toByte(), 0,
+            'A'.code.toByte(), 's'.code.toByte(), 's'.code.toByte(), 'e'.code.toByte(),
+            'm'.code.toByte(), 'b'.code.toByte(), 'l'.code.toByte(), 'y'.code.toByte(),
+            '-'.code.toByte(), 'C'.code.toByte(), 'S'.code.toByte(), 'h'.code.toByte(),
+            'a'.code.toByte(), 'r'.code.toByte(), 'p'.code.toByte(), '.'.code.toByte(),
+            'd'.code.toByte(), 'l'.code.toByte(), 'l'.code.toByte(), 0,
         )
         strings.copyInto(bytes, 300)
 
@@ -96,6 +105,12 @@ class Il2CppMetadataReaderTest {
         buffer.putInt(600, 16)
         buffer.putInt(604, 4)
         buffer.putInt(608, 0x04000001)
+
+        buffer.putInt(800, 23)
+        buffer.putInt(804, 0)
+        buffer.putInt(808, 0)
+        buffer.putInt(812, 1)
+        buffer.putInt(828, 1)
         return bytes
     }
 
