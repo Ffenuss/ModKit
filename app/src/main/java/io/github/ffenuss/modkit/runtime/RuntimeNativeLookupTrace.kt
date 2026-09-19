@@ -1,6 +1,5 @@
 package io.github.ffenuss.modkit.runtime
 
-import io.github.ffenuss.modkit.domain.ProofLevel
 import java.io.Serializable
 import java.security.MessageDigest
 
