@@ -139,6 +139,53 @@ class EvidenceGraphBuilderTest {
         assertFalse(request.availableNow)
     }
 
+
+
+    @Test
+    fun runtimeProfilerSignalsBecomeDiscoveredGraphTargetsWithoutInventingExactProof() {
+        val index = ArtifactIndex(
+            artifactSha256 = ARTIFACT_SHA,
+            sources = listOf(ArtifactSource("base.apk", 123, ARTIFACT_SHA)),
+            entries = emptyList(),
+            detectedAbis = setOf("arm64-v8a"),
+            runtimeProfiles = listOf(
+                RuntimeProfile(
+                    runtimeId = "flutter",
+                    title = "Flutter",
+                    status = DetectionStatus.CONFIRMED,
+                    confidence = DetectionConfidence.HIGH,
+                    evidence = listOf(
+                        "base.apk:lib/arm64-v8a/libflutter.so",
+                        "base.apk:assets/flutter_assets/AssetManifest.bin",
+                    ),
+                ),
+                RuntimeProfile(
+                    runtimeId = "webassembly",
+                    title = "WebAssembly",
+                    status = DetectionStatus.LIKELY,
+                    confidence = DetectionConfidence.MEDIUM,
+                    evidence = listOf("base.apk:assets/module.wasm"),
+                ),
+            ),
+        )
+        val result = FastAnalysisResult(
+            index = index,
+            routingPlan = EngineRouter.plan(index),
+            elapsedMs = 5,
+        ).withEvidenceGraph()
+
+        val graph = requireNotNull(result.evidenceGraph)
+        assertEquals(2, graph.targets.size)
+        assertTrue(graph.targets.all { it.proofLevel == ProofLevel.DISCOVERED })
+        assertTrue(graph.targets.all { it.userStatus == UserFindingStatus.FOUND })
+        assertTrue(
+            graph.targets.all {
+                it.blockers.single().code == "DEEP_EVIDENCE_NOT_AVAILABLE"
+            },
+        )
+        assertTrue(result.confirmationQueue.isEmpty())
+    }
+
     private fun baseResult(): FastAnalysisResult {
         val index = ArtifactIndex(
             artifactSha256 = ARTIFACT_SHA,
