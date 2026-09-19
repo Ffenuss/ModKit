@@ -26,6 +26,7 @@ object RoutedEngineScheduler {
         workspace: AnalysisWorkspace,
         outputRoot: File,
         cancellation: CancellationSignal,
+        skipController: EngineSkipController,
         progress: ProgressSink,
         onPartial: (FastAnalysisResult) -> Unit,
     ): FastAnalysisResult {
@@ -42,6 +43,10 @@ object RoutedEngineScheduler {
 
         for (engine in engines) {
             if (cancellation.isCancelled()) throw AnalysisCancelledException()
+            val engineCancellation = object : CancellationSignal {
+                override fun isCancelled(): Boolean =
+                    cancellation.isCancelled() || skipController.isRequested(engine.id)
+            }
 
             result = try {
                 when (engine.id) {
@@ -50,7 +55,7 @@ object RoutedEngineScheduler {
                             Il2CppFastDumpEngine.analyze(
                                 workspace = workspace,
                                 outputRoot = outputRoot,
-                                cancellation = cancellation,
+                                cancellation = engineCancellation,
                                 progress = progress,
                             )
                         }
@@ -82,7 +87,7 @@ object RoutedEngineScheduler {
                                     workspace = workspace,
                                     metadata = dump.metadata,
                                     outputRoot = outputRoot,
-                                    cancellation = cancellation,
+                                    cancellation = engineCancellation,
                                     progress = progress,
                                 )
                             }
@@ -108,7 +113,11 @@ object RoutedEngineScheduler {
                     )
                 }
             } catch (cancelled: AnalysisCancelledException) {
-                throw cancelled
+                if (!cancellation.isCancelled() && skipController.consume(engine.id)) {
+                    result.withEngineWarning(engine.id, "Skipped after watchdog/user request.")
+                } else {
+                    throw cancelled
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
