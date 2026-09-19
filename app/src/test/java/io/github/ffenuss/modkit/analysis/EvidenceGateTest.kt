@@ -39,4 +39,62 @@ class EvidenceGateTest {
         assertEquals(ProofLevel.CHANGE_READY, evidence.proofLevel)
         assertTrue(evidence.blockers.isEmpty())
     }
+
+
+    @Test
+    fun ordinaryAnalysisStillExplainsWhyChangeReadyIsFalse() {
+        val evidence = EvidenceGate.evaluate(
+            artifactSha256 = "abc",
+            metadataIdentityExact = true,
+            binaryIdentityExact = false,
+            runtimeConfirmed = false,
+            mutationValidated = false,
+            requestedChangeReady = false,
+        )
+
+        assertEquals(ProofLevel.EXACT_METADATA, evidence.proofLevel)
+        assertFalse(evidence.changeReady)
+        assertEquals(1, evidence.blockers.size)
+        assertEquals("EXECUTABLE_BINDING_MISSING", evidence.blockers.single().code)
+        assertEquals(ProofLevel.EXACT_BINARY, evidence.blockers.single().requiredFor)
+    }
+
+    @Test
+    fun exactBinaryExplainsThatPreparePreflightIsNext() {
+        val evidence = EvidenceGate.evaluate(
+            artifactSha256 = "abc",
+            metadataIdentityExact = true,
+            binaryIdentityExact = true,
+            runtimeConfirmed = false,
+            mutationValidated = false,
+            requestedChangeReady = false,
+        )
+
+        assertEquals(ProofLevel.EXACT_BINARY, evidence.proofLevel)
+        assertFalse(evidence.changeReady)
+        assertEquals("MUTATION_NOT_VALIDATED", evidence.blockers.single().code)
+        assertEquals(ProofLevel.CHANGE_READY, evidence.blockers.single().requiredFor)
+    }
+
+    @Test
+    fun detailedBinaryBlockerReplacesGenericExecutableBlocker() {
+        val evidence = EvidenceGate.evaluate(
+            artifactSha256 = "abc",
+            metadataIdentityExact = true,
+            binaryIdentityExact = false,
+            runtimeConfirmed = false,
+            mutationValidated = false,
+            requestedChangeReady = false,
+            suppliedBlockers = listOf(
+                EvidenceBlocker(
+                    code = "AMBIGUOUS_CODEGEN_MODULE_ARRAY",
+                    message = "ambiguous",
+                    requiredFor = ProofLevel.EXACT_BINARY,
+                ),
+            ),
+        )
+
+        assertEquals(1, evidence.blockers.size)
+        assertEquals("AMBIGUOUS_CODEGEN_MODULE_ARRAY", evidence.blockers.single().code)
+    }
 }
