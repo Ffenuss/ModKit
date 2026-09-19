@@ -41,7 +41,7 @@ android {
         buildConfig = true
     }
 
-    sourceSets.getByName("main").assets.directories.add(runtimeProbeAssetDir.get().asFile)
+    sourceSets.getByName("main").assets.directories.add(runtimeProbeAssetDir.get().asFile.absolutePath)
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
