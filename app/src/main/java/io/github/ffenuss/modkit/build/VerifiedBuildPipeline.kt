@@ -28,6 +28,7 @@ data class VerifiedBuildResult(
     val files: List<BuiltApkFile>,
     val mutationDiffs: List<MutationDiff>,
     val mutationDiffVerification: MutationDiffVerification,
+    val installability: InstallabilityVerification,
     val signerAlias: String,
     val signerCertificateSha256: List<String>,
     val postBuildAnalysis: FastAnalysisResult,
@@ -144,6 +145,17 @@ object VerifiedBuildPipeline {
                     (diffVerification.blockers.firstOrNull() ?: "unknown diff error")
             }
 
+            val installability = withContext(Dispatchers.IO) {
+                BuiltPackageVerifier.verify(
+                    context = context,
+                    files = built.map { it.file },
+                )
+            }
+            require(installability.verified) {
+                "Built APK installability verification failed: " +
+                    (installability.blockers.firstOrNull() ?: "unknown package error")
+            }
+
             val signerFingerprints = built
                 .flatMap { it.signature.signerCertificateSha256 }
                 .distinct()
@@ -197,6 +209,7 @@ object VerifiedBuildPipeline {
                     files = built,
                     mutationDiffs = staging.diffs,
                     diffVerification = diffVerification,
+                    installability = installability,
                     signerAlias = identity.alias,
                     signerCertificateSha256 = signerFingerprints,
                     postBuildAnalysis = postBuildAnalysis,
@@ -209,6 +222,7 @@ object VerifiedBuildPipeline {
                 files = built,
                 mutationDiffs = staging.diffs,
                 mutationDiffVerification = diffVerification,
+                installability = installability,
                 signerAlias = identity.alias,
                 signerCertificateSha256 = signerFingerprints,
                 postBuildAnalysis = postBuildAnalysis,
