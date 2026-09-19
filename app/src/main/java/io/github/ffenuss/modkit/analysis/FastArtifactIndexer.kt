@@ -69,7 +69,7 @@ object FastArtifactIndexer {
             )
         }
 
-        val setSha = artifactSha256(sources)
+        val setSha = ArtifactIdentity.combine(sources)
         val cachedIndex = cache
             ?.loadArtifactIndex(setSha)
             ?.takeIf { cached -> sameSourceContent(cached.sources, sources) }
@@ -241,32 +241,6 @@ object FastArtifactIndexer {
             routingPlan = EngineRouter.plan(index),
             elapsedMs = System.currentTimeMillis() - started,
         )
-    }
-
-    private fun artifactSha256(sources: List<ArtifactSource>): String =
-        if (sources.size == 1) {
-            sources.single().sha256
-        } else {
-            val digest = MessageDigest.getInstance("SHA-256")
-            sources.sortedBy { it.displayName }.forEach { source ->
-                digest.update(source.displayName.toByteArray(Charsets.UTF_8))
-                digest.update(0.toByte())
-                digest.update(source.sha256.toByteArray(Charsets.US_ASCII))
-                digest.update(0.toByte())
-                digest.update(source.size.toString().toByteArray(Charsets.US_ASCII))
-                digest.update(0.toByte())
-            }
-            digest.digest().toHex()
-        }
-
-    private fun sameSourceContent(
-        cached: List<ArtifactSource>,
-        current: List<ArtifactSource>,
-    ): Boolean {
-        if (cached.size != current.size) return false
-        fun identities(values: List<ArtifactSource>) =
-            values.map { it.sha256.lowercase() to it.size }.sortedBy { it.first }
-        return identities(cached) == identities(current)
     }
 
     private data class Classification(
