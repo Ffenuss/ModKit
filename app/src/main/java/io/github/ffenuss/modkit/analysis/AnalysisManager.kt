@@ -215,13 +215,47 @@ object AnalysisManager {
                     }
                 }
 
-                val result = withContext(Dispatchers.IO) {
+                var result = withContext(Dispatchers.IO) {
                     FastArtifactIndexer.index(
                         files = prepared.files,
                         cancellation = signal,
                         progress = progressSink,
                         knownSha256 = prepared.knownSha256,
                     )
+                }
+
+                val il2cppPlanned = result.routingPlan.engines.any {
+                    it.id == "il2cpp.fast-dump" && it.availableNow
+                }
+                if (il2cppPlanned) {
+                    try {
+                        val workspace = AnalysisWorkspace(
+                            index = result.index,
+                            sources = result.index.sources.zip(prepared.files).map { (descriptor, file) ->
+                                WorkspaceSource(descriptor, file)
+                            },
+                        )
+                        val dump = withContext(Dispatchers.IO) {
+                            Il2CppFastDumpEngine.analyze(
+                                workspace = workspace,
+                                outputRoot = File(context.filesDir, "analysis-results"),
+                                cancellation = signal,
+                                progress = progressSink,
+                            )
+                        }
+                        result = result.copy(il2cppFastDump = dump)
+                    } catch (cancelled: AnalysisCancelledException) {
+                        throw cancelled
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        result = result.copy(
+                            engineWarnings = result.engineWarnings + (
+                                "il2cpp.fast-dump: " +
+                                    (failure.message ?: failure.javaClass.simpleName)
+                                ),
+                        )
+                    }
                 }
 
                 synchronized(lock) {
