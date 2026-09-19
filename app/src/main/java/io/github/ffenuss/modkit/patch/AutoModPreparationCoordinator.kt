@@ -1,23 +1,15 @@
 package io.github.ffenuss.modkit.patch
 
 import android.content.Context
-import android.net.Uri
-import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
-import io.github.ffenuss.modkit.analysis.AnalysisWorkspace
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.analysis.EngineResultCache
 import io.github.ffenuss.modkit.analysis.EngineSkipController
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
-import io.github.ffenuss.modkit.analysis.FastArtifactIndexer
-import io.github.ffenuss.modkit.analysis.MaterializedTarget
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.analysis.RoutedEngineScheduler
-import io.github.ffenuss.modkit.analysis.TargetMaterializer
 import io.github.ffenuss.modkit.analysis.TargetShaVerification
 import io.github.ffenuss.modkit.analysis.TargetShaVerifier
-import io.github.ffenuss.modkit.analysis.WorkspaceSource
-import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.domain.EngineScheduleClass
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -73,7 +65,7 @@ object AutoModPreparationCoordinator {
         val requested = current.confirmationQueue.count { it.availableNow }
         if (requested > 0) {
             val prepared = withContext(Dispatchers.IO) {
-                prepareWorkspace(
+                PatchWorkspaceProvider.open(
                     context = context,
                     target = target,
                     expected = current,
@@ -83,10 +75,10 @@ object AutoModPreparationCoordinator {
                 )
             }
 
-            try {
+            prepared.use { snapshot ->
                 current = RoutedEngineScheduler.execute(
                     initial = current,
-                    workspace = prepared.workspace,
+                    workspace = snapshot.workspace,
                     outputRoot = File(context.filesDir, "analysis-results"),
                     cancellation = cancellation,
                     skipController = EngineSkipController(),
@@ -95,8 +87,6 @@ object AutoModPreparationCoordinator {
                     onPartial = { },
                     allowedScheduleClasses = setOf(EngineScheduleClass.CONFIRMATION),
                 )
-            } finally {
-                prepared.temporaryFiles.forEach(File::delete)
             }
 
             verification = withContext(Dispatchers.IO) {
@@ -135,105 +125,5 @@ object AutoModPreparationCoordinator {
         )
     }
 
-    private data class PreparedWorkspace(
-        val workspace: AnalysisWorkspace,
-        val temporaryFiles: List<File>,
-    )
 
-    private fun prepareWorkspace(
-        context: Context,
-        target: AnalysisTargetDescriptor,
-        expected: FastAnalysisResult,
-        cache: EngineResultCache,
-        cancellation: CancellationSignal,
-        progress: ProgressSink,
-    ): PreparedWorkspace {
-        if (cancellation.isCancelled()) throw AnalysisCancelledException()
-
-        val localFiles: List<File>
-        val knownSha: Map<String, String>
-        val temporary: List<File>
-
-        when (target) {
-            is AnalysisTargetDescriptor.FileUri -> {
-                val materialized: MaterializedTarget = TargetMaterializer.fromUri(
-                    context = context,
-                    uri = Uri.parse(target.uri),
-                    cancellation = cancellation,
-                    progress = progress,
-                )
-                if (materialized.sha256.lowercase() != expected.index.artifactSha256.lowercase()) {
-                    materialized.file.delete()
-                    error(
-                        "Исходный файл изменился после анализа. Статическое подтверждение " +
-                            "для старого SHA остановлено.",
-                    )
-                }
-                localFiles = listOf(materialized.file)
-                knownSha = mapOf(materialized.file.absolutePath to materialized.sha256)
-                temporary = listOf(materialized.file)
-            }
-
-            is AnalysisTargetDescriptor.InstalledPackage -> {
-                val installed = InstalledAppRepository(context)
-                    .find(target.packageName)
-                    ?: error("Установленное приложение больше недоступно: ${target.packageName}")
-                localFiles = installed.apkFiles
-                knownSha = emptyMap()
-                temporary = emptyList()
-            }
-        }
-
-        try {
-            val fresh = FastArtifactIndexer.index(
-                files = localFiles,
-                cancellation = cancellation,
-                progress = progress,
-                knownSha256 = knownSha,
-                cache = cache,
-            )
-            if (fresh.index.artifactSha256 != expected.index.artifactSha256) {
-                error(
-                    "Содержимое цели изменилось после анализа. " +
-                        "Старые подтверждения и адреса не переиспользуются.",
-                )
-            }
-
-            val aligned = alignFiles(
-                descriptors = expected.index.sources,
-                files = localFiles,
-            )
-            return PreparedWorkspace(
-                workspace = AnalysisWorkspace(
-                    index = expected.index,
-                    sources = expected.index.sources.zip(aligned).map { (descriptor, file) ->
-                        WorkspaceSource(descriptor, file)
-                    },
-                ),
-                temporaryFiles = temporary,
-            )
-        } catch (failure: Throwable) {
-            temporary.forEach(File::delete)
-            throw failure
-        }
-    }
-
-    private fun alignFiles(
-        descriptors: List<io.github.ffenuss.modkit.analysis.ArtifactSource>,
-        files: List<File>,
-    ): List<File> {
-        require(descriptors.size == files.size) {
-            "Состав APK-set изменился после анализа."
-        }
-        if (descriptors.size == 1) return files
-
-        val byName = files.groupBy(File::getName)
-        return descriptors.map { descriptor ->
-            val matches = byName[descriptor.displayName].orEmpty()
-            require(matches.size == 1) {
-                "Не удалось однозначно сопоставить split APK ${descriptor.displayName}."
-            }
-            matches.single()
-        }
-    }
 }
