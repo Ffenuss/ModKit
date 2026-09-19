@@ -125,8 +125,8 @@ object Il2CppNativeMutationDraftBuilder {
                 ),
             ),
             targetDisplayName = target.displayName,
-            originalHex = original.toHex(),
-            replacementHex = replacementBytes.toHex(),
+            originalHex = original.toDisplayHex(),
+            replacementHex = replacementBytes.toDisplayHex(),
             extractedLibraryPath = extracted.absolutePath,
         )
     }
@@ -149,8 +149,8 @@ object Il2CppNativeMutationDraftBuilder {
     private fun sha256(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256")
             .digest(bytes)
-            .toHex()
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
-    private fun ByteArray.toHex(): String =
+    private fun ByteArray.toDisplayHex(): String =
         joinToString(" ") { "%02X".format(it.toInt() and 0xff) }
 }
