@@ -61,7 +61,12 @@ object EngineRouter {
                 reason = "Validated global-metadata.dat + libil2cpp.so pair",
                 available = true,
             )
-            missing += "IL2CPP exact CodeGen / metadata-to-binary binding is not implemented yet"
+            engines += PlannedEngine(
+                id = "il2cpp.codegen-bind",
+                scheduleClass = EngineScheduleClass.CONFIRMATION,
+                availableNow = true,
+                reason = "Run after metadata image reconstruction to prove token-slot executable bindings",
+            )
         }
         if ("unity_mono" in runtimes || "dotnet_android" in runtimes) {
             targeted(
