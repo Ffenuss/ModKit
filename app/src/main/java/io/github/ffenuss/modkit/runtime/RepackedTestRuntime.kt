@@ -95,6 +95,8 @@ object RepackedTestRuntimePlanner {
             RepackedRuntimeCapability.APK_ALIGNMENT,
             RepackedRuntimeCapability.APK_SIGNING,
             RepackedRuntimeCapability.PACKAGE_VERIFY,
+            RepackedRuntimeCapability.TEST_LAUNCH,
+            RepackedRuntimeCapability.RUNTIME_EVIDENCE_CAPTURE,
             RepackedRuntimeCapability.REPORT_WRITE,
             RepackedRuntimeCapability.CLEANUP,
         )
