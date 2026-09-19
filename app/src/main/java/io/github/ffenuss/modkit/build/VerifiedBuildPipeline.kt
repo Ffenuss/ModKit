@@ -3,6 +3,7 @@ package io.github.ffenuss.modkit.build
 import android.content.Context
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
+import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.domain.EngineScheduleClass
@@ -29,6 +30,7 @@ data class VerifiedBuildResult(
     val mutationDiffVerification: MutationDiffVerification,
     val signerAlias: String,
     val signerCertificateSha256: List<String>,
+    val postBuildAnalysis: FastAnalysisResult,
     val builtAtEpochMs: Long,
 )
 
@@ -158,6 +160,24 @@ object VerifiedBuildPipeline {
 
             progress.publish(
                 EngineProgress(
+                    engineId = "build.post-analysis",
+                    scheduleClass = EngineScheduleClass.CONFIRMATION,
+                    state = RunState.RUNNING,
+                    currentTask = "Повторный анализ собранного APK",
+                    processed = 0,
+                    total = built.size.toLong(),
+                    lastHeartbeatEpochMs = System.currentTimeMillis(),
+                ),
+            )
+            val postBuildAnalysis = PostBuildReanalyzer.analyze(
+                context = context,
+                files = built,
+                cancellation = cancellation,
+                progress = progress,
+            )
+
+            progress.publish(
+                EngineProgress(
                     engineId = "build.pipeline",
                     scheduleClass = EngineScheduleClass.CONFIRMATION,
                     state = RunState.COMPLETED,
@@ -175,6 +195,7 @@ object VerifiedBuildPipeline {
                 mutationDiffVerification = diffVerification,
                 signerAlias = identity.alias,
                 signerCertificateSha256 = signerFingerprints,
+                postBuildAnalysis = postBuildAnalysis,
                 builtAtEpochMs = System.currentTimeMillis(),
             )
         } catch (failure: Throwable) {
