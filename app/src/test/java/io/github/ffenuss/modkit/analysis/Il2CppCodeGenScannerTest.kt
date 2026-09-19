@@ -28,7 +28,7 @@ class Il2CppCodeGenScannerTest {
         assertNull(result.codeRegistrationVirtualAddress)
         assertEquals(1, result.modules.size)
         assertTrue(result.moduleArrayDiscovery.orEmpty().startsWith("BOUNDED_IMAGE_SET_SCAN@"))
-        assertTrue("CODE_REGISTRATION_SYMBOL_UNRESOLVED" in result.blockers)
+        assertTrue("CODE_REGISTRATION_SYMBOL_UNRESOLVED" !in result.blockers)
         assertBinding(result)
     }
 
