@@ -24,6 +24,7 @@ import java.util.Arrays;
 public final class RuntimeEvidenceProvider extends ContentProvider {
     public static final String CALLER_PACKAGE = "io.github.ffenuss.modkit";
     public static final String PATH_EVIDENCE = "evidence";
+    public static final String PATH_NATIVE_TRACE = "native-trace";
     private static final int MAX_MAPS_BYTES = 8 * 1024 * 1024;
     private static final int MAX_CMDLINE_BYTES = 4096;
 
@@ -34,6 +35,9 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
 
     @Override
     public String getType(Uri uri) {
+        if (("/" + PATH_NATIVE_TRACE).equals(uri.getPath())) {
+            return "application/vnd.io.github.ffenuss.modkit.native-trace-v1";
+        }
         return "application/vnd.io.github.ffenuss.modkit.runtime-evidence-v1";
     }
 
@@ -57,25 +61,73 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
     @Override
     public Bundle call(String method, String arg, Bundle extras) {
         enforceCaller();
-        if (!"resolveLoadedSymbol".equals(method)) {
-            throw new IllegalArgumentException("Unsupported runtime probe call.");
-        }
-        if (arg == null || extras == null) {
-            throw new IllegalArgumentException("Runtime native lookup requires module and symbol.");
-        }
-        String symbol = extras.getString("symbol");
-        if (symbol == null) {
-            throw new IllegalArgumentException("Runtime native lookup symbol is missing.");
+
+        if ("resolveLoadedSymbol".equals(method)) {
+            if (arg == null || extras == null) {
+                throw new IllegalArgumentException(
+                        "Runtime native lookup requires module and symbol."
+                );
+            }
+            String symbol = extras.getString("symbol");
+            if (symbol == null) {
+                throw new IllegalArgumentException(
+                        "Runtime native lookup symbol is missing."
+                );
+            }
+
+            long address = RuntimeNativeBridge.resolveLoadedSymbol(arg, symbol);
+            Bundle result = baseReply();
+            result.putString("moduleName", arg);
+            result.putString("symbolName", symbol);
+            result.putLong("resolvedRuntimeAddress", address);
+            return result;
         }
 
-        long address = RuntimeNativeBridge.resolveLoadedSymbol(arg, symbol);
+        if ("nativeTraceStart".equals(method)) {
+            RuntimeNativeTraceBuffer.start();
+            return traceStatusBundle(
+                    RuntimeNativeTraceBuffer.snapshot()
+            );
+        }
+        if ("nativeTraceStop".equals(method)) {
+            return traceStatusBundle(
+                    RuntimeNativeTraceBuffer.stop()
+            );
+        }
+        if ("nativeTraceStatus".equals(method)) {
+            return traceStatusBundle(
+                    RuntimeNativeTraceBuffer.snapshot()
+            );
+        }
+
+        throw new IllegalArgumentException("Unsupported runtime probe call.");
+    }
+
+    private Bundle baseReply() {
         Bundle result = new Bundle();
         result.putInt("schemaVersion", 1);
         result.putString("packageName", probeContext().getPackageName());
         result.putInt("pid", Process.myPid());
-        result.putString("moduleName", arg);
-        result.putString("symbolName", symbol);
-        result.putLong("resolvedRuntimeAddress", address);
+        return result;
+    }
+
+    private Bundle traceStatusBundle(
+            RuntimeNativeTraceBuffer.Snapshot snapshot
+    ) {
+        Bundle result = baseReply();
+        result.putString("sessionId", snapshot.sessionId);
+        result.putBoolean("active", snapshot.active);
+        result.putBoolean("truncated", snapshot.truncated);
+        result.putInt("eventCount", snapshot.eventCount);
+        result.putLong(
+                "startedAtEpochMs",
+                snapshot.startedAtEpochMs
+        );
+        result.putLong(
+                "stoppedAtEpochMs",
+                snapshot.stoppedAtEpochMs
+        );
+        result.putInt("traceBytes", snapshot.bytes.length);
         return result;
     }
 
@@ -83,25 +135,57 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
     public ParcelFileDescriptor openFile(Uri uri, String mode)
             throws FileNotFoundException {
         enforceCaller();
-        if (!("/" + PATH_EVIDENCE).equals(uri.getPath())) {
-            throw new FileNotFoundException("Unsupported runtime probe path.");
-        }
         if (!"r".equals(mode)) {
             throw new FileNotFoundException("Runtime probe is read-only.");
         }
 
+        String path = uri.getPath();
+        if (("/" + PATH_EVIDENCE).equals(path)) {
+            return openPipe("ModKitRuntimeProbe", this::writeEvidence);
+        }
+        if (("/" + PATH_NATIVE_TRACE).equals(path)) {
+            RuntimeNativeTraceBuffer.Snapshot snapshot =
+                    RuntimeNativeTraceBuffer.snapshot();
+            if (snapshot.sessionId.isEmpty()) {
+                throw new FileNotFoundException(
+                        "No native trace session has been created."
+                );
+            }
+            if (snapshot.active) {
+                throw new FileNotFoundException(
+                        "Native trace session must be stopped before export."
+                );
+            }
+            return openPipe(
+                    "ModKitNativeTrace",
+                    descriptor -> writeNativeTrace(descriptor, snapshot)
+            );
+        }
+        throw new FileNotFoundException("Unsupported runtime probe path.");
+    }
+
+    private interface PipeWriter {
+        void write(ParcelFileDescriptor descriptor);
+    }
+
+    private ParcelFileDescriptor openPipe(
+            String threadName,
+            PipeWriter writer
+    ) throws FileNotFoundException {
         try {
             ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
-            Thread writer = new Thread(
-                    () -> writeEvidence(pipe[1]),
-                    "ModKitRuntimeProbe"
+            Thread thread = new Thread(
+                    () -> writer.write(pipe[1]),
+                    threadName
             );
-            writer.setDaemon(true);
-            writer.start();
+            thread.setDaemon(true);
+            thread.start();
             return pipe[0];
         } catch (Exception failure) {
             FileNotFoundException wrapped =
-                    new FileNotFoundException("Could not create runtime evidence pipe.");
+                    new FileNotFoundException(
+                            "Could not create runtime probe pipe."
+                    );
             wrapped.initCause(failure);
             throw wrapped;
         }
@@ -168,6 +252,38 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
                     "---MAPS---\n";
             output.write(header.getBytes(StandardCharsets.UTF_8));
             output.write(maps);
+            output.flush();
+        } catch (Exception ignored) {
+            // Pipe closure is itself the failure signal to the ModKit caller.
+        }
+    }
+
+    private void writeNativeTrace(
+            ParcelFileDescriptor descriptor,
+            RuntimeNativeTraceBuffer.Snapshot snapshot
+    ) {
+        try (ParcelFileDescriptor.AutoCloseOutputStream output =
+                     new ParcelFileDescriptor.AutoCloseOutputStream(descriptor)) {
+            ReadResult cmdlineResult =
+                    readBounded(new File("/proc/self/cmdline"), MAX_CMDLINE_BYTES);
+            String processIdentity = decodeCmdline(cmdlineResult.bytes);
+            byte[] trace = snapshot.bytes;
+
+            String header =
+                    "MODKIT_NATIVE_TRACE_V1\n" +
+                    "packageName=" + probeContext().getPackageName() + "\n" +
+                    "pid=" + Process.myPid() + "\n" +
+                    "processIdentity=" + processIdentity + "\n" +
+                    "sessionId=" + snapshot.sessionId + "\n" +
+                    "startedAtEpochMs=" + snapshot.startedAtEpochMs + "\n" +
+                    "stoppedAtEpochMs=" + snapshot.stoppedAtEpochMs + "\n" +
+                    "eventCount=" + snapshot.eventCount + "\n" +
+                    "traceSha256=" + sha256(trace) + "\n" +
+                    "traceBytes=" + trace.length + "\n" +
+                    "truncated=" + snapshot.truncated + "\n" +
+                    "---TRACE---\n";
+            output.write(header.getBytes(StandardCharsets.UTF_8));
+            output.write(trace);
             output.flush();
         } catch (Exception ignored) {
             // Pipe closure is itself the failure signal to the ModKit caller.
