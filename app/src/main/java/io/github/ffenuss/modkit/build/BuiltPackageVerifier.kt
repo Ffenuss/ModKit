@@ -40,7 +40,7 @@ object BuiltPackageVerifier {
                 ParsedApkPackage(
                     fileName = file.name,
                     packageName = info.packageName,
-                    splitName = info.applicationInfo?.splitName,
+                    splitName = info.splitNames?.singleOrNull(),
                     versionCode = if (Build.VERSION.SDK_INT >= 28) {
                         info.longVersionCode
                     } else {
