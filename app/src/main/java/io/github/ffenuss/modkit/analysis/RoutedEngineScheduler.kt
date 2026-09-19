@@ -54,7 +54,19 @@ object RoutedEngineScheduler {
                                 progress = progress,
                             )
                         }
-                        result.copy(il2cppFastDump = dump)
+                        result.copy(
+                            il2cppFastDump = dump,
+                            il2cppEvidence = EvidenceGate.evaluate(
+                                artifactSha256 = result.index.artifactSha256,
+                                metadataIdentityExact = dump.metadata.magicValid &&
+                                    dump.metadata.structuredSupported &&
+                                    !dump.metadata.truncated,
+                                binaryIdentityExact = false,
+                                runtimeConfirmed = false,
+                                mutationValidated = false,
+                                requestedChangeReady = false,
+                            ),
+                        )
                     }
 
                     "il2cpp.codegen-bind" -> {
@@ -74,7 +86,19 @@ object RoutedEngineScheduler {
                                     progress = progress,
                                 )
                             }
-                            result.copy(il2cppBinaryBinding = binding)
+                            result.copy(
+                                il2cppBinaryBinding = binding,
+                                il2cppEvidence = EvidenceGate.evaluate(
+                                    artifactSha256 = result.index.artifactSha256,
+                                    metadataIdentityExact = dump.metadata.magicValid &&
+                                        dump.metadata.structuredSupported &&
+                                        !dump.metadata.truncated,
+                                    binaryIdentityExact = binding.exactBindingAvailable,
+                                    runtimeConfirmed = false,
+                                    mutationValidated = false,
+                                    requestedChangeReady = false,
+                                ),
+                            )
                         }
                     }
 
