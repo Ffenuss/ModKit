@@ -1,6 +1,7 @@
 package io.github.ffenuss.modkit.analysis
 
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceBundle
+import io.github.ffenuss.modkit.runtime.RuntimeStageAttempt
 
 enum class DetectionStatus {
     CONFIRMED,
@@ -48,6 +49,7 @@ data class FastAnalysisResult(
     val evidenceGraph: EvidenceGraph? = null,
     val confirmationQueue: List<ConfirmationRequest> = emptyList(),
     val runtimeEvidence: RuntimeEvidenceBundle? = null,
+    val runtimeStageAttempts: List<RuntimeStageAttempt> = emptyList(),
     val engineCacheHits: Set<String> = emptySet(),
     val engineWarnings: List<String> = emptyList(),
 )
