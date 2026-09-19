@@ -148,7 +148,10 @@ val generateRuntimeProbeDexAsset =
     }
 
 tasks.configureEach {
-    if (name.startsWith("merge") && name.endsWith("Assets")) {
+    if (
+        (name.startsWith("merge") && name.endsWith("Assets")) ||
+        name.endsWith("LintReportModel")
+    ) {
         dependsOn(generateRuntimeProbeDexAsset)
     }
 }
