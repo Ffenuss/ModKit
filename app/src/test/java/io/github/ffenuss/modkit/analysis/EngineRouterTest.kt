@@ -24,7 +24,7 @@ class EngineRouterTest {
         )
 
         val plan = EngineRouter.plan(index)
-        assertTrue(plan.targeted.any { it.id == "il2cpp.fast-dump" })
+        assertTrue(plan.targeted.any { it.id == "il2cpp.fast-dump" && it.availableNow })
         assertFalse(plan.engines.any { it.id == "flutter.dart-aot" })
         assertTrue(plan.engines.first { it.id == "il2cpp.fast-dump" }.scheduleClass == EngineScheduleClass.TARGETED)
         assertTrue(plan.missingCapabilities.any { "IL2CPP" in it })
