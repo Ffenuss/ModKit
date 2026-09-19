@@ -39,4 +39,6 @@ data class FastAnalysisResult(
     val index: ArtifactIndex,
     val routingPlan: EngineRoutingPlan,
     val elapsedMs: Long,
+    val il2cppFastDump: Il2CppFastDumpResult? = null,
+    val engineWarnings: List<String> = emptyList(),
 )
