@@ -78,34 +78,22 @@ object ArchiveMutationApplier {
         val diffs = mutableListOf<MutationDiff>()
         val stripped = mutableListOf<String>()
 
-        workspace.sources.forEachIndexed { index, source ->
+        workspace.sources.forEach { source ->
             checkCancelled(cancellation)
             val output = File(outputDir, source.descriptor.displayName)
             output.parentFile?.mkdirs()
             output.delete()
 
             val mutations = byContainer[source.descriptor.displayName].orEmpty()
-            if (mutations.isEmpty()) {
-                copyFile(
-                    source = source.file,
-                    target = output,
-                    cancellation = cancellation,
-                    progress = progress,
-                    label = source.descriptor.displayName,
-                    sourceIndex = index,
-                    sourceCount = workspace.sources.size,
-                )
-            } else {
-                rewriteArchive(
-                    source = source,
-                    target = output,
-                    mutations = mutations,
-                    cancellation = cancellation,
-                    progress = progress,
-                    strippedSignatures = stripped,
-                    diffs = diffs,
-                )
-            }
+            rewriteArchive(
+                source = source,
+                target = output,
+                mutations = mutations,
+                cancellation = cancellation,
+                progress = progress,
+                strippedSignatures = stripped,
+                diffs = diffs,
+            )
             outputFiles += output
         }
 
@@ -429,44 +417,6 @@ object ArchiveMutationApplier {
             }
         }
         return target
-    }
-
-    private fun copyFile(
-        source: File,
-        target: File,
-        cancellation: CancellationSignal,
-        progress: ProgressSink,
-        label: String,
-        sourceIndex: Int,
-        sourceCount: Int,
-    ) {
-        FileInputStream(source).use { input ->
-            FileOutputStream(target).use { output ->
-                var copied = 0L
-                var lastHeartbeat = 0L
-                val buffer = ByteArray(BUFFER_BYTES)
-                while (true) {
-                    checkCancelled(cancellation)
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    output.write(buffer, 0, read)
-                    copied += read
-
-                    val now = System.currentTimeMillis()
-                    if (now - lastHeartbeat >= HEARTBEAT_MS) {
-                        lastHeartbeat = now
-                        publish(
-                            progress = progress,
-                            task = "Копирование неизменённого APK-set файла",
-                            artifact = label + " · " +
-                                (sourceIndex + 1) + "/" + sourceCount,
-                            processed = copied,
-                            total = source.length(),
-                        )
-                    }
-                }
-            }
-        }
     }
 
     private fun sha256(
