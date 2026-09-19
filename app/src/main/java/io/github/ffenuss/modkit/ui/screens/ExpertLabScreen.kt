@@ -197,6 +197,26 @@ fun ExpertLabScreen(onBack: () -> Unit) {
         }
     }
 
+    fun integrateNonRootRuntime() {
+        val current = session ?: return
+        val signal = beginOperation("runtime.non-root-map") ?: return
+        scope.launch {
+            try {
+                session = ExpertLabSessionController.integrateNonRootRuntime(
+                    context = appContext,
+                    session = current,
+                    cancellation = signal,
+                )
+            } catch (_: AnalysisCancelledException) {
+                error = "Non-root runtime-проверка отменена."
+            } catch (failure: Throwable) {
+                error = failure.message ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
     val filePicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris ->
@@ -594,10 +614,25 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                "Вставьте снимок /proc/<pid>/maps соответствующего тестового процесса. " +
-                                    "Один filename match не считается подтверждением: ModKit сверяет PT_LOAD, file offsets и executable mapping.",
+                                "Runtime proof требует независимой привязки к процессу. " +
+                                    "Для установленного приложения сначала используется non-root discovery; " +
+                                    "вставленный вручную maps остаётся диагностическим snapshot и сам по себе не повышает proof.",
                                 style = MaterialTheme.typography.bodySmall,
                             )
+                            if (current.packageName != null) {
+                                Button(
+                                    onClick = ::integrateNonRootRuntime,
+                                    enabled = !busy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text("Проверить runtime без root")
+                                }
+                                Text(
+                                    "Проверяется точный /proc/<pid>/cmdline до и после bounded maps capture. " +
+                                        "Неоднозначный PID или недоступный maps блокирует подтверждение.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
                             OutlinedTextField(
                                 value = procMapsText,
                                 onValueChange = { procMapsText = it },
@@ -611,7 +646,7 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                 enabled = !busy && procMapsText.isNotBlank(),
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Text("Проверить module mapping и runtime VA")
+                                Text("Проверить импортированный module mapping")
                             }
 
                             current.result.runtimeEvidence?.let { runtimeEvidence ->
@@ -632,6 +667,14 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                 Text(
                                     "Snapshot SHA-256: " +
                                         runtimeEvidence.procMapsSha256,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                Text(
+                                    "Process identity: " +
+                                        (runtimeEvidence.processIdentity
+                                            ?: "не подтверждена") +
+                                        " · confirmed=" +
+                                        runtimeEvidence.processIdentityConfirmed,
                                     style = MaterialTheme.typography.bodySmall,
                                 )
                                 runtimeEvidence.moduleMappings.forEach { mapping ->
