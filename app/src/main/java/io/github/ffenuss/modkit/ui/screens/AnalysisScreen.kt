@@ -276,9 +276,23 @@ fun AnalysisScreen(
                                     )
                                     if (!evidence.changeReady) {
                                         Text(
-                                            "Автоматическое изменение не разрешается до отдельной prepare/preflight проверки.",
+                                            "Что мешает следующему уровню:",
+                                            fontWeight = FontWeight.SemiBold,
                                             style = MaterialTheme.typography.bodySmall,
                                         )
+                                        evidence.blockers.take(5).forEach { blocker ->
+                                            Text(
+                                                "• " + blocker.code + ": " + blocker.message,
+                                                style = MaterialTheme.typography.bodySmall,
+                                            )
+                                        }
+                                        if (evidence.blockers.isEmpty()) {
+                                            Text(
+                                                "• INTERNAL_ERROR: причина блокировки не определена",
+                                                color = MaterialTheme.colorScheme.error,
+                                                style = MaterialTheme.typography.bodySmall,
+                                            )
+                                        }
                                     }
                                 }
                             }
