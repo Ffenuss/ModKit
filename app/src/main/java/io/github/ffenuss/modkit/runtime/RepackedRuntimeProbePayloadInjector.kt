@@ -124,6 +124,7 @@ object RepackedRuntimeProbePayloadInjector {
                         input = input,
                         output = output,
                         payload = payload,
+                        expectedPackageName = manifestRewrite.packageName,
                         cancellation = cancellation,
                     )
                     selectedEntry = archive.dexEntry
@@ -197,8 +198,15 @@ object RepackedRuntimeProbePayloadInjector {
         input: File,
         output: File,
         payload: RuntimeProbePayload,
+        expectedPackageName: String,
         cancellation: CancellationSignal,
     ): BaseInjection {
+        verifyProbeManifestDeclaration(
+            input = input,
+            expectedPackageName = expectedPackageName,
+            cancellation = cancellation,
+        )
+
         val scans = mutableListOf<DexScan>()
         val usedIndexes = linkedSetOf<Int>()
         val entryNames = linkedSetOf<String>()
@@ -337,6 +345,55 @@ object RepackedRuntimeProbePayloadInjector {
             temp.delete()
             output.delete()
             throw failure
+        }
+    }
+
+    private fun verifyProbeManifestDeclaration(
+        input: File,
+        expectedPackageName: String,
+        cancellation: CancellationSignal,
+    ) {
+        val manifestBytes = ZipFile(input).use { zip ->
+            val entry = requireNotNull(zip.getEntry("AndroidManifest.xml")) {
+                "Manifest-rewritten base APK has no AndroidManifest.xml."
+            }
+            require(!entry.isDirectory) {
+                "AndroidManifest.xml is a directory."
+            }
+            zip.getInputStream(entry).use { source ->
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(16 * 1024)
+                var total = 0
+                while (true) {
+                    checkCancelled(cancellation)
+                    val read = source.read(buffer)
+                    if (read < 0) break
+                    if (read == 0) continue
+                    total += read
+                    require(total <= 4 * 1024 * 1024) {
+                        "AndroidManifest.xml exceeds probe verification limit."
+                    }
+                    output.write(buffer, 0, read)
+                }
+                output.toByteArray()
+            }
+        }
+
+        val info = BinaryAndroidManifestInspector.inspect(manifestBytes)
+        require(info.packageName == expectedPackageName) {
+            "Manifest package does not match probe-injection target."
+        }
+        val reinjection =
+            BinaryAndroidManifestProbeInjector.inject(manifestBytes)
+        require(reinjection.alreadyPresent) {
+            "Runtime probe manifest declaration is absent."
+        }
+        require(
+            reinjection.authority ==
+                expectedPackageName +
+                BinaryAndroidManifestProbeInjector.AUTHORITY_SUFFIX,
+        ) {
+            "Runtime probe manifest authority does not match target package."
         }
     }
 
