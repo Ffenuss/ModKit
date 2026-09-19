@@ -1,0 +1,67 @@
+package io.github.ffenuss.modkit.runtimeprobe;
+
+public final class RuntimeNativeBridge {
+    private static final int MAX_MODULE_CHARS = 255;
+    private static final int MAX_SYMBOL_CHARS = 1024;
+
+    private static volatile boolean loadAttempted;
+    private static volatile boolean loaded;
+
+    private RuntimeNativeBridge() {}
+
+    public static boolean ensureLoaded() {
+        if (loadAttempted) return loaded;
+        synchronized (RuntimeNativeBridge.class) {
+            if (!loadAttempted) {
+                try {
+                    System.loadLibrary("modkit_runtime_probe");
+                    loaded = true;
+                } catch (Throwable ignored) {
+                    loaded = false;
+                } finally {
+                    loadAttempted = true;
+                }
+            }
+        }
+        return loaded;
+    }
+
+    public static long resolveLoadedSymbol(
+            String moduleName,
+            String symbolName
+    ) {
+        if (!validModule(moduleName) || !validSymbol(symbolName)) {
+            return 0L;
+        }
+        if (!ensureLoaded()) return 0L;
+        return nativeResolveLoadedSymbol(moduleName, symbolName);
+    }
+
+    private static boolean validModule(String value) {
+        if (value == null || value.isEmpty() || value.length() > MAX_MODULE_CHARS) {
+            return false;
+        }
+        if (value.contains("/") || value.contains("\\") || value.contains("..")) {
+            return false;
+        }
+        return value.endsWith(".so");
+    }
+
+    private static boolean validSymbol(String value) {
+        if (value == null || value.isEmpty() || value.length() > MAX_SYMBOL_CHARS) {
+            return false;
+        }
+        for (int index = 0; index < value.length(); index++) {
+            char ch = value.charAt(index);
+            if (Character.isISOControl(ch) || Character.isWhitespace(ch)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static native long nativeResolveLoadedSymbol(
+            String moduleName,
+            String symbolName
+    );
+}
