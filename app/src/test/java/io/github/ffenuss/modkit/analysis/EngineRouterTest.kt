@@ -27,6 +27,7 @@ class EngineRouterTest {
         assertTrue(plan.targeted.any { it.id == "il2cpp.fast-dump" && it.availableNow })
         assertFalse(plan.engines.any { it.id == "flutter.dart-aot" })
         assertTrue(plan.engines.first { it.id == "il2cpp.fast-dump" }.scheduleClass == EngineScheduleClass.TARGETED)
-        assertTrue(plan.missingCapabilities.any { "IL2CPP" in it })
+        assertTrue(plan.confirmation.any { it.id == "il2cpp.codegen-bind" && it.availableNow })
+        assertFalse(plan.missingCapabilities.any { "IL2CPP exact CodeGen" in it })
     }
 }
