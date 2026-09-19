@@ -11,7 +11,7 @@ data class Il2CppBinaryBindingResult(
     val evidence: List<Il2CppBinaryEvidence>,
     val exactBindingCount: Int,
     val warnings: List<String>,
-) {
+) : java.io.Serializable {
     val exactBindingAvailable: Boolean get() = exactBindingCount > 0
 }
 
