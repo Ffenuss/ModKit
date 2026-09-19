@@ -1,5 +1,7 @@
 package io.github.ffenuss.modkit.build
 
+import java.nio.file.Files
+
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import java.io.File
@@ -15,7 +17,7 @@ import org.junit.Test
 class ApkZipAlignerTest {
     @Test
     fun alignsStoredNativeLibraryTo16KiBAndOtherStoredEntriesTo4Bytes() {
-        val root = createTempDir(prefix = "modkit-zipalign-")
+        val root = Files.createTempDirectory("modkit-zipalign-").toFile()
         try {
             val input = File(root, "input.apk")
             val output = File(root, "aligned.apk")
@@ -64,7 +66,7 @@ class ApkZipAlignerTest {
 
     @Test
     fun verifierRejectsOrdinaryUnalignedStoredLibrary() {
-        val root = createTempDir(prefix = "modkit-zipalign-block-")
+        val root = Files.createTempDirectory("modkit-zipalign-block-").toFile()
         try {
             val input = File(root, "unaligned.apk")
             ZipOutputStream(input.outputStream().buffered()).use { zip ->
