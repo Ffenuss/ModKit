@@ -16,10 +16,13 @@ data class MutationApplyOutcome(
     val verification: TargetShaVerification,
     val preflight: MutationPreflightResult,
     val staging: MutationApplyResult?,
+    val stagingVerification: StagingVerificationResult?,
     val blockers: List<String>,
 ) {
     val applied: Boolean
-        get() = staging != null && blockers.isEmpty()
+        get() = staging != null &&
+            stagingVerification?.verified == true &&
+            blockers.isEmpty()
 }
 
 /**
@@ -58,6 +61,7 @@ object MutationApplyCoordinator {
                 verification = verification,
                 preflight = preflight,
                 staging = null,
+                stagingVerification = null,
                 blockers = buildList {
                     verification.blockerMessage?.let(::add)
                     addAll(preflight.globalBlockers)
@@ -93,6 +97,25 @@ object MutationApplyCoordinator {
                 )
             }
         }
+        val stagingVerification = withContext(Dispatchers.IO) {
+            StagingApkVerifier.verify(
+                apply = staging,
+                cancellation = cancellation,
+                progress = progress,
+            )
+        }
+        if (!stagingVerification.verified) {
+            staging.outputFiles.forEach(File::delete)
+            return MutationApplyOutcome(
+                verification = verification,
+                preflight = preflight,
+                staging = null,
+                stagingVerification = stagingVerification,
+                blockers = stagingVerification.blockers.ifEmpty {
+                    listOf("Staging APK не прошёл внутреннюю проверку.")
+                },
+            )
+        }
 
         verification = withContext(Dispatchers.IO) {
             TargetShaVerifier.verify(
@@ -109,6 +132,7 @@ object MutationApplyCoordinator {
                 verification = verification,
                 preflight = preflight,
                 staging = null,
+                stagingVerification = stagingVerification,
                 blockers = listOf(
                     verification.blockerMessage
                         ?: "Исходная цель изменилась во время применения; staging удалён.",
@@ -120,6 +144,7 @@ object MutationApplyCoordinator {
             verification = verification,
             preflight = preflight,
             staging = staging,
+            stagingVerification = stagingVerification,
             blockers = emptyList(),
         )
     }
