@@ -14,6 +14,7 @@ import java.security.MessageDigest
 
 enum class RepackedRuntimeCapability {
     SOURCE_COPY,
+    MANIFEST_IDENTITY_INSPECTION,
     BINARY_MANIFEST_REWRITE,
     PROBE_PAYLOAD_INJECTION,
     OLD_SIGNATURE_REMOVAL,
@@ -71,6 +72,7 @@ data class RepackedTestRuntimePlan(
 object RepackedTestRuntimePlanner {
     val requiredCapabilities: Set<RepackedRuntimeCapability> = setOf(
         RepackedRuntimeCapability.SOURCE_COPY,
+        RepackedRuntimeCapability.MANIFEST_IDENTITY_INSPECTION,
         RepackedRuntimeCapability.BINARY_MANIFEST_REWRITE,
         RepackedRuntimeCapability.PROBE_PAYLOAD_INJECTION,
         RepackedRuntimeCapability.OLD_SIGNATURE_REMOVAL,
@@ -86,6 +88,7 @@ object RepackedTestRuntimePlanner {
     val currentlyRegisteredCapabilities: Set<RepackedRuntimeCapability> =
         setOf(
             RepackedRuntimeCapability.SOURCE_COPY,
+            RepackedRuntimeCapability.MANIFEST_IDENTITY_INSPECTION,
             RepackedRuntimeCapability.OLD_SIGNATURE_REMOVAL,
             RepackedRuntimeCapability.APK_ALIGNMENT,
             RepackedRuntimeCapability.APK_SIGNING,
