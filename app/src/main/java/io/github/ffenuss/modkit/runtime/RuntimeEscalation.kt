@@ -133,10 +133,10 @@ object ProcMapsParser {
     ): List<ProcMapRegion> {
         val normalized = moduleName.substringAfterLast('/')
         return regions.filter { region ->
-            region.path
+            val mappedName = region.path
                 ?.substringAfterLast('/')
                 ?.substringBefore(" (deleted)")
-                == normalized
+            mappedName == normalized
         }
     }
 
