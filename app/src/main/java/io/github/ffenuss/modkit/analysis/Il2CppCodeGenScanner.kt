@@ -12,7 +12,7 @@ data class Il2CppCodeGenModuleEvidence(
     val methodPointersVirtualAddress: Long,
     val sampledPointers: Int,
     val executablePointers: Int,
-)
+) : java.io.Serializable
 
 data class Il2CppMethodBinaryBinding(
     val methodIndex: Int,
@@ -23,7 +23,7 @@ data class Il2CppMethodBinaryBinding(
     val slotIndex: Int,
     val functionVirtualAddress: Long,
     val functionFileOffset: Long?,
-)
+) : java.io.Serializable
 
 data class Il2CppBinaryEvidence(
     val libraryEntry: String,
@@ -36,7 +36,7 @@ data class Il2CppBinaryEvidence(
     val modules: List<Il2CppCodeGenModuleEvidence>,
     val bindings: List<Il2CppMethodBinaryBinding>,
     val blockers: List<String>,
-) {
+) : java.io.Serializable {
     val exactBindingAvailable: Boolean
         get() = bindings.isNotEmpty()
 }
