@@ -227,78 +227,20 @@ object AnalysisManager {
                 }
                 publishPartial(runId, result)
 
-                val il2cppPlanned = result.routingPlan.engines.any {
-                    it.id == "il2cpp.fast-dump" && it.availableNow
-                }
-                if (il2cppPlanned) {
-                    try {
-                        val workspace = AnalysisWorkspace(
-                            index = result.index,
-                            sources = result.index.sources.zip(prepared.files).map { (descriptor, file) ->
-                                WorkspaceSource(descriptor, file)
-                            },
-                        )
-                        val dump = withContext(Dispatchers.IO) {
-                            Il2CppFastDumpEngine.analyze(
-                                workspace = workspace,
-                                outputRoot = File(context.filesDir, "analysis-results"),
-                                cancellation = signal,
-                                progress = progressSink,
-                            )
-                        }
-                        result = result.copy(il2cppFastDump = dump)
-                        publishPartial(runId, result)
-                    } catch (cancelled: AnalysisCancelledException) {
-                        throw cancelled
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (failure: Throwable) {
-                        result = result.copy(
-                            engineWarnings = result.engineWarnings + (
-                                "il2cpp.fast-dump: " +
-                                    (failure.message ?: failure.javaClass.simpleName)
-                                ),
-                        )
-                    }
-                }
-
-                val binaryBindingPlanned = result.routingPlan.engines.any {
-                    it.id == "il2cpp.codegen-bind" && it.availableNow
-                }
-                val fastDump = result.il2cppFastDump
-                if (binaryBindingPlanned && fastDump != null) {
-                    try {
-                        val workspace = AnalysisWorkspace(
-                            index = result.index,
-                            sources = result.index.sources.zip(prepared.files).map { (descriptor, file) ->
-                                WorkspaceSource(descriptor, file)
-                            },
-                        )
-                        val binaryBinding = withContext(Dispatchers.IO) {
-                            Il2CppBinaryBindingEngine.analyze(
-                                workspace = workspace,
-                                metadata = fastDump.metadata,
-                                outputRoot = File(context.filesDir, "analysis-results"),
-                                cancellation = signal,
-                                progress = progressSink,
-                            )
-                        }
-                        result = result.copy(il2cppBinaryBinding = binaryBinding)
-                        publishPartial(runId, result)
-                    } catch (cancelled: AnalysisCancelledException) {
-                        throw cancelled
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (failure: Throwable) {
-                        result = result.copy(
-                            engineWarnings = result.engineWarnings + (
-                                "il2cpp.codegen-bind: " +
-                                    (failure.message ?: failure.javaClass.simpleName)
-                                ),
-                        )
-                        publishPartial(runId, result)
-                    }
-                }
+                val workspace = AnalysisWorkspace(
+                    index = result.index,
+                    sources = result.index.sources.zip(prepared.files).map { (descriptor, file) ->
+                        WorkspaceSource(descriptor, file)
+                    },
+                )
+                result = RoutedEngineScheduler.execute(
+                    initial = result,
+                    workspace = workspace,
+                    outputRoot = File(context.filesDir, "analysis-results"),
+                    cancellation = signal,
+                    progress = progressSink,
+                    onPartial = { partial -> publishPartial(runId, partial) },
+                )
 
                 synchronized(lock) {
                     if (currentRunId() == runId) {
