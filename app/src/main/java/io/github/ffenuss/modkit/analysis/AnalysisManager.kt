@@ -103,6 +103,7 @@ object AnalysisManager {
                         lastHeartbeatEpochMs = System.currentTimeMillis(),
                     ),
                     current.startedAtEpochMs,
+                    current.partialResult,
                 )
                 is AnalysisRunState.Stalled -> AnalysisRunState.Cancelling(
                     current.runId,
@@ -113,6 +114,7 @@ object AnalysisManager {
                         lastHeartbeatEpochMs = System.currentTimeMillis(),
                     ),
                     current.startedAtEpochMs,
+                    current.partialResult,
                 )
                 else -> return
             }
@@ -223,6 +225,7 @@ object AnalysisManager {
                         knownSha256 = prepared.knownSha256,
                     )
                 }
+                publishPartial(runId, result)
 
                 val il2cppPlanned = result.routingPlan.engines.any {
                     it.id == "il2cpp.fast-dump" && it.availableNow
@@ -244,6 +247,7 @@ object AnalysisManager {
                             )
                         }
                         result = result.copy(il2cppFastDump = dump)
+                        publishPartial(runId, result)
                     } catch (cancelled: AnalysisCancelledException) {
                         throw cancelled
                     } catch (cancelled: CancellationException) {
@@ -255,6 +259,44 @@ object AnalysisManager {
                                     (failure.message ?: failure.javaClass.simpleName)
                                 ),
                         )
+                    }
+                }
+
+                val binaryBindingPlanned = result.routingPlan.engines.any {
+                    it.id == "il2cpp.codegen-bind" && it.availableNow
+                }
+                val fastDump = result.il2cppFastDump
+                if (binaryBindingPlanned && fastDump != null) {
+                    try {
+                        val workspace = AnalysisWorkspace(
+                            index = result.index,
+                            sources = result.index.sources.zip(prepared.files).map { (descriptor, file) ->
+                                WorkspaceSource(descriptor, file)
+                            },
+                        )
+                        val binaryBinding = withContext(Dispatchers.IO) {
+                            Il2CppBinaryBindingEngine.analyze(
+                                workspace = workspace,
+                                metadata = fastDump.metadata,
+                                outputRoot = File(context.filesDir, "analysis-results"),
+                                cancellation = signal,
+                                progress = progressSink,
+                            )
+                        }
+                        result = result.copy(il2cppBinaryBinding = binaryBinding)
+                        publishPartial(runId, result)
+                    } catch (cancelled: AnalysisCancelledException) {
+                        throw cancelled
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (failure: Throwable) {
+                        result = result.copy(
+                            engineWarnings = result.engineWarnings + (
+                                "il2cpp.codegen-bind: " +
+                                    (failure.message ?: failure.javaClass.simpleName)
+                                ),
+                        )
+                        publishPartial(runId, result)
                     }
                 }
 
@@ -323,6 +365,7 @@ object AnalysisManager {
                                     progress = current.progress?.copy(state = RunState.STALLED),
                                     startedAtEpochMs = startedAt,
                                     heartbeatAgeMs = age,
+                                    partialResult = current.partialResult,
                                 )
                                 mutableState.value = stalled
                                 persist(
@@ -362,6 +405,7 @@ object AnalysisManager {
                         target,
                         recovered,
                         startedAt,
+                        current.partialResult,
                     )
                     persist(
                         AnalysisRunStore.RUNNING,
@@ -385,6 +429,26 @@ object AnalysisManager {
                         cancelling,
                         startedAt,
                     )
+                }
+                else -> Unit
+            }
+        }
+    }
+
+    private fun publishPartial(
+        runId: Long,
+        result: FastAnalysisResult,
+    ) {
+        synchronized(lock) {
+            when (val current = mutableState.value) {
+                is AnalysisRunState.Running -> if (current.runId == runId) {
+                    mutableState.value = current.copy(partialResult = result)
+                }
+                is AnalysisRunState.Cancelling -> if (current.runId == runId) {
+                    mutableState.value = current.copy(partialResult = result)
+                }
+                is AnalysisRunState.Stalled -> if (current.runId == runId) {
+                    mutableState.value = current.copy(partialResult = result)
                 }
                 else -> Unit
             }
