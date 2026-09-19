@@ -316,6 +316,6 @@ class EngineResultCache(
         const val IL2CPP_BINARY_BINDING_ENGINE_VERSION = "2"
 
         const val RUNTIME_EVIDENCE_ENGINE_ID = "runtime.evidence"
-        const val RUNTIME_EVIDENCE_ENGINE_VERSION = "2"
+        const val RUNTIME_EVIDENCE_ENGINE_VERSION = "3"
     }
 }
