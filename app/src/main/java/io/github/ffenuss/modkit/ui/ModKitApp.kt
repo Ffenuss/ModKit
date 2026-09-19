@@ -67,8 +67,10 @@ fun ModKitApp() {
             cancelled = false,
             cancelling = false,
             stalledAgeMs = null,
+            canSkipStalled = false,
             onCancel = AnalysisManager::cancel,
             onRetry = AnalysisManager::retryStalled,
+            onSkip = AnalysisManager::skipStalled,
             onBack = { AnalysisManager.cancel() },
         )
 
@@ -81,8 +83,10 @@ fun ModKitApp() {
             cancelled = false,
             cancelling = true,
             stalledAgeMs = null,
+            canSkipStalled = false,
             onCancel = AnalysisManager::cancel,
             onRetry = AnalysisManager::retryStalled,
+            onSkip = AnalysisManager::skipStalled,
             onBack = { },
         )
 
@@ -95,8 +99,10 @@ fun ModKitApp() {
             cancelled = false,
             cancelling = false,
             stalledAgeMs = state.heartbeatAgeMs,
+            canSkipStalled = state.progress?.scheduleClass != io.github.ffenuss.modkit.domain.EngineScheduleClass.FAST,
             onCancel = AnalysisManager::cancel,
             onRetry = AnalysisManager::retryStalled,
+            onSkip = AnalysisManager::skipStalled,
             onBack = { AnalysisManager.cancel() },
         )
 
@@ -109,8 +115,10 @@ fun ModKitApp() {
             cancelled = false,
             cancelling = false,
             stalledAgeMs = null,
+            canSkipStalled = false,
             onCancel = AnalysisManager::cancel,
             onRetry = AnalysisManager::retryStalled,
+            onSkip = AnalysisManager::skipStalled,
             onBack = {
                 AnalysisManager.clearTerminalState()
                 screen = Screen.TARGET
@@ -126,8 +134,10 @@ fun ModKitApp() {
             cancelled = true,
             cancelling = false,
             stalledAgeMs = null,
+            canSkipStalled = false,
             onCancel = AnalysisManager::cancel,
             onRetry = AnalysisManager::retryStalled,
+            onSkip = AnalysisManager::skipStalled,
             onBack = {
                 AnalysisManager.clearTerminalState()
                 screen = Screen.TARGET
@@ -143,8 +153,10 @@ fun ModKitApp() {
             cancelled = false,
             cancelling = false,
             stalledAgeMs = null,
+            canSkipStalled = false,
             onCancel = AnalysisManager::cancel,
             onRetry = AnalysisManager::retryStalled,
+            onSkip = AnalysisManager::skipStalled,
             onBack = {
                 AnalysisManager.clearTerminalState()
                 screen = Screen.TARGET
