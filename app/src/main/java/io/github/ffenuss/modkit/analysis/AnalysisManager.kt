@@ -64,7 +64,7 @@ object AnalysisManager {
                 mutableState.value = AnalysisRunState.Interrupted(
                     target = saved.target,
                     previousProgress = saved.progress,
-                    message = "Предыдущий анализ был прерван системой или перезапуском. Можно запустить ту же цель снова.",
+                    message = "Предыдущий анализ был прерван системой или перезапуском. Можно продолжить ту же цель; завершённые движки будут переиспользованы из SHA-привязанного кэша.",
                 )
             }
         }
@@ -273,6 +273,7 @@ object AnalysisManager {
                     outputRoot = File(context.filesDir, "analysis-results"),
                     cancellation = signal,
                     skipController = skipController,
+                    cache = EngineResultCache(File(context.filesDir, "analysis-cache")),
                     progress = progressSink,
                     onPartial = { partial -> publishPartial(runId, partial) },
                 )
