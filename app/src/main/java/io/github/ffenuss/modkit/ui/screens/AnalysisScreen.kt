@@ -34,6 +34,7 @@ fun AnalysisScreen(
     stalledAgeMs: Long?,
     canSkipStalled: Boolean,
     partialNotice: String? = null,
+    onOpenAutoMod: (() -> Unit)? = null,
     onCancel: () -> Unit,
     onRetry: () -> Unit,
     onSkip: () -> Unit,
@@ -485,8 +486,18 @@ fun AnalysisScreen(
                     }
 
                     if (!active) {
+                        if (onOpenAutoMod != null) {
+                            item {
+                                Button(
+                                    onClick = onOpenAutoMod,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text("AutoMod / Patch Lab")
+                                }
+                            }
+                        }
                         item {
-                            Button(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
                                 Text("Выбрать другую цель")
                             }
                         }
