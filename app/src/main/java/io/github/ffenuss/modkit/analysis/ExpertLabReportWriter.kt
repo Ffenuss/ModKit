@@ -205,6 +205,64 @@ object ExpertLabReportWriter {
                 appendLine()
             }
 
+            result.runtimeEvidence?.let { runtime ->
+                appendLine("RUNTIME EVIDENCE")
+                appendLine("procMapsSha256: " + runtime.procMapsSha256)
+                runtime.moduleMappings.forEach { mapping ->
+                    appendLine("- module: " + mapping.moduleName)
+                    appendLine("  path: " + mapping.mappedPath)
+                    appendLine("  confirmed: " + mapping.confirmed)
+                    appendLine(
+                        "  loadBias: " + mapping.loadBias?.let {
+                            "0x" + it.toString(16)
+                        },
+                    )
+                    appendLine(
+                        "  imageBaseVA: " +
+                            mapping.elfImageBaseVirtualAddress?.let {
+                                "0x" + it.toString(16)
+                            },
+                    )
+                    appendLine("  pageSize: " + mapping.pageSize)
+                    appendLine(
+                        "  matchedLoadSegments: " +
+                            mapping.matchedLoadSegments,
+                    )
+                    appendLine(
+                        "  matchedExecutableSegments: " +
+                            mapping.matchedExecutableSegments,
+                    )
+                    appendLine(
+                        "  zeroOffsetMappingMatched: " +
+                            mapping.zeroOffsetMappingMatched,
+                    )
+                    mapping.blockers.forEach {
+                        appendLine("  blocker: " + it)
+                    }
+                }
+                runtime.addressConfirmations.forEach { address ->
+                    appendLine("- runtime-address: " + address.targetId)
+                    appendLine("  module: " + address.moduleName)
+                    appendLine(
+                        "  binaryVA: 0x" +
+                            address.binaryVirtualAddress.toString(16),
+                    )
+                    appendLine("  rva: 0x" + address.rva.toString(16))
+                    appendLine(
+                        "  runtimeVA: 0x" +
+                            address.runtimeVirtualAddress.toString(16),
+                    )
+                    appendLine(
+                        "  executableMappingContainsAddress: " +
+                            address.executableMappingContainsAddress,
+                    )
+                }
+                runtime.blockers.forEach {
+                    appendLine("runtime-blocker: " + it)
+                }
+                appendLine()
+            }
+
             appendLine("ENGINE DIAGNOSTICS")
             result.engineCacheHits.sorted().forEach {
                 appendLine("cache-hit: " + it)
