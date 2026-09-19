@@ -426,6 +426,7 @@ object RuntimeNativeTraceCapabilityRegistry {
         setOf(
             RuntimeNativeTraceCapability.TRACE_PARSER,
             RuntimeNativeTraceCapability.EXECUTABLE_ADDRESS_VALIDATOR,
+            RuntimeNativeTraceCapability.REPACKED_TARGETED_DLSYM_PROBE,
         )
 
     fun captureAvailable(
@@ -439,4 +440,11 @@ object RuntimeNativeTraceCapabilityRegistry {
             RuntimeNativeTraceSource.ROOT_RUNTIME ->
                 RuntimeNativeTraceCapability.ROOT_TRACE_CAPTURE in registered
         }
+
+    fun targetedDlsymProbeAvailable(
+        source: RuntimeNativeTraceSource,
+    ): Boolean =
+        source == RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME &&
+            RuntimeNativeTraceCapability.REPACKED_TARGETED_DLSYM_PROBE in
+            registered
 }
