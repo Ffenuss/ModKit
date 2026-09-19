@@ -22,8 +22,8 @@ Status: **ACTIVE**
 - [x] Validated DEX / ELF / WASM / IL2CPP-metadata probes
 - [x] Multi-label runtime fingerprinting
 - [x] Demand-driven engine routing plan
-- [ ] Routed-engine scheduler execution
-- [ ] Incremental publication of deep-engine results
+- [x] Routed-engine scheduler execution
+- [x] Incremental publication of deep-engine results
 - [x] Heartbeat / watchdog / STALLED state
 - [x] Responsive cancellation for current FAST work
 - [x] Interrupted-run detection after process/device restart
@@ -33,20 +33,20 @@ Status: **ACTIVE**
 
 ## Phase 2 — IL2CPP fast path
 - [x] Immediate validated global-metadata.dat + libil2cpp.so pair detection
-- [ ] Review and selectively migrate legacy metadata parser
-- [ ] Replace legacy whole-file assumptions with bounded/random-access reads
-- [ ] Broaden metadata layout support without fake reconstruction
-- [ ] Human-readable dump before full audit completion
-- [ ] CodeGenModule discovery
-- [ ] Exact metadata ↔ binary binding
-- [ ] Explicit blocker reasons when binding cannot be proven
+- [x] Review legacy metadata parser and selectively migrate validated structures
+- [x] Replace legacy whole-file assumptions with bounded/random-access reads
+- [ ] Broaden metadata layout support beyond current v27-v31 without fake reconstruction
+- [x] Human-readable dump before full audit completion
+- [x] Initial CodeGenModule discovery via validated registration symbols or unique bounded metadata-image-set fallback
+- [x] Exact MethodDef token RID → CodeGenModule slot → executable pointer binding for supported layouts
+- [x] Explicit blocker reasons when binding cannot be proven
 
 ## Phase 3 — Exact binding / Evidence Graph 2
 - [x] Proof-level enum defined
-- [ ] Evidence graph state machine
-- [ ] CodeGen / binary proof transitions
-- [ ] Explicit blocker model
-- [ ] Reject BLOCK + blockers=0
+- [ ] Full Evidence Graph state machine across all engines
+- [x] IL2CPP EXACT_METADATA → EXACT_BINARY proof transitions
+- [x] Initial fail-closed blocker model for CHANGE_READY
+- [x] Reject CHANGE_READY when required proof/preflight is missing
 - [ ] SHA-bound binding invalidation
 - [ ] Runtime-confirmed transition
 
