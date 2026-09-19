@@ -14,7 +14,7 @@ data class Il2CppFastDumpResult(
     val dumpFilePath: String,
     val preview: String,
     val warnings: List<String>,
-)
+) : java.io.Serializable
 
 object Il2CppFastDumpEngine {
     private const val MAX_METADATA_BYTES = 1L * 1024L * 1024L * 1024L
