@@ -503,38 +503,10 @@ object RepackedRuntimeEvidenceCapture {
             "Installed repacked test probe provider was not found."
         }
 
-        require(installed.packageName == build.packageName) {
-            "Installed probe package does not match test build."
-        }
-        require(
-            installed.providerClassName ==
-                BinaryAndroidManifestProbeInjector.PROVIDER_CLASS,
-        ) {
-            "Installed probe provider class does not match ModKit payload."
-        }
-        require(installed.authority == authority) {
-            "Installed probe authority does not match test build."
-        }
-        require(installed.exported && installed.enabled) {
-            "Installed probe provider is not exported/enabled."
-        }
-
-        val expectedSigners = build.signedApks
-            .flatMap {
-                it.signature.signerCertificateSha256
-            }
-            .map { it.lowercase() }
-            .toSet()
-        require(expectedSigners.isNotEmpty()) {
-            "Test build has no verified signer certificate evidence."
-        }
-        require(
-            installed.signerCertificateSha256
-                .map { it.lowercase() }
-                .toSet() == expectedSigners,
-        ) {
-            "Installed package signer does not match the built test APK."
-        }
+        RepackedRuntimeProbeIdentityVerifier.verify(
+            build = build,
+            installed = installed,
+        )
 
         checkCancelled(cancellation)
         val query = transport.query(authority)
