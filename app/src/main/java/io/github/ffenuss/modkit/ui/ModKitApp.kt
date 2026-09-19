@@ -13,9 +13,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import io.github.ffenuss.modkit.analysis.AnalysisManager
 import io.github.ffenuss.modkit.analysis.AnalysisRunState
+import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
+import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.ui.screens.AnalysisScreen
+import io.github.ffenuss.modkit.ui.screens.AutoModScreen
 import io.github.ffenuss.modkit.ui.screens.ExpertLabScreen
 import io.github.ffenuss.modkit.ui.screens.InstalledAppsScreen
 import io.github.ffenuss.modkit.ui.screens.RecoveryScreen
@@ -25,7 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private enum class Screen { TARGET, INSTALLED_APPS, EXPERT_LAB }
+private enum class Screen { TARGET, INSTALLED_APPS, EXPERT_LAB, AUTOMOD }
 
 @Composable
 fun ModKitApp() {
@@ -42,6 +45,9 @@ fun ModKitApp() {
     var installedApps by remember { mutableStateOf<List<InstalledAppTarget>>(emptyList()) }
     var installedLoading by remember { mutableStateOf(false) }
     var installedError by remember { mutableStateOf<String?>(null) }
+
+    var autoModTarget by remember { mutableStateOf<AnalysisTargetDescriptor?>(null) }
+    var autoModResult by remember { mutableStateOf<FastAnalysisResult?>(null) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -137,6 +143,12 @@ fun ModKitApp() {
             cancelling = false,
             stalledAgeMs = null,
             canSkipStalled = false,
+            onOpenAutoMod = {
+                autoModTarget = state.target
+                autoModResult = state.result
+                AnalysisManager.clearTerminalState()
+                screen = Screen.AUTOMOD
+            },
             onCancel = AnalysisManager::cancel,
             onRetry = AnalysisManager::retryStalled,
             onSkip = AnalysisManager::skipStalled,
@@ -220,6 +232,24 @@ fun ModKitApp() {
             )
 
             Screen.EXPERT_LAB -> ExpertLabScreen(onBack = { screen = Screen.TARGET })
+
+            Screen.AUTOMOD -> {
+                val target = autoModTarget
+                val result = autoModResult
+                if (target != null && result != null) {
+                    AutoModScreen(
+                        target = target,
+                        result = result,
+                        onBack = {
+                            autoModTarget = null
+                            autoModResult = null
+                            screen = Screen.TARGET
+                        },
+                    )
+                } else {
+                    screen = Screen.TARGET
+                }
+            }
         }
     }
 }
