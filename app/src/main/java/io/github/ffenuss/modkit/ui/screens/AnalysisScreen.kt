@@ -57,18 +57,27 @@ fun AnalysisScreen(
                 }
             }
 
-            cancelled -> {
-                item {
-                    Text("Анализ отменён. Частичные данные не выдаются как полный подтверждённый результат.")
-                }
-                item {
-                    OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
-                        Text("Назад")
+            else -> {
+                if (cancelled) {
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(
+                                Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text("Анализ отменён", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    if (result != null) {
+                                        "Уже полученные результаты сохранены и доступны ниже. Они не считаются полным анализом."
+                                    } else {
+                                        "Полезные частичные результаты ещё не успели сформироваться."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
                     }
                 }
-            }
-
-            else -> {
                 if (active) {
                     item {
                         Card(Modifier.fillMaxWidth()) {
@@ -347,6 +356,13 @@ fun AnalysisScreen(
                             }
                         }
                     }
+                } else if (cancelled) {
+                    item {
+                        OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+                            Text("Выбрать другую цель")
+                        }
+                    }
+                }
                 }
             }
         }
