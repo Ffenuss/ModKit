@@ -89,9 +89,16 @@ object EvidenceGraphBuilder {
 
     fun build(result: FastAnalysisResult): EvidenceBuildResult {
         val dump = result.il2cppFastDump
+        val genericTargets = runtimeDiscoveryTargets(
+            result = result,
+            includeIl2Cpp = dump == null,
+        )
         if (dump == null) {
             return EvidenceBuildResult(
-                graph = EvidenceGraph(result.index.artifactSha256, emptyList()),
+                graph = EvidenceGraph(
+                    result.index.artifactSha256,
+                    genericTargets,
+                ),
                 confirmationQueue = emptyList(),
             )
         }
@@ -120,7 +127,7 @@ object EvidenceGraphBuilder {
             return EvidenceBuildResult(
                 graph = EvidenceGraph(
                     artifactSha256 = result.index.artifactSha256,
-                    targets = targets.distinctBy { it.id },
+                    targets = (genericTargets + targets).distinctBy { it.id },
                 ),
                 confirmationQueue = emptyList(),
             )
@@ -201,10 +208,55 @@ object EvidenceGraphBuilder {
         }
 
         return EvidenceBuildResult(
-            graph = EvidenceGraph(result.index.artifactSha256, listOf(scope)),
+            graph = EvidenceGraph(
+                result.index.artifactSha256,
+                (genericTargets + scope).distinctBy { it.id },
+            ),
             confirmationQueue = queue,
         )
     }
+
+    private fun runtimeDiscoveryTargets(
+        result: FastAnalysisResult,
+        includeIl2Cpp: Boolean,
+    ): List<EvidenceTarget> =
+        result.index.runtimeProfiles
+            .asSequence()
+            .filter { includeIl2Cpp || it.runtimeId != IL2CPP_RUNTIME }
+            .map { runtime ->
+                EvidenceTarget(
+                    id = "runtime:" + runtime.runtimeId,
+                    runtimeId = runtime.runtimeId,
+                    kind = EvidenceTargetKind.ANALYSIS_SCOPE,
+                    displayName = runtime.title,
+                    artifact = null,
+                    abi = result.index.detectedAbis.singleOrNull(),
+                    declaringType = null,
+                    memberName = null,
+                    metadataToken = null,
+                    rva = null,
+                    binaryVirtualAddress = null,
+                    runtimeVirtualAddress = null,
+                    fileOffset = null,
+                    proofLevel = ProofLevel.DISCOVERED,
+                    userStatus = UserFindingStatus.FOUND,
+                    blockers = listOf(
+                        EvidenceBlocker(
+                            code = "DEEP_EVIDENCE_NOT_AVAILABLE",
+                            message = "Runtime обнаружен, но точная цель метода, поля или функции ещё не подтверждена.",
+                            requiredFor = ProofLevel.STRUCTURAL,
+                        ),
+                    ),
+                    facts = runtime.evidence.map { item ->
+                        EvidenceFact(
+                            engineId = "artifact.fast-index",
+                            kind = "runtime-signal",
+                            summary = item,
+                        )
+                    },
+                )
+            }
+            .toList()
 
     private fun methodTarget(
         result: FastAnalysisResult,
