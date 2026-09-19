@@ -172,6 +172,7 @@ object ExpertLabSessionController {
                 moduleName = moduleName,
                 procMapsText = procMapsText,
                 cancellation = cancellation,
+                artifactEntries = session.result.index.entries,
             )
         }
         val integrated = RuntimeEvidenceIntegrator.integrate(
