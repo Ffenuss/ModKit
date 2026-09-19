@@ -139,6 +139,101 @@ class ArchiveMutationApplierTest {
     }
 
     @Test
+    fun apkSetRewritesUnmodifiedSplitAndStripsOldSignatureBeforeResign() {
+        val root = Files.createTempDirectory("modkit-archive-splits-").toFile()
+        try {
+            val base = File(root, "base.apk")
+            val split = File(root, "split_config.arm64_v8a.apk")
+            val library = ByteArray(16) { it.toByte() }
+            createZip(
+                base,
+                mapOf(
+                    "AndroidManifest.xml" to byteArrayOf(1),
+                    "lib/arm64-v8a/libil2cpp.so" to library,
+                    "META-INF/CERT.SF" to "base-signature".toByteArray(),
+                ),
+            )
+            createZip(
+                split,
+                mapOf(
+                    "AndroidManifest.xml" to byteArrayOf(2),
+                    "assets/split.txt" to "unchanged".toByteArray(),
+                    "META-INF/CERT.SF" to "split-signature".toByteArray(),
+                ),
+            )
+
+            val replacementBytes = byteArrayOf(7, 7, 7, 7)
+            val replacement = File(root, "replacement.bin").apply {
+                writeBytes(replacementBytes)
+            }
+            val target = evidenceTarget(fileOffset = 4)
+            val request = MutationRequest(
+                id = "native-split-test",
+                artifactSha256 = ARTIFACT_SHA,
+                targetId = target.id,
+                kind = MutationKind.NATIVE_IN_PLACE_BYTES,
+                expectedOriginalSha256 = sha256(library.copyOfRange(4, 8)),
+                expectedOriginalSize = 4,
+                replacement = MutationPayloadRef(
+                    sha256 = sha256(replacementBytes),
+                    size = 4,
+                    storagePath = replacement.absolutePath,
+                ),
+            )
+            val preflight = MutationPreflightEngine.validate(
+                preparation(target),
+                listOf(request),
+            )
+            assertTrue(preflight.readyForApply)
+
+            val baseDescriptor = ArtifactSource("base.apk", base.length(), "b".repeat(64))
+            val splitDescriptor = ArtifactSource(
+                "split_config.arm64_v8a.apk",
+                split.length(),
+                "c".repeat(64),
+            )
+            val workspace = AnalysisWorkspace(
+                index = ArtifactIndex(
+                    artifactSha256 = ARTIFACT_SHA,
+                    sources = listOf(baseDescriptor, splitDescriptor),
+                    entries = emptyList(),
+                ),
+                sources = listOf(
+                    WorkspaceSource(baseDescriptor, base),
+                    WorkspaceSource(splitDescriptor, split),
+                ),
+            )
+
+            val result = ArchiveMutationApplier.apply(
+                workspace = workspace,
+                preflight = preflight,
+                outputDir = File(root, "out"),
+                cancellation = NeverCancelled,
+                progress = NoProgress,
+            )
+
+            assertEquals(2, result.outputFiles.size)
+            val outputSplit = result.outputFiles.single {
+                it.name == "split_config.arm64_v8a.apk"
+            }
+            ZipFile(outputSplit).use { zip ->
+                assertEquals(null, zip.getEntry("META-INF/CERT.SF"))
+                assertArrayEquals(
+                    "unchanged".toByteArray(),
+                    zip.getInputStream(zip.getEntry("assets/split.txt")).readBytes(),
+                )
+            }
+            assertTrue(
+                result.strippedSignatureEntries.any {
+                    it == "split_config.arm64_v8a.apk:META-INF/CERT.SF"
+                },
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun changedOriginalRangeAbortsBeforeProducingStagingApk() {
         val root = Files.createTempDirectory("modkit-archive-block-").toFile()
         try {
