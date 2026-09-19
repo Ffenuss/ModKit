@@ -60,6 +60,35 @@ fun AnalysisScreen(
                         }
                     }
                 }
+                result.il2cppFastDump?.let { dump ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("IL2CPP fast dump", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "metadata v" + (dump.metadata.metadataVersion ?: "?") +
+                                    " · types " + dump.metadata.types.size +
+                                    " · methods " + dump.metadata.methods.size +
+                                    " · fields " + dump.metadata.fields.size,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                if (dump.metadata.structuredSupported) "Metadata reconstruction ready" else "Validated metadata; layout support pending",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text("Dump: " + dump.dumpFilePath, style = MaterialTheme.typography.bodySmall)
+                            dump.warnings.take(3).forEach {
+                                Text("• " + it, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+                if (result.engineWarnings.isNotEmpty()) {
+                    Text("Ошибки отдельных движков", fontWeight = FontWeight.SemiBold)
+                    result.engineWarnings.forEach {
+                        Text("• " + it, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+
                 val targeted = result.routingPlan.targeted
                 if (targeted.isNotEmpty()) {
                     Text("Следующие релевантные движки", fontWeight = FontWeight.SemiBold)
