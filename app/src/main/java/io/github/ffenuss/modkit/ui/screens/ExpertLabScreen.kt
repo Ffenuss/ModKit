@@ -15,6 +15,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -57,6 +58,7 @@ fun ExpertLabScreen(onBack: () -> Unit) {
     var progress by remember { mutableStateOf<EngineProgress?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var cancellation by remember { mutableStateOf<AtomicCancellationSignal?>(null) }
+    var procMapsText by remember { mutableStateOf("") }
 
     var showInstalled by remember { mutableStateOf(false) }
     var installedLoading by remember { mutableStateOf(false) }
@@ -164,6 +166,27 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 )
             } catch (_: AnalysisCancelledException) {
                 error = "Запуск backend отменён."
+            } catch (failure: Throwable) {
+                error = failure.message ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun integrateRuntimeMaps() {
+        val current = session ?: return
+        val signal = beginOperation("runtime.module-map") ?: return
+        scope.launch {
+            try {
+                session = ExpertLabSessionController.integrateRuntimeMaps(
+                    context = appContext,
+                    session = current,
+                    procMapsText = procMapsText,
+                    cancellation = signal,
+                )
+            } catch (_: AnalysisCancelledException) {
+                error = "Runtime-подтверждение отменено."
             } catch (failure: Throwable) {
                 error = failure.message ?: failure.javaClass.simpleName
             } finally {
@@ -552,6 +575,85 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                 dump.preview.take(MAX_RAW_PREVIEW_CHARS),
                                 style = MaterialTheme.typography.bodySmall,
                             )
+                        }
+                    }
+                }
+            }
+
+            if (current.result.il2cppFastDump != null) {
+                item {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(
+                            Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(7.dp),
+                        ) {
+                            Text(
+                                "Runtime module mapping",
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                "Вставьте снимок /proc/<pid>/maps соответствующего тестового процесса. " +
+                                    "Один filename match не считается подтверждением: ModKit сверяет PT_LOAD, file offsets и executable mapping.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            OutlinedTextField(
+                                value = procMapsText,
+                                onValueChange = { procMapsText = it },
+                                label = { Text("/proc/<pid>/maps") },
+                                minLines = 5,
+                                maxLines = 12,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Button(
+                                onClick = ::integrateRuntimeMaps,
+                                enabled = !busy && procMapsText.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Проверить module mapping и runtime VA")
+                            }
+
+                            current.result.runtimeEvidence?.let { runtimeEvidence ->
+                                runtimeEvidence.moduleMappings.forEach { mapping ->
+                                    Text(
+                                        mapping.moduleName +
+                                            " · " +
+                                            if (mapping.confirmed) {
+                                                "mapping подтверждён"
+                                            } else {
+                                                "mapping не подтверждён"
+                                            },
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Text(
+                                        "path: " + mapping.mappedPath,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Text(
+                                        "loadBias: " +
+                                            mapping.loadBias?.let { "0x" + it.toString(16) }
+                                                .orEmpty().ifBlank { "null" } +
+                                            " · PT_LOAD: " + mapping.matchedLoadSegments +
+                                            " · exec: " + mapping.matchedExecutableSegments,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    mapping.blockers.forEach {
+                                        Text(
+                                            "• " + it,
+                                            color = MaterialTheme.colorScheme.error,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                                runtimeEvidence.addressConfirmations.take(12).forEach { address ->
+                                    Text(
+                                        "• " + address.targetId +
+                                            " · RVA=0x" + address.rva.toString(16) +
+                                            " · runtimeVA=0x" +
+                                            address.runtimeVirtualAddress.toString(16),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
