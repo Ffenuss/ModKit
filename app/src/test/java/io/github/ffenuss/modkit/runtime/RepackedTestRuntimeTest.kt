@@ -33,6 +33,30 @@ class RepackedTestRuntimeTest {
                 plan.registeredCapabilities,
         )
         assertTrue(
+            RepackedRuntimeCapability.OLD_SIGNATURE_REMOVAL in
+                plan.registeredCapabilities,
+        )
+        assertTrue(
+            RepackedRuntimeCapability.APK_ALIGNMENT in
+                plan.registeredCapabilities,
+        )
+        assertTrue(
+            RepackedRuntimeCapability.APK_SIGNING in
+                plan.registeredCapabilities,
+        )
+        assertTrue(
+            RepackedRuntimeCapability.PACKAGE_VERIFY in
+                plan.registeredCapabilities,
+        )
+        assertFalse(
+            RepackedRuntimeCapability.BINARY_MANIFEST_REWRITE in
+                plan.registeredCapabilities,
+        )
+        assertFalse(
+            RepackedRuntimeCapability.PROBE_PAYLOAD_INJECTION in
+                plan.registeredCapabilities,
+        )
+        assertTrue(
             plan.blockers.any {
                 it.code ==
                     "BINARY_MANIFEST_REWRITE_NOT_REGISTERED"
