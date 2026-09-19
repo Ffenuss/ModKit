@@ -16,6 +16,14 @@ import kotlinx.coroutines.withContext
  * the process-level coordinator.
  */
 object RoutedEngineScheduler {
+    private val registeredEngineIds = setOf(
+        "il2cpp.fast-dump",
+        "il2cpp.codegen-bind",
+    )
+
+    fun supportsEngine(engineId: String): Boolean =
+        engineId in registeredEngineIds
+
     private val executionOrder = mapOf(
         EngineScheduleClass.FAST to 0,
         EngineScheduleClass.TARGETED to 1,
@@ -163,10 +171,15 @@ object RoutedEngineScheduler {
                         }
                     }
 
-                    else -> result.withEngineWarning(
-                        engine.id,
-                        "Engine is marked available but no scheduler executor is registered.",
-                    )
+                    else -> {
+                        check(!engine.availableNow || !supportsEngine(engine.id)) {
+                            "Router/scheduler capability mismatch for " + engine.id
+                        }
+                        result.withEngineWarning(
+                            engine.id,
+                            "Engine is marked available but no scheduler executor is registered.",
+                        )
+                    }
                 }
             } catch (cancelled: AnalysisCancelledException) {
                 if (!cancellation.isCancelled() && skipController.consume(engine.id)) {
