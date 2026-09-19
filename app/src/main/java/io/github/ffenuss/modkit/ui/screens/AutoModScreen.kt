@@ -138,7 +138,7 @@ fun AutoModScreen(
                         }
                     } else {
                         Text(
-                            "Evidence Graph для этой цели ещё не сформирован.",
+                            "Система подтверждений для этой цели ещё не сформирована.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
@@ -265,9 +265,9 @@ fun AutoModScreen(
                     plan == null ->
                         "Сначала выполните подготовку изменений."
                     plan?.automaticApplyAllowed != true ->
-                        "Сборка остаётся заблокированной, пока нет CHANGE_READY-изменений."
+                        "Сборка остаётся заблокированной, пока нет изменений, полностью готовых к безопасному применению."
                     else ->
-                        "Build pipeline ещё не подключён в чистом репозитории."
+                        "Конвейер сборки APK ещё не подключён к этому экрану."
                 },
                 style = MaterialTheme.typography.bodySmall,
             )
