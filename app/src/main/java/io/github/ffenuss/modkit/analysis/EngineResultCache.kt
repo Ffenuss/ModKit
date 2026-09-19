@@ -38,6 +38,13 @@ class EngineResultCache(
             type = ArtifactIndex::class.java,
         )
 
+    fun hasRestorablePartial(artifactSha256: String): Boolean =
+        entryFile(
+            artifactSha256,
+            ARTIFACT_INDEX_ENGINE_ID,
+            ARTIFACT_INDEX_ENGINE_VERSION,
+        ).let { it.isFile && it.length() in 1..MAX_ENTRY_BYTES }
+
     fun restorePartialResult(artifactSha256: String): FastAnalysisResult? {
         val index = loadArtifactIndex(artifactSha256) ?: return null
         val dump = loadIl2CppFastDump(artifactSha256)
