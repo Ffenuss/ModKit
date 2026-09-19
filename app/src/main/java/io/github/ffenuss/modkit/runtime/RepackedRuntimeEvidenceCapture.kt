@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
@@ -25,6 +26,15 @@ data class RepackedRuntimeProbeQuery(
     val schemaVersion: Int,
     val packageName: String,
     val pid: Int,
+)
+
+data class RepackedRuntimeNativeLookupReply(
+    val schemaVersion: Int,
+    val packageName: String,
+    val pid: Int,
+    val moduleName: String,
+    val symbolName: String,
+    val resolvedRuntimeAddress: Long,
 )
 
 data class RepackedRuntimeProbeCaptureResult(
@@ -81,9 +91,33 @@ interface RepackedRuntimeProbeTransport {
     ): ByteArray
 }
 
+interface RepackedRuntimeNativeLookupTransport :
+    RepackedRuntimeProbeTransport {
+    fun resolveLoadedSymbol(
+        authority: String,
+        moduleName: String,
+        symbolName: String,
+    ): RepackedRuntimeNativeLookupReply
+}
+
+object RepackedRuntimeProbeIdentityVerifier {
+    fun verify(
+        build: RepackedRuntimeBuildResult,
+        installed: RepackedRuntimeInstalledProbe,
+    ) {
+        val authority =
+            build.packageName +
+                BinaryAndroidManifestProbeInjector.AUTHORITY_SUFFIX
+        RepackedRuntimeProbeIdentityVerifier.verify(
+            build = build,
+            installed = installed,
+        )
+    }
+}
+
 class AndroidRepackedRuntimeProbeTransport(
     private val context: Context,
-) : RepackedRuntimeProbeTransport {
+) : RepackedRuntimeNativeLookupTransport {
     override fun inspectInstalled(
         packageName: String,
         authority: String,
@@ -165,6 +199,42 @@ class AndroidRepackedRuntimeProbeTransport(
                 pid = it.getInt(pidColumn),
             )
         }
+    }
+
+    override fun resolveLoadedSymbol(
+        authority: String,
+        moduleName: String,
+        symbolName: String,
+    ): RepackedRuntimeNativeLookupReply {
+        val uri = Uri.parse(
+            "content://" + authority + "/" +
+                RuntimeEvidenceProviderContract.PATH_EVIDENCE,
+        )
+        val extras = Bundle().apply {
+            putString("symbol", symbolName)
+        }
+        val result = requireNotNull(
+            context.contentResolver.call(
+                uri,
+                "resolveLoadedSymbol",
+                moduleName,
+                extras,
+            ),
+        ) {
+            "Runtime probe native lookup returned no result."
+        }
+        return RepackedRuntimeNativeLookupReply(
+            schemaVersion = result.getInt("schemaVersion", -1),
+            packageName =
+                result.getString("packageName").orEmpty(),
+            pid = result.getInt("pid", -1),
+            moduleName =
+                result.getString("moduleName").orEmpty(),
+            symbolName =
+                result.getString("symbolName").orEmpty(),
+            resolvedRuntimeAddress =
+                result.getLong("resolvedRuntimeAddress", 0L),
+        )
     }
 
     override fun readEvidence(
