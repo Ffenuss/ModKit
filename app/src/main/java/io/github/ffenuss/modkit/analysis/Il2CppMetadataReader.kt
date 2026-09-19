@@ -39,6 +39,15 @@ data class Il2CppFieldDefinition(
     val token: Long,
 )
 
+data class Il2CppImageDefinition(
+    val index: Int,
+    val name: String,
+    val assemblyIndex: Int,
+    val typeStart: Int,
+    val typeCount: Int,
+    val token: Long,
+)
+
 data class Il2CppMetadataModel(
     val sizeBytes: Long,
     val magicValid: Boolean,
@@ -48,6 +57,8 @@ data class Il2CppMetadataModel(
     val declaredTypeCount: Int?,
     val declaredMethodCount: Int?,
     val declaredFieldCount: Int?,
+    val declaredImageCount: Int?,
+    val images: List<Il2CppImageDefinition>,
     val types: List<Il2CppTypeDefinition>,
     val methods: List<Il2CppMethodDefinition>,
     val fields: List<Il2CppFieldDefinition>,
@@ -65,6 +76,7 @@ object Il2CppMetadataReader {
         val maxTypes: Int = 30_000,
         val maxMethods: Int = 100_000,
         val maxFields: Int = 100_000,
+        val maxImages: Int = 4_096,
         val maxStringBytes: Int = 16 * 1024,
     )
 
@@ -111,12 +123,14 @@ object Il2CppMetadataReader {
                 11 to "fields", 12 to "genericParameters", 13 to "genericParameterConstraints",
                 14 to "genericContainers", 15 to "nestedTypes", 16 to "interfaces", 17 to "vtableMethods",
                 18 to "interfaceOffsets", 19 to "typeDefinitions",
+                20 to "images", 21 to "assemblies",
             )
             val ranges = names.mapNotNull { pair(raf, size, it.first, it.second) }
             val strings = ranges.firstOrNull { it.name == "strings" }
             val methodsRange = ranges.firstOrNull { it.name == "methods" }
             val fieldsRange = ranges.firstOrNull { it.name == "fields" }
             val typesRange = ranges.firstOrNull { it.name == "typeDefinitions" }
+            val imagesRange = ranges.firstOrNull { it.name == "images" }
 
             if (strings == null || methodsRange == null || fieldsRange == null ||
                 typesRange == null || strings.sizeBytes <= 0L
@@ -136,20 +150,26 @@ object Il2CppMetadataReader {
             val typeRecordSize = 88
             val methodRecordSize = if (version == 31) 36 else 32
             val fieldRecordSize = 12
+            val imageRecordSize = 40
             val declaredTypes = count(typesRange.sizeBytes, typeRecordSize)
             val declaredMethods = count(methodsRange.sizeBytes, methodRecordSize)
             val declaredFields = count(fieldsRange.sizeBytes, fieldRecordSize)
+            val declaredImages = imagesRange?.let { count(it.sizeBytes, imageRecordSize) } ?: 0
             var truncated =
                 typesRange.sizeBytes % typeRecordSize != 0L ||
                     methodsRange.sizeBytes % methodRecordSize != 0L ||
-                    fieldsRange.sizeBytes % fieldRecordSize != 0L
+                    fieldsRange.sizeBytes % fieldRecordSize != 0L ||
+                    (imagesRange?.sizeBytes?.rem(imageRecordSize) ?: 0L) != 0L
             val warnings = mutableListOf<String>()
             if (truncated) warnings += "One or more IL2CPP tables are not aligned to the expected record size."
 
             val typeCount = minOf(declaredTypes, limits.maxTypes)
             val methodCount = minOf(declaredMethods, limits.maxMethods)
             val fieldCount = minOf(declaredFields, limits.maxFields)
-            if (typeCount < declaredTypes || methodCount < declaredMethods || fieldCount < declaredFields) {
+            val imageCount = minOf(declaredImages, limits.maxImages)
+            if (typeCount < declaredTypes || methodCount < declaredMethods ||
+                fieldCount < declaredFields || imageCount < declaredImages
+            ) {
                 truncated = true
                 warnings += "FAST metadata reconstruction hit bounded record limits."
             }
@@ -210,6 +230,27 @@ object Il2CppMetadataReader {
                 )
             }
             val typeByIndex = types.associateBy { it.index }
+
+            val images = ArrayList<Il2CppImageDefinition>(imageCount)
+            if (imagesRange != null && imagesRange.sizeBytes > 0L) {
+                repeat(imageCount) { index ->
+                    if (index % 64 == 0) {
+                        checkCancelled(cancellation)
+                        heartbeat("IL2CPP: image definitions", index, imageCount)
+                    }
+                    val base = imagesRange.offset + index.toLong() * imageRecordSize
+                    if (base + imageRecordSize > size) return@repeat
+                    val imageName = metadataString(u32(raf, base)) ?: return@repeat
+                    images += Il2CppImageDefinition(
+                        index = index,
+                        name = imageName,
+                        assemblyIndex = i32(raf, base + 4),
+                        typeStart = i32(raf, base + 8),
+                        typeCount = u32(raf, base + 12).coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+                        token = u32(raf, base + 28),
+                    )
+                }
+            }
 
             val fieldOwners = HashMap<Int, Il2CppTypeDefinition>()
             types.forEach { type ->
@@ -274,6 +315,8 @@ object Il2CppMetadataReader {
                 declaredTypeCount = declaredTypes,
                 declaredMethodCount = declaredMethods,
                 declaredFieldCount = declaredFields,
+                declaredImageCount = declaredImages,
+                images = images,
                 types = types,
                 methods = methods,
                 fields = fields,
@@ -302,6 +345,8 @@ object Il2CppMetadataReader {
         declaredTypeCount = null,
         declaredMethodCount = null,
         declaredFieldCount = null,
+        declaredImageCount = null,
+        images = emptyList(),
         types = emptyList(),
         methods = emptyList(),
         fields = emptyList(),
