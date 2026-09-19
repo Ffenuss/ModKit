@@ -186,7 +186,7 @@ object EvidenceGraphBuilder {
                         availableNow = true,
                     ),
                 )
-            binaryAttempted && !binary.exactBindingAvailable ->
+            binaryAttempted && binary?.exactBindingAvailable == false ->
                 listOf(
                     ConfirmationRequest(
                         targetId = scope.id,
