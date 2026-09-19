@@ -102,7 +102,7 @@ val generateRuntimeProbeDexAsset =
                     val entry = entries.nextElement()
                     if (
                         !entry.isDirectory &&
-                        Regex("""classes(?:\\d*)?\\.dex""")
+                        Regex("""classes(?:\d*)?\.dex""")
                             .matches(entry.name)
                     ) {
                         val bytes = zip.getInputStream(entry).use {
