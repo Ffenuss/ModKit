@@ -1,0 +1,62 @@
+package io.github.ffenuss.modkit.analysis
+
+import io.github.ffenuss.modkit.domain.ProofLevel
+import java.nio.file.Files
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class RepackedRuntimeReportTest {
+    @Test
+    fun technicalReportShowsOnlyActuallyRegisteredRepackedCapabilities() {
+        val root = Files.createTempDirectory("modkit-repacked-report-").toFile()
+        try {
+            val result = FastAnalysisResult(
+                index = ArtifactIndex(
+                    artifactSha256 = SHA,
+                    sources = listOf(
+                        ArtifactSource("base.apk", 1, SOURCE_SHA),
+                    ),
+                    entries = emptyList(),
+                ),
+                routingPlan = EngineRoutingPlan(emptyList(), emptyList()),
+                elapsedMs = 1,
+                confirmationQueue = listOf(
+                    ConfirmationRequest(
+                        targetId = "target",
+                        engineId = "runtime.il2cpp-confirm",
+                        requiredProofLevel = ProofLevel.RUNTIME_CONFIRMED,
+                        reason = "Runtime confirmation required.",
+                        availableNow = false,
+                    ),
+                ),
+            )
+
+            val report = ExpertLabReportWriter.write(
+                outputDir = root,
+                label = "sample.apk",
+                result = result,
+            )
+            val text = report.readText()
+
+            assertTrue(text.contains("REPACKED TEST RUNTIME PLAN"))
+            assertTrue(text.contains("sourcePolicy: READ_ONLY_COPY_ONLY"))
+            assertTrue(text.contains("readyToBuildTestCopy: false"))
+            assertTrue(text.contains("registeredCapabilities: SOURCE_COPY"))
+            assertTrue(
+                text.contains(
+                    "BINARY_MANIFEST_REWRITE_NOT_REGISTERED",
+                ),
+            )
+            assertTrue(text.contains("fallbackStage: NON_ROOT_RUNTIME"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    companion object {
+        private const val SHA =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        private const val SOURCE_SHA =
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+}
