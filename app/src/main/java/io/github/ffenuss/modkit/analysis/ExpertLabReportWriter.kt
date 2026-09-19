@@ -5,6 +5,9 @@ import io.github.ffenuss.modkit.runtime.RuntimeEvidenceContract
 import io.github.ffenuss.modkit.runtime.RuntimeNativeTraceCapability
 import io.github.ffenuss.modkit.runtime.RuntimeNativeTraceCapabilityRegistry
 import io.github.ffenuss.modkit.runtime.RuntimeNativeTraceSource
+import io.github.ffenuss.modkit.runtime.RootRuntimeCapabilityRegistry
+import io.github.ffenuss.modkit.runtime.RootRuntimeDecisionEngine
+import io.github.ffenuss.modkit.runtime.RuntimeEscalationPlanner
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -517,6 +520,32 @@ object ExpertLabReportWriter {
                 appendLine(
                     "capture-" + source.name + ": " +
                         RuntimeNativeTraceCapabilityRegistry.captureAvailable(source),
+                )
+            }
+            appendLine()
+
+            val rootDecision = RootRuntimeDecisionEngine.decide(
+                plan = RuntimeEscalationPlanner.plan(result),
+                attempts = emptyList(),
+            )
+            appendLine("ROOT RUNTIME POLICY")
+            appendLine("lastResortOnly: true")
+            appendLine(
+                "executorRegistered: " +
+                    RootRuntimeCapabilityRegistry.executorRegistered,
+            )
+            appendLine(
+                "evidenceRequiresRoot: " +
+                    rootDecision.evidenceRequiresRoot,
+            )
+            appendLine("readyToRunRoot: " + rootDecision.readyToRunRoot)
+            rootDecision.reasons.forEach {
+                appendLine("reason: " + it)
+            }
+            rootDecision.blockers.forEach {
+                appendLine(
+                    "root-blocker: " + it.code + " / " +
+                        it.category.name + " / " + it.message,
                 )
             }
             appendLine()
