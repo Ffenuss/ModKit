@@ -94,7 +94,7 @@ object Il2CppMetadataReader {
                 )
             }
 
-            if (version !in 27..31) {
+            if (version == null || version !in 27..31) {
                 return emptyModel(
                     size = size,
                     version = version,
