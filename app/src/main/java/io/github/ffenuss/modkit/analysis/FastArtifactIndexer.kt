@@ -92,7 +92,7 @@ object FastArtifactIndexer {
                 routingPlan = EngineRouter.plan(cachedIndex),
                 elapsedMs = System.currentTimeMillis() - started,
                 engineCacheHits = setOf(EngineResultCache.ARTIFACT_INDEX_ENGINE_ID),
-            )
+            ).withEvidenceGraph()
         }
 
         val entries = ArrayList<ArtifactEntry>()
@@ -240,7 +240,7 @@ object FastArtifactIndexer {
             index = index,
             routingPlan = EngineRouter.plan(index),
             elapsedMs = System.currentTimeMillis() - started,
-        )
+        ).withEvidenceGraph()
     }
 
     private fun sameSourceContent(
