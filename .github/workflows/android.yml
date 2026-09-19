@@ -37,9 +37,10 @@ jobs:
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "platforms;android-37.0" "build-tools;36.0.0" "platform-tools"
+          "$SDKMANAGER" "platforms;android-37.0" "build-tools;36.0.0" "platform-tools" "ndk;28.2.13676358"
           test -f "${ANDROID_HOME}/platforms/android-37.0/android.jar"
           test -x "${ANDROID_HOME}/build-tools/36.0.0/zipalign"
+          test -x "${ANDROID_HOME}/ndk/28.2.13676358/ndk-build"
 
       - name: Set up Gradle 9.5
         uses: gradle/actions/setup-gradle@v4
