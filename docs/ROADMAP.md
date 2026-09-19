@@ -50,6 +50,7 @@ Current cache coverage: `artifact.fast-index`, `il2cpp.fast-dump`, and `il2cpp.c
 ## Phase 3 — Exact binding / Evidence Graph 2
 - [x] Proof-level enum defined
 - [ ] Full Evidence Graph state machine across all engines
+- [x] All detected runtime profiles enter the central graph at DISCOVERED without fake exact proof
 - [x] IL2CPP EXACT_METADATA → EXACT_BINARY proof transitions
 - [x] Initial fail-closed blocker model for CHANGE_READY
 - [x] Reject CHANGE_READY when required proof/preflight is missing
@@ -91,10 +92,15 @@ Status: **CORE DONE FOR CURRENT MUTATION EXECUTORS**
 - [ ] Customer/release signing identity selection/import
 
 ## Phase 6 — Expert Lab
-- [ ] Direct backend execution
-- [ ] Capability validation
-- [ ] APK/APK-set/app/individual-file inputs
-- [ ] Raw technical output separated from Simple Mode
+Status: **CORE ACTIVE**
+
+- [x] Direct execution of an individually selected routed backend
+- [x] Router/executor capability consistency validation
+- [x] APK/APK-set/installed-app/individual-file inputs
+- [x] Raw technical output separated from Simple Mode
+- [x] Scoped technical report export
+- [ ] Direct execution coverage for newly migrated non-IL2CPP backends
+- [ ] Search/filtering for large target and backend inventories
 
 ## Phase 7 — Runtime escalation
 - [ ] Repacked test runtime
