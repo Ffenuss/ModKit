@@ -24,6 +24,7 @@ sealed interface AnalysisRunState {
         val target: AnalysisTargetDescriptor,
         val progress: EngineProgress?,
         val startedAtEpochMs: Long,
+        val partialResult: FastAnalysisResult? = null,
     ) : AnalysisRunState
 
     data class Cancelling(
@@ -31,6 +32,7 @@ sealed interface AnalysisRunState {
         val target: AnalysisTargetDescriptor,
         val progress: EngineProgress?,
         val startedAtEpochMs: Long,
+        val partialResult: FastAnalysisResult? = null,
     ) : AnalysisRunState
 
     data class Stalled(
@@ -39,6 +41,7 @@ sealed interface AnalysisRunState {
         val progress: EngineProgress?,
         val startedAtEpochMs: Long,
         val heartbeatAgeMs: Long,
+        val partialResult: FastAnalysisResult? = null,
     ) : AnalysisRunState
 
     data class Completed(
