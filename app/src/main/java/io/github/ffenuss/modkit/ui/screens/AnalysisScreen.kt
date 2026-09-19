@@ -363,7 +363,7 @@ fun AnalysisScreen(
                                         )
                                         evidence.blockers.take(5).forEach { blocker ->
                                             Text(
-                                                "• " + blocker.code + ": " + blocker.message,
+                                                "• " + blocker.message,
                                                 style = MaterialTheme.typography.bodySmall,
                                             )
                                         }
