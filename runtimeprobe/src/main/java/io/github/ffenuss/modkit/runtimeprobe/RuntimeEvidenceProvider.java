@@ -7,6 +7,7 @@ import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
 import android.os.Binder;
+import android.os.Bundle;
 import android.os.ParcelFileDescriptor;
 import android.os.Process;
 
@@ -51,6 +52,31 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         Context context = probeContext();
         cursor.addRow(new Object[]{1, context.getPackageName(), Process.myPid()});
         return cursor;
+    }
+
+    @Override
+    public Bundle call(String method, String arg, Bundle extras) {
+        enforceCaller();
+        if (!"resolveLoadedSymbol".equals(method)) {
+            throw new IllegalArgumentException("Unsupported runtime probe call.");
+        }
+        if (arg == null || extras == null) {
+            throw new IllegalArgumentException("Runtime native lookup requires module and symbol.");
+        }
+        String symbol = extras.getString("symbol");
+        if (symbol == null) {
+            throw new IllegalArgumentException("Runtime native lookup symbol is missing.");
+        }
+
+        long address = RuntimeNativeBridge.resolveLoadedSymbol(arg, symbol);
+        Bundle result = new Bundle();
+        result.putInt("schemaVersion", 1);
+        result.putString("packageName", probeContext().getPackageName());
+        result.putInt("pid", Process.myPid());
+        result.putString("moduleName", arg);
+        result.putString("symbolName", symbol);
+        result.putLong("resolvedRuntimeAddress", address);
+        return result;
     }
 
     @Override
