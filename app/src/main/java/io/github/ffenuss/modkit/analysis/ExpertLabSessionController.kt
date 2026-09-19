@@ -180,7 +180,24 @@ object ExpertLabSessionController {
             evidence = evidence,
             procMapsText = procMapsText,
         )
-        return session.withResult(integrated)
+        val runtimeSnapshot = integrated.runtimeEvidence ?: evidence
+        val persisted = withContext(Dispatchers.IO) {
+            EngineResultCache(
+                File(context.filesDir, "analysis-cache"),
+            ).saveRuntimeEvidence(
+                artifactSha256 = session.result.index.artifactSha256,
+                result = runtimeSnapshot,
+            )
+        }
+        val finalResult = if (persisted) {
+            integrated
+        } else {
+            integrated.copy(
+                engineWarnings = integrated.engineWarnings +
+                    "runtime.evidence: persistence failed",
+            )
+        }
+        return session.withResult(finalResult)
     }
 
     suspend fun runEngine(
