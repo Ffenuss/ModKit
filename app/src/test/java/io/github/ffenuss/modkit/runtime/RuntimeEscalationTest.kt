@@ -101,7 +101,7 @@ class RuntimeEscalationTest {
         val parsed = ProcMapsParser.parse(
             """
             nonsense
-            1000-2000 r-xp BAD 00:00 0 /x.so
+            1000-2000 r-xp G00 00:00 0 /x.so
             3000-2000 r-xp 0000 00:00 0 /bad.so
             4000-5000 r-xp 0000 00:00 1 /ok.so
             """.trimIndent(),
