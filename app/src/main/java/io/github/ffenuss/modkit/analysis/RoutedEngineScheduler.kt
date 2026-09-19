@@ -92,7 +92,7 @@ object RoutedEngineScheduler {
                                 mutationValidated = false,
                                 requestedChangeReady = false,
                             ),
-                        )
+                        ).withEvidenceGraph()
                     }
 
                     "il2cpp.codegen-bind" -> {
@@ -147,7 +147,7 @@ object RoutedEngineScheduler {
                                         binding.toEvidenceBlockers()
                                     },
                                 ),
-                            )
+                            ).withEvidenceGraph()
                         }
                     }
 
