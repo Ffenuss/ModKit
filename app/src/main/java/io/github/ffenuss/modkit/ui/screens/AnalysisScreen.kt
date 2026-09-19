@@ -221,6 +221,33 @@ fun AnalysisScreen(
                         }
                     }
 
+                    result.il2cppEvidence?.let { evidence ->
+                        item {
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(
+                                    Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    Text("Evidence Graph", fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        "Уровень доказательств: " + evidence.proofLevel.name,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Text(
+                                        "CHANGE_READY: " + if (evidence.changeReady) "да" else "нет",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    if (!evidence.changeReady) {
+                                        Text(
+                                            "Автоматическое изменение не разрешается до отдельной prepare/preflight проверки.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     result.il2cppBinaryBinding?.let { binary ->
                         item {
                             Card(Modifier.fillMaxWidth()) {
