@@ -1,0 +1,142 @@
+package io.github.ffenuss.modkit.patch
+
+import io.github.ffenuss.modkit.analysis.ArtifactIndex
+import io.github.ffenuss.modkit.analysis.ArtifactSource
+import io.github.ffenuss.modkit.analysis.EngineRoutingPlan
+import io.github.ffenuss.modkit.analysis.EvidenceGraph
+import io.github.ffenuss.modkit.analysis.EvidenceTarget
+import io.github.ffenuss.modkit.analysis.EvidenceTargetKind
+import io.github.ffenuss.modkit.analysis.FastAnalysisResult
+import io.github.ffenuss.modkit.analysis.UserFindingStatus
+import io.github.ffenuss.modkit.domain.ProofLevel
+import java.io.File
+import java.security.MessageDigest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class Il2CppNativeMutationDraftBuilderTest {
+    @Test
+    fun buildsDraftFromExactBinaryTargetAndExtractedLibrary() {
+        val root = createTempDir(prefix = "modkit-native-draft-")
+        try {
+            val analysisRoot = File(root, "analysis-results")
+            val nativeDir = File(
+                analysisRoot,
+                SHA + "/il2cpp/native",
+            ).apply { mkdirs() }
+            val library = File(nativeDir, "arm64-v8a-libil2cpp.so")
+            val bytes = ByteArray(32) { it.toByte() }
+            library.writeBytes(bytes)
+
+            val result = analysisResult(
+                proof = ProofLevel.EXACT_BINARY,
+                status = UserFindingStatus.CONFIRMED,
+            )
+            val draft = Il2CppNativeMutationDraftBuilder.build(
+                result = result,
+                targetId = TARGET_ID,
+                replacementHex = "AA BB CC DD",
+                analysisResultsRoot = analysisRoot,
+                stagingRoot = File(root, "staging"),
+            )
+
+            assertEquals("08 09 0A 0B", draft.originalHex)
+            assertEquals("AA BB CC DD", draft.replacementHex)
+            assertEquals(8L, result.evidenceGraph?.targets?.single()?.fileOffset)
+            assertEquals(4L, draft.request.expectedOriginalSize)
+            assertEquals(
+                sha256(bytes.copyOfRange(8, 12)),
+                draft.request.expectedOriginalSha256,
+            )
+            val payload = File(requireNotNull(draft.request.replacement?.storagePath))
+            assertTrue(payload.isFile)
+            assertEquals(4L, payload.length())
+            assertEquals(
+                sha256(byteArrayOf(0xAA.toByte(), 0xBB.toByte(), 0xCC.toByte(), 0xDD.toByte())),
+                draft.request.replacement?.sha256,
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun refusesMetadataOnlyTarget() {
+        val root = createTempDir(prefix = "modkit-native-draft-block-")
+        try {
+            val result = analysisResult(
+                proof = ProofLevel.EXACT_METADATA,
+                status = UserFindingStatus.CONFIRMING,
+            )
+            Il2CppNativeMutationDraftBuilder.build(
+                result = result,
+                targetId = TARGET_ID,
+                replacementHex = "00",
+                analysisResultsRoot = File(root, "analysis-results"),
+                stagingRoot = File(root, "staging"),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun hexParserAcceptsCommonSpacingAndPrefix() {
+        val bytes = Il2CppNativeMutationDraftBuilder.parseHex(
+            "0xAA, 0xbb  CC-DD",
+        )
+        assertEquals(
+            listOf(0xAA, 0xBB, 0xCC, 0xDD),
+            bytes.map { it.toInt() and 0xff },
+        )
+    }
+
+    private fun analysisResult(
+        proof: ProofLevel,
+        status: UserFindingStatus,
+    ): FastAnalysisResult {
+        val source = ArtifactSource("base.apk", 1, SHA)
+        val index = ArtifactIndex(
+            artifactSha256 = SHA,
+            sources = listOf(source),
+            entries = emptyList(),
+        )
+        val target = EvidenceTarget(
+            id = TARGET_ID,
+            runtimeId = "unity_il2cpp",
+            kind = EvidenceTargetKind.METHOD,
+            displayName = "Game.Player.Hit",
+            artifact = "base.apk:lib/arm64-v8a/libil2cpp.so",
+            abi = "arm64-v8a",
+            declaringType = "Game.Player",
+            memberName = "Hit",
+            metadataToken = 0x06000001,
+            rva = 0x1000,
+            binaryVirtualAddress = 0x70001000,
+            runtimeVirtualAddress = null,
+            fileOffset = 8,
+            proofLevel = proof,
+            userStatus = status,
+            blockers = emptyList(),
+            facts = emptyList(),
+        )
+        return FastAnalysisResult(
+            index = index,
+            routingPlan = EngineRoutingPlan(emptyList(), emptyList()),
+            elapsedMs = 1,
+            evidenceGraph = EvidenceGraph(SHA, listOf(target)),
+        )
+    }
+
+    private fun sha256(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+    companion object {
+        private const val TARGET_ID = "target-1"
+        private const val SHA =
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+}
