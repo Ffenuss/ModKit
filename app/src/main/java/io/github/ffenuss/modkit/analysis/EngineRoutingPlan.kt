@@ -52,7 +52,7 @@ object EngineRouter {
             targeted(
                 id = "elf.universal-inventory",
                 reason = "Validated ELF present",
-                missingText = "Universal ELF deep inventory is pending reviewed migration",
+                available = true,
             )
         }
         if ("unity_il2cpp" in runtimes) {
