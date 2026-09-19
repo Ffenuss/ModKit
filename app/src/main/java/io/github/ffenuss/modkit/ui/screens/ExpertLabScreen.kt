@@ -43,10 +43,12 @@ import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.runtime.AndroidRepackedRuntimeInstaller
 import io.github.ffenuss.modkit.runtime.ProcMapsCaptureSource
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeBuildResult
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallPlanner
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallReadiness
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallReadinessState
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallStatusStore
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestAppLauncher
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceContract
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationPlanner
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationStage
@@ -69,6 +71,8 @@ fun ExpertLabScreen(onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var cancellation by remember { mutableStateOf<AtomicCancellationSignal?>(null) }
     var procMapsText by remember { mutableStateOf("") }
+    var nativeLookupModule by remember { mutableStateOf("") }
+    var nativeLookupSymbol by remember { mutableStateOf("") }
     var installReadiness by remember {
         mutableStateOf<RepackedRuntimeInstallReadiness?>(null)
     }
@@ -255,10 +259,12 @@ fun ExpertLabScreen(onBack: () -> Unit) {
         }
     }
 
-    fun installRepackedTestRuntime() {
-        val current = session ?: return
-        val build = current.repackedRuntimeBuild ?: return
-        val signal = beginOperation("runtime.repacked-install") ?: return
+    fun installRepackedBuild(
+        build: RepackedRuntimeBuildResult,
+        operationId: String,
+        cancelledMessage: String,
+    ) {
+        val signal = beginOperation(operationId) ?: return
         scope.launch {
             try {
                 val plan = withContext(Dispatchers.IO) {
@@ -290,7 +296,135 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                     error = readiness.blockers.joinToString("\n")
                 }
             } catch (_: AnalysisCancelledException) {
-                error = "Установка test runtime отменена."
+                error = cancelledMessage
+            } catch (failure: Throwable) {
+                error =
+                    failure.message ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun installRepackedTestRuntime() {
+        val build = session?.repackedRuntimeBuild ?: return
+        installRepackedBuild(
+            build = build,
+            operationId = "runtime.repacked-install",
+            cancelledMessage = "Установка test runtime отменена.",
+        )
+    }
+
+    fun buildRepackedNativeLookupRuntime() {
+        val current = session ?: return
+        val signal =
+            beginOperation("runtime.native-lookup-build") ?: return
+        scope.launch {
+            try {
+                val updated =
+                    ExpertLabSessionController
+                        .buildRepackedNativeLookupRuntime(
+                            context = appContext,
+                            session = current,
+                            cancellation = signal,
+                            progress = ProgressSink { update ->
+                                scope.launch { progress = update }
+                            },
+                        )
+                session = updated
+                if (nativeLookupModule.isBlank()) {
+                    nativeLookupModule =
+                        updated.result.index.entries
+                            .firstOrNull {
+                                it.path.lowercase().endsWith(".so")
+                            }
+                            ?.path
+                            ?.substringAfterLast('/')
+                            .orEmpty()
+                }
+                if (nativeLookupSymbol.isBlank()) {
+                    val suggested =
+                        updated.result.elfInventory
+                            ?.records
+                            ?.firstOrNull {
+                                it.entryPath.substringAfterLast('/') ==
+                                    nativeLookupModule
+                            }
+                            ?.sampledDefinedSymbols
+                            ?.firstOrNull()
+                    if (suggested != null) {
+                        nativeLookupSymbol = suggested
+                    }
+                }
+            } catch (_: AnalysisCancelledException) {
+                error =
+                    "Сборка native lookup test runtime отменена."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun installRepackedNativeLookupRuntime() {
+        val build =
+            session?.repackedNativeRuntimeBuild ?: return
+        installRepackedBuild(
+            build = build,
+            operationId = "runtime.native-lookup-install",
+            cancelledMessage =
+                "Установка native lookup test runtime отменена.",
+        )
+    }
+
+    fun launchRepackedNativeLookupRuntime() {
+        val build =
+            session?.repackedNativeRuntimeBuild ?: return
+        val signal =
+            beginOperation("runtime.native-lookup-launch") ?: return
+        scope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    RepackedRuntimeTestAppLauncher.launch(
+                        context = appContext,
+                        build = build,
+                    )
+                }
+            } catch (_: AnalysisCancelledException) {
+                error = "Запуск test-копии отменён."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message ?: failure.javaClass.simpleName
+            } finally {
+                if (signal.isCancelled()) {
+                    error = "Запуск test-копии отменён."
+                }
+                finishOperation()
+            }
+        }
+    }
+
+    fun integrateRepackedNativeLookup() {
+        val current = session ?: return
+        val signal =
+            beginOperation("runtime.native-lookup") ?: return
+        scope.launch {
+            try {
+                session =
+                    ExpertLabSessionController
+                        .integrateRepackedNativeLookup(
+                            context = appContext,
+                            session = current,
+                            moduleName =
+                                nativeLookupModule.trim(),
+                            symbolName =
+                                nativeLookupSymbol.trim(),
+                            cancellation = signal,
+                        )
+            } catch (_: AnalysisCancelledException) {
+                error = "Native lookup отменён."
             } catch (failure: Throwable) {
                 error =
                     failure.message ?: failure.javaClass.simpleName
@@ -1014,6 +1148,241 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (
+                current.result.index.entries.any {
+                    it.path.lowercase().endsWith(".so")
+                }
+            ) {
+                item {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(
+                            Modifier.padding(14.dp),
+                            verticalArrangement =
+                                Arrangement.spacedBy(7.dp),
+                        ) {
+                            Text(
+                                "Targeted native lookup",
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                "Активный self-process dlsym probe для уже загруженного модуля. " +
+                                    "Это не пассивный trace вызовов приложения и не подтверждение исполнения функции.",
+                                style =
+                                    MaterialTheme.typography.bodySmall,
+                            )
+                            Button(
+                                onClick =
+                                    ::buildRepackedNativeLookupRuntime,
+                                enabled = !busy,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    if (
+                                        current.repackedNativeRuntimeBuild ==
+                                        null
+                                    ) {
+                                        "Собрать native lookup test APK"
+                                    } else {
+                                        "Пересобрать native lookup test APK"
+                                    },
+                                )
+                            }
+
+                            current.repackedNativeRuntimeBuild?.let { build ->
+                                Text(
+                                    "package: " + build.packageName +
+                                        " · signer: " +
+                                        build.signerAlias,
+                                    style =
+                                        MaterialTheme.typography.bodySmall,
+                                )
+                                build.signedApks.forEach { apk ->
+                                    Text(
+                                        "• " + apk.sourceDisplayName +
+                                            " · SHA " +
+                                            apk.signedSha256.take(16) +
+                                            "…",
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                Button(
+                                    onClick =
+                                        ::installRepackedNativeLookupRuntime,
+                                    enabled = !busy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        "Установить native lookup test-копию",
+                                    )
+                                }
+
+                                installReadiness?.let { readiness ->
+                                    if (
+                                        readiness.packageName ==
+                                        build.packageName
+                                    ) {
+                                        when (readiness.state) {
+                                            RepackedRuntimeInstallReadinessState.UNKNOWN_SOURCES_PERMISSION_REQUIRED -> {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        appContext.startActivity(
+                                                            AndroidRepackedRuntimeInstaller
+                                                                .unknownSourcesSettingsIntent(
+                                                                    appContext,
+                                                                ),
+                                                        )
+                                                    },
+                                                    enabled = !busy,
+                                                    modifier =
+                                                        Modifier.fillMaxWidth(),
+                                                ) {
+                                                    Text(
+                                                        "Разрешить установку из ModKit",
+                                                    )
+                                                }
+                                            }
+
+                                            RepackedRuntimeInstallReadinessState.INSTALLED_SIGNATURE_CONFLICT -> {
+                                                Text(
+                                                    "Оригинал с тем же packageName подписан другим сертификатом.",
+                                                    color =
+                                                        MaterialTheme.colorScheme.error,
+                                                    style =
+                                                        MaterialTheme.typography.bodySmall,
+                                                )
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        appContext.startActivity(
+                                                            AndroidRepackedRuntimeInstaller
+                                                                .uninstallConflictIntent(
+                                                                    build.packageName,
+                                                                ),
+                                                        )
+                                                    },
+                                                    enabled = !busy,
+                                                    modifier =
+                                                        Modifier.fillMaxWidth(),
+                                                ) {
+                                                    Text(
+                                                        "Открыть системное удаление оригинала",
+                                                    )
+                                                }
+                                            }
+
+                                            else -> Unit
+                                        }
+                                    }
+                                }
+
+                                Button(
+                                    onClick =
+                                        ::launchRepackedNativeLookupRuntime,
+                                    enabled = !busy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        "Запустить test-копию",
+                                    )
+                                }
+                            }
+
+                            OutlinedTextField(
+                                value = nativeLookupModule,
+                                onValueChange = {
+                                    nativeLookupModule = it
+                                },
+                                label = {
+                                    Text("Модуль, например libfoo.so")
+                                },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            OutlinedTextField(
+                                value = nativeLookupSymbol,
+                                onValueChange = {
+                                    nativeLookupSymbol = it
+                                },
+                                label = {
+                                    Text("Точный dynamic symbol")
+                                },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            current.result.elfInventory
+                                ?.records
+                                ?.firstOrNull {
+                                    it.entryPath.substringAfterLast('/') ==
+                                        nativeLookupModule.trim()
+                                }
+                                ?.let { record ->
+                                    Text(
+                                        "ELF inventory: " +
+                                            record.architecture +
+                                            " · defined symbols=" +
+                                            record.definedDynamicSymbolCount,
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                    )
+                                    record.sampledDefinedSymbols
+                                        .take(6)
+                                        .forEach { symbol ->
+                                            Text(
+                                                "• " + symbol,
+                                                style =
+                                                    MaterialTheme.typography.bodySmall,
+                                            )
+                                        }
+                                }
+                            Button(
+                                onClick =
+                                    ::integrateRepackedNativeLookup,
+                                enabled =
+                                    !busy &&
+                                        current.repackedNativeRuntimeBuild !=
+                                        null &&
+                                        nativeLookupModule.isNotBlank() &&
+                                        nativeLookupSymbol.isNotBlank(),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Выполнить targeted dlsym probe")
+                            }
+
+                            current.result.runtimeEvidence?.let {
+                                evidence ->
+                                RuntimeEvidenceContract
+                                    .observations(evidence)
+                                    .filter {
+                                        it.kind.name ==
+                                            "JNI_DLSYM_OBSERVED"
+                                    }
+                                    .takeLast(8)
+                                    .forEach { observation ->
+                                        Text(
+                                            "• " +
+                                                observation.strength.name +
+                                                " · " +
+                                                observation.summary,
+                                            style =
+                                                MaterialTheme.typography.bodySmall,
+                                        )
+                                        observation.blockers.forEach {
+                                            blocker ->
+                                            Text(
+                                                "  ↳ " + blocker,
+                                                color =
+                                                    MaterialTheme.colorScheme.error,
+                                                style =
+                                                    MaterialTheme.typography.bodySmall,
+                                            )
+                                        }
+                                    }
                             }
                         }
                     }
