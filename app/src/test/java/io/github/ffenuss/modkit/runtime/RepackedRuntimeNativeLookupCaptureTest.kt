@@ -33,6 +33,10 @@ class RepackedRuntimeNativeLookupCaptureTest {
 
         assertTrue(result.resolved)
         assertTrue(result.capture != null)
+        assertEquals(
+            RuntimeNativeAcquisitionMode.TARGETED_PROBE,
+            requireNotNull(result.capture).acquisitionMode,
+        )
         assertEquals(1, result.validation.acceptedObservationCount)
         val observation = result.validation.observations.single()
         assertEquals(
