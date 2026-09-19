@@ -18,13 +18,13 @@ data class RuntimeProfile(
     val status: DetectionStatus,
     val confidence: DetectionConfidence,
     val evidence: List<String>,
-)
+) : java.io.Serializable
 
 data class ArtifactSource(
     val displayName: String,
     val size: Long,
     val sha256: String,
-)
+) : java.io.Serializable
 
 enum class BinaryFormat {
     DEX,
