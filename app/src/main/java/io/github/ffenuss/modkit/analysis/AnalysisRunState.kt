@@ -66,7 +66,14 @@ sealed interface AnalysisRunState {
         val runId: Long,
         val target: AnalysisTargetDescriptor,
         val previousProgress: EngineProgress?,
-        val partialResult: FastAnalysisResult?,
+        val artifactSha256: String?,
+        val partialAvailable: Boolean,
+        val message: String,
+    ) : AnalysisRunState
+
+    data class RestoringPartial(
+        val runId: Long,
+        val target: AnalysisTargetDescriptor,
         val message: String,
     ) : AnalysisRunState
 
