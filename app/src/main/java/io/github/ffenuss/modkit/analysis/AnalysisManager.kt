@@ -251,12 +251,16 @@ object AnalysisManager {
                     }
                 }
 
+                val engineCache = EngineResultCache(
+                    File(context.filesDir, "analysis-cache"),
+                )
                 var result = withContext(Dispatchers.IO) {
                     FastArtifactIndexer.index(
                         files = prepared.files,
                         cancellation = signal,
                         progress = progressSink,
                         knownSha256 = prepared.knownSha256,
+                        cache = engineCache,
                     )
                 }
                 publishPartial(runId, result)
@@ -273,7 +277,7 @@ object AnalysisManager {
                     outputRoot = File(context.filesDir, "analysis-results"),
                     cancellation = signal,
                     skipController = skipController,
-                    cache = EngineResultCache(File(context.filesDir, "analysis-cache")),
+                    cache = engineCache,
                     progress = progressSink,
                     onPartial = { partial -> publishPartial(runId, partial) },
                 )
