@@ -144,7 +144,11 @@ Status: **ACTIVE**
   - [x] Bounded trace parser and SHA/process/PID binding contract
   - [x] Executable mapping + independently confirmed ELF module validation
   - [x] JNI/dlsym observations remain proof-neutral and cannot grant method execution or CHANGE_READY
-  - [ ] Repacked/non-root/root trace capture executors
+  - [x] Repacked targeted dlsym probe uses signer/PID binding, exact static ELF mapping and RTLD_NOLOAD
+  - [x] Active targeted probe is explicitly distinguished from passive application trace capture
+  - [x] ABI-aware native helper payload/build/install/launch flow covers arm64-v8a, armeabi-v7a, x86 and x86_64
+  - [ ] Passive repacked JNI/dlsym/RegisterNatives trace capture executor
+  - [ ] Non-root/root trace capture executors
 - [ ] Root runtime only for evidence that remains unresolved after non-root stages
   - [x] Root decision engine requires recorded lower-privilege attempts
   - [x] Executor/implementation gaps explicitly cannot justify root escalation
