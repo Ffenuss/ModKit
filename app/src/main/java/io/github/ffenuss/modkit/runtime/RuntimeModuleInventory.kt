@@ -2,6 +2,7 @@ package io.github.ffenuss.modkit.runtime
 
 import io.github.ffenuss.modkit.analysis.ArtifactEntry
 import io.github.ffenuss.modkit.analysis.BinaryFormat
+import java.io.Serializable
 
 data class RuntimeMappedModule(
     val path: String,
@@ -12,7 +13,7 @@ data class RuntimeMappedModule(
     val executableRegionCount: Int,
     val fileZeroBaseCandidates: Set<Long>,
     val staticArtifactMatches: List<String>,
-) {
+) : Serializable {
     val presentInStaticArtifact: Boolean
         get() = staticArtifactMatches.isNotEmpty()
 
