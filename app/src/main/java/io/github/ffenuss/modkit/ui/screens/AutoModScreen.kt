@@ -375,7 +375,12 @@ fun AutoModScreen(
                     ) {
                         Text("Готовый APK", fontWeight = FontWeight.SemiBold)
                         Text(
-                            "Подпись: " + built.signerAlias,
+                            "Подпись: локальный тестовый ключ ModKit · " + built.signerAlias,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            "Для обновления уже установленного оригинального приложения " +
+                                "нужен совместимый ключ владельца; локальная подпись ModKit его не заменяет.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                         built.signerCertificateSha256.firstOrNull()?.let { fingerprint ->
