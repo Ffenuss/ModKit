@@ -167,6 +167,15 @@ class RuntimeNativeLookupTraceTest {
             RuntimeNativeTraceCapability.EXECUTABLE_ADDRESS_VALIDATOR in
                 RuntimeNativeTraceCapabilityRegistry.registered,
         )
+        assertTrue(
+            RuntimeNativeTraceCapability.REPACKED_TARGETED_DLSYM_PROBE in
+                RuntimeNativeTraceCapabilityRegistry.registered,
+        )
+        assertTrue(
+            RuntimeNativeTraceCapabilityRegistry.targetedDlsymProbeAvailable(
+                RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME,
+            ),
+        )
         assertFalse(
             RuntimeNativeTraceCapabilityRegistry.captureAvailable(
                 RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME,
