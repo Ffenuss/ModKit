@@ -29,6 +29,8 @@ Status: **ACTIVE**
 - [x] Interrupted-run detection after process/device restart
 - [x] Restart same file/package target from interrupted state
 - [x] Persist/reuse completed migrated engine outputs after restart
+- [x] Open completed partial results after restart without re-running the APK
+- [x] Restore cached partial results off the UI thread
 - [x] Content-addressed engine cache keyed by `artifactSHA + engineID + engineVersion`
 - [x] Reuse cached ArtifactIndex before repeating archive-entry probes
 - [x] Preserve already produced partial results when analysis is cancelled
@@ -52,15 +54,23 @@ Current cache coverage: `artifact.fast-index`, `il2cpp.fast-dump`, and `il2cpp.c
 - [x] Initial fail-closed blocker model for CHANGE_READY
 - [x] Reject CHANGE_READY when required proof/preflight is missing
 - [x] Current IL2CPP non-ready states expose an explicit next-transition blocker
+- [x] Confirmation engines are launched only from the ConfirmationQueue
+- [x] Exact source SHA is revalidated before Patch preparation
 - [ ] SHA-bound binding invalidation across the full Evidence Graph
 - [ ] Runtime-confirmed transition
 
 ## Phase 4 — AutoMod / Patch Lab
-- [ ] Compact unified screen
-- [ ] No Menu / Runtime intermediary
-- [ ] Internal Exact prepare / Preflight
-- [ ] One-click Prepare changes
-- [ ] CHANGE_READY gate for automatic application
+Status: **ACTIVE**
+
+- [x] Compact unified AutoMod / Patch Lab screen
+- [x] No Menu / Runtime intermediary
+- [x] One-click Prepare changes entry point
+- [x] Source SHA revalidation is internal to preparation
+- [x] Fail-closed preparation plan with explicit blockers
+- [x] CHANGE_READY gate for automatic application
+- [ ] Automatically rerun any still-needed static confirmation during preparation
+- [ ] Concrete mutation selection/specification
+- [ ] Internal mutation preflight
 - [ ] One-click Build APK
 
 ## Phase 5 — Verified build pipeline
