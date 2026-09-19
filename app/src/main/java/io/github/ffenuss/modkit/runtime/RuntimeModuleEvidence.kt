@@ -43,6 +43,7 @@ data class RuntimeEvidenceBundle(
     val addressConfirmations: List<RuntimeAddressConfirmation>,
     val blockers: List<String>,
     val moduleInventory: List<RuntimeMappedModule> = emptyList(),
+    val memoryMappingCandidates: List<RuntimeMemoryMappingCandidate> = emptyList(),
     val captureSource: ProcMapsCaptureSource = ProcMapsCaptureSource.IMPORTED_SNAPSHOT,
     val capturePid: Int? = null,
     val capturedAtEpochMs: Long? = null,
@@ -278,6 +279,9 @@ object RuntimeModuleEvidenceCollector {
             moduleInventory = RuntimeModuleInventoryBuilder.build(
                 regions = regions,
                 artifactEntries = artifactEntries,
+            ),
+            memoryMappingCandidates = RuntimeMemoryMappingDetector.candidates(
+                regions,
             ),
             captureSource = capture.source,
             capturePid = capture.pid,
