@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -40,7 +41,12 @@ import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.domain.EngineProgress
+import io.github.ffenuss.modkit.runtime.AndroidRepackedRuntimeInstaller
 import io.github.ffenuss.modkit.runtime.ProcMapsCaptureSource
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallPlanner
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallReadiness
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallReadinessState
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallStatusStore
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceContract
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationPlanner
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationStage
@@ -63,6 +69,11 @@ fun ExpertLabScreen(onBack: () -> Unit) {
     var error by remember { mutableStateOf<String?>(null) }
     var cancellation by remember { mutableStateOf<AtomicCancellationSignal?>(null) }
     var procMapsText by remember { mutableStateOf("") }
+    var installReadiness by remember {
+        mutableStateOf<RepackedRuntimeInstallReadiness?>(null)
+    }
+    val installStatus by
+        RepackedRuntimeInstallStatusStore.status.collectAsState()
 
     var showInstalled by remember { mutableStateOf(false) }
     var installedLoading by remember { mutableStateOf(false) }
@@ -235,6 +246,51 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                     )
             } catch (_: AnalysisCancelledException) {
                 error = "Сборка repacked test runtime отменена."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun installRepackedTestRuntime() {
+        val current = session ?: return
+        val build = current.repackedRuntimeBuild ?: return
+        val signal = beginOperation("runtime.repacked-install") ?: return
+        scope.launch {
+            try {
+                val plan = withContext(Dispatchers.IO) {
+                    RepackedRuntimeInstallPlanner.plan(
+                        build = build,
+                        cancellation = signal,
+                    )
+                }
+                require(plan.ready) {
+                    plan.blockers.firstOrNull()
+                        ?: "Repacked runtime install plan is not ready."
+                }
+                val readiness = withContext(Dispatchers.IO) {
+                    AndroidRepackedRuntimeInstaller.inspectReadiness(
+                        context = appContext,
+                        plan = plan,
+                    )
+                }
+                installReadiness = readiness
+                if (readiness.canCreateSession) {
+                    withContext(Dispatchers.IO) {
+                        AndroidRepackedRuntimeInstaller.submit(
+                            context = appContext,
+                            plan = plan,
+                            cancellation = signal,
+                        )
+                    }
+                } else {
+                    error = readiness.blockers.joinToString("\n")
+                }
+            } catch (_: AnalysisCancelledException) {
+                error = "Установка test runtime отменена."
             } catch (failure: Throwable) {
                 error =
                     failure.message ?: failure.javaClass.simpleName
@@ -710,11 +766,84 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         )
                                     }
                                     Text(
-                                        "Установите именно эту подписанную test-копию. " +
-                                            "При следующей проверке ModKit сверит package, provider и signer; " +
-                                            "оригинальная или чужая сборка будет отклонена.",
+                                        "Устанавливается только эта подписанная test-копия через Android PackageInstaller. " +
+                                            "Если оригинал с тем же packageName подписан другим ключом, ModKit не удаляет его автоматически.",
                                         style = MaterialTheme.typography.bodySmall,
                                     )
+                                    Button(
+                                        onClick = ::installRepackedTestRuntime,
+                                        enabled = !busy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text("Установить test-копию")
+                                    }
+
+                                    installReadiness?.let { readiness ->
+                                        if (readiness.packageName == build.packageName) {
+                                            when (readiness.state) {
+                                                RepackedRuntimeInstallReadinessState.UNKNOWN_SOURCES_PERMISSION_REQUIRED -> {
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            appContext.startActivity(
+                                                                AndroidRepackedRuntimeInstaller
+                                                                    .unknownSourcesSettingsIntent(
+                                                                        appContext,
+                                                                    ),
+                                                            )
+                                                        },
+                                                        enabled = !busy,
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                    ) {
+                                                        Text(
+                                                            "Разрешить установку из ModKit",
+                                                        )
+                                                    }
+                                                }
+
+                                                RepackedRuntimeInstallReadinessState.INSTALLED_SIGNATURE_CONFLICT -> {
+                                                    Text(
+                                                        "Установленный оригинал подписан другим сертификатом. " +
+                                                            "Android не позволит поставить test-копию поверх него.",
+                                                        color = MaterialTheme.colorScheme.error,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                    )
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            appContext.startActivity(
+                                                                AndroidRepackedRuntimeInstaller
+                                                                    .uninstallConflictIntent(
+                                                                        build.packageName,
+                                                                    ),
+                                                            )
+                                                        },
+                                                        enabled = !busy,
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                    ) {
+                                                        Text(
+                                                            "Открыть системное удаление оригинала",
+                                                        )
+                                                    }
+                                                }
+
+                                                else -> Unit
+                                            }
+                                        }
+                                    }
+
+                                    if (
+                                        installStatus.packageName ==
+                                        build.packageName
+                                    ) {
+                                        Text(
+                                            "Install: " +
+                                                installStatus.kind.name +
+                                                installStatus.message?.let {
+                                                    " · " + it
+                                                }.orEmpty(),
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+
                                     Button(
                                         onClick = ::integrateRepackedTestRuntime,
                                         enabled = !busy,
