@@ -86,6 +86,50 @@ class RuntimeEvidenceContractTest {
         )
     }
 
+    @Test
+    fun directCaptureRequiresIndependentProcessIdentityBeforeConfirmation() {
+        val unbound = RuntimeEvidenceBundle(
+            artifactSha256 = SHA,
+            procMapsSha256 = MAPS_SHA,
+            moduleMappings = emptyList(),
+            addressConfirmations = emptyList(),
+            blockers = emptyList(),
+            captureSource = ProcMapsCaptureSource.NON_ROOT_PROCESS,
+            capturePid = 777,
+            capturedAtEpochMs = 1234,
+        )
+
+        val unboundProcess = RuntimeEvidenceContract.observations(unbound)
+            .single {
+                it.kind == RuntimeEvidenceObservationKind.PROCESS_OBSERVED
+            }
+        assertEquals(
+            RuntimeEvidenceObservationStrength.OBSERVED,
+            unboundProcess.strength,
+        )
+        assertFalse(unboundProcess.independentlyConfirmed)
+
+        val boundProcess = RuntimeEvidenceContract.observations(
+            unbound.copy(
+                processIdentity = "com.example.target",
+                processIdentityConfirmed = true,
+            ),
+        ).single {
+            it.kind == RuntimeEvidenceObservationKind.PROCESS_OBSERVED
+        }
+
+        assertEquals(
+            RuntimeEvidenceObservationStrength.CONFIRMED,
+            boundProcess.strength,
+        )
+        assertTrue(boundProcess.independentlyConfirmed)
+        assertTrue(
+            boundProcess.supportingFacts.any {
+                it == "processIdentity=com.example.target"
+            },
+        )
+    }
+
     companion object {
         private const val SHA =
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
