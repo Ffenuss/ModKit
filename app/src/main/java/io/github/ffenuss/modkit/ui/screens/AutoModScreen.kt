@@ -421,6 +421,18 @@ fun AutoModScreen(
                                 },
                             )
                         }
+                        OutlinedButton(
+                            onClick = {
+                                runCatching {
+                                    BuildArtifactExporter.shareReport(context, built)
+                                }.onFailure { failure ->
+                                    error = failure.message ?: failure.javaClass.simpleName
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Экспортировать отчёт сборки")
+                        }
                     }
                 }
             }
