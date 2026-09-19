@@ -1,5 +1,7 @@
 package io.github.ffenuss.modkit.patch
 
+import java.nio.file.Files
+
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import java.io.File
@@ -13,7 +15,7 @@ import org.junit.Test
 class StagingApkVerifierTest {
     @Test
     fun verifiesManifestIntegrityAndMutationDiff() {
-        val root = createTempDir(prefix = "modkit-staging-verify-")
+        val root = Files.createTempDirectory("modkit-staging-verify-").toFile()
         try {
             val apk = File(root, "base.apk")
             val library = ByteArray(16) { it.toByte() }.also {
@@ -58,7 +60,7 @@ class StagingApkVerifierTest {
 
     @Test
     fun rejectsOldV1SignatureEntry() {
-        val root = createTempDir(prefix = "modkit-staging-signature-")
+        val root = Files.createTempDirectory("modkit-staging-signature-").toFile()
         try {
             val apk = File(root, "base.apk")
             createZip(
