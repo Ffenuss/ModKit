@@ -12,6 +12,11 @@
         android:name="android.permission.REQUEST_INSTALL_PACKAGES"
         tools:ignore="RequestInstallPackagesPolicy" />
 
+    <!-- Used only to open the system-confirmed removal flow for signature conflicts. -->
+    <uses-permission
+        android:name="android.permission.REQUEST_DELETE_PACKAGES"
+        tools:ignore="RequestDeletePackagesPolicy" />
+
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
