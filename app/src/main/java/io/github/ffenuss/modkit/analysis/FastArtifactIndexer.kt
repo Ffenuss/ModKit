@@ -243,6 +243,16 @@ object FastArtifactIndexer {
         )
     }
 
+    private fun sameSourceContent(
+        cached: List<ArtifactSource>,
+        current: List<ArtifactSource>,
+    ): Boolean {
+        if (cached.size != current.size) return false
+        fun identities(values: List<ArtifactSource>) =
+            values.map { it.sha256.lowercase() to it.size }.sortedBy { it.first }
+        return identities(cached) == identities(current)
+    }
+
     private data class Classification(
         val format: BinaryFormat,
         val abi: String?,
