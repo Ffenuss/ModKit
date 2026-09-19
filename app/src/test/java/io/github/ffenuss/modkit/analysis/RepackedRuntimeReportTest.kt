@@ -42,6 +42,7 @@ class RepackedRuntimeReportTest {
             assertTrue(text.contains("sourcePolicy: READ_ONLY_COPY_ONLY"))
             assertTrue(text.contains("readyToBuildTestCopy: false"))
             assertTrue(text.contains("registeredCapabilities: SOURCE_COPY"))
+            assertTrue(text.contains("MANIFEST_IDENTITY_INSPECTION"))
             assertTrue(text.contains("OLD_SIGNATURE_REMOVAL"))
             assertTrue(text.contains("APK_ALIGNMENT"))
             assertTrue(text.contains("APK_SIGNING"))
