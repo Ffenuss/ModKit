@@ -127,6 +127,10 @@ Status: **ACTIVE**
   - [x] JNI/dlsym observations remain proof-neutral and cannot grant method execution or CHANGE_READY
   - [ ] Repacked/non-root/root trace capture executors
 - [ ] Root runtime only for evidence that remains unresolved after non-root stages
+  - [x] Root decision engine requires recorded lower-privilege attempts
+  - [x] Executor/implementation gaps explicitly cannot justify root escalation
+  - [x] Root capability remains unavailable while no concrete executor is registered
+  - [ ] Concrete privileged capture executor and device integration
 
 ## Phase 8 — Non-ARM64 deep completion
 - [ ] ARMv7 / Thumb-2
