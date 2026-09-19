@@ -121,6 +121,10 @@ Status: **ACTIVE**
 - [x] Repacked build preflight is bound to the verified manifest inventory and source relationships
 - [x] Copy-only binary AndroidManifest rewrite executor for the verified base APK
 - [x] Manifest probe declaration round-trip preserves package/application identity and split APK bytes
+- [x] Executable runtime-probe DEX payload is generated and structurally validated in the ModKit build
+- [x] Copy-only probe DEX injector selects a free multidex slot and preserves split APK bytes
+- [x] Probe injection is bound to the verified manifest declaration and exact payload SHA
+- [x] Repacked instrumentation coordinator connects copy → manifest proof/rewrite → probe injection → build preflight
 - [x] Repacked test build tail reuses real signature-strip/alignment/signing/package-verification stages
 - [x] Repacked test build report records signer, alignment, signature and final APK SHA
 - [x] Non-root installed-app process discovery with exact `/proc/<pid>/cmdline` identity proof
