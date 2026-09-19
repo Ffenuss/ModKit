@@ -61,14 +61,14 @@ class ProcMemRuntimeMemoryReader(
         cancellation: CancellationSignal,
     ): ByteArray? {
         if (pid <= 0 || address < 0L || size !in 1..MAX_READ_BYTES) return null
-        checkCancelled(cancellation)
+        if (cancellation.isCancelled()) throw AnalysisCancelledException()
 
         return runCatching {
             RandomAccessFile("/proc/$pid/mem", "r").use { raf ->
                 raf.seek(address)
                 val out = ByteArray(size)
                 raf.readFully(out)
-                checkCancelled(cancellation)
+                if (cancellation.isCancelled()) throw AnalysisCancelledException()
                 out
             }
         }.getOrNull()
