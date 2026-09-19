@@ -57,7 +57,7 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
     public ParcelFileDescriptor openFile(Uri uri, String mode)
             throws FileNotFoundException {
         enforceCaller();
-        if (!"/" + PATH_EVIDENCE.equals(uri.getPath())) {
+        if (!("/" + PATH_EVIDENCE).equals(uri.getPath())) {
             throw new FileNotFoundException("Unsupported runtime probe path.");
         }
         if (!"r".equals(mode)) {
@@ -122,13 +122,13 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         try (ParcelFileDescriptor.AutoCloseOutputStream output =
                      new ParcelFileDescriptor.AutoCloseOutputStream(descriptor)) {
             Context context = requireContext();
-            byte[] maps = readBounded(new File("/proc/self/maps"), MAX_MAPS_BYTES);
-            byte[] cmdlineBytes = readBounded(
-                    new File("/proc/self/cmdline"),
-                    MAX_CMDLINE_BYTES
-            );
-            String processIdentity = decodeCmdline(cmdlineBytes);
-            boolean mapsTruncated = new File("/proc/self/maps").length() > maps.length;
+            ReadResult mapsResult =
+                    readBounded(new File("/proc/self/maps"), MAX_MAPS_BYTES);
+            ReadResult cmdlineResult =
+                    readBounded(new File("/proc/self/cmdline"), MAX_CMDLINE_BYTES);
+            byte[] maps = mapsResult.bytes;
+            String processIdentity = decodeCmdline(cmdlineResult.bytes);
+            boolean mapsTruncated = mapsResult.truncated;
 
             String header =
                     "MODKIT_RUNTIME_EVIDENCE_V1\n" +
@@ -148,7 +148,7 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         }
     }
 
-    private static byte[] readBounded(File file, int limit) throws Exception {
+    private static ReadResult readBounded(File file, int limit) throws Exception {
         if (!file.isFile() || !file.canRead()) {
             throw new FileNotFoundException(file.getAbsolutePath());
         }
@@ -157,17 +157,37 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
                     new ByteArrayOutputStream(Math.min(limit, 64 * 1024));
             byte[] buffer = new byte[16 * 1024];
             int total = 0;
+            boolean truncated = false;
             while (true) {
                 int read = input.read(buffer);
                 if (read < 0) break;
                 int remaining = limit - total;
-                if (remaining <= 0) break;
+                if (remaining <= 0) {
+                    truncated = true;
+                    break;
+                }
                 int keep = Math.min(read, remaining);
                 output.write(buffer, 0, keep);
                 total += keep;
-                if (keep < read) break;
+                if (keep < read) {
+                    truncated = true;
+                    break;
+                }
             }
-            return output.toByteArray();
+            if (!truncated && total == limit && input.read() >= 0) {
+                truncated = true;
+            }
+            return new ReadResult(output.toByteArray(), truncated);
+        }
+    }
+
+    private static final class ReadResult {
+        final byte[] bytes;
+        final boolean truncated;
+
+        ReadResult(byte[] bytes, boolean truncated) {
+            this.bytes = bytes;
+            this.truncated = truncated;
         }
     }
 
