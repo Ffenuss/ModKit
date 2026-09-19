@@ -127,12 +127,16 @@ Status: **ACTIVE**
 - [x] Repacked instrumentation coordinator connects copy → manifest proof/rewrite → probe injection → build preflight
 - [x] Repacked test build tail reuses real signature-strip/alignment/signing/package-verification stages
 - [x] Repacked test build report records signer, alignment, signature and final APK SHA
+- [x] Signed installed-test identity verification: package/provider/authority/signer before activation
+- [x] Provider activation performs test-process launch and bounded `/proc/self/maps` evidence capture
+- [x] Repacked capture feeds Evidence Graph and persisted stage-attempt history
+- [ ] In-app install handoff/PackageInstaller flow for the signed test APK/APK-set
 - [x] Non-root installed-app process discovery with exact `/proc/<pid>/cmdline` identity proof
 - [x] PID-reuse guard by rechecking process identity before and after bounded maps capture
 - [x] Automatic non-root maps capture/integration when the main process is uniquely confirmed and readable
 - [x] SHA-bound bounded runtime-stage attempt ledger restored into Expert Lab sessions
 - [x] Non-root success/blocker attempts feed root-last-resort decisions
-- [ ] Automatic in-process capture from a transparent repacked test runtime
+- [x] Automatic in-process capture from a transparent repacked test runtime after the signed test build is installed
 - [x] Bounded runtime memory-ELF validation for special/deleted executable mappings without proof escalation
 - [ ] JNI/dlsym runtime confirmation where static evidence is insufficient
   - [x] Bounded trace parser and SHA/process/PID binding contract
