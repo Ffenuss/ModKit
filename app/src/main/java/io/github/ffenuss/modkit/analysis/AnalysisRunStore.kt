@@ -17,6 +17,7 @@ internal class AnalysisRunStore(context: Context) {
         val target: AnalysisTargetDescriptor,
         val progress: EngineProgress?,
         val startedAtEpochMs: Long,
+        val artifactSha256: String?,
     )
 
     fun load(): Snapshot? = synchronized(lock) {
@@ -58,6 +59,9 @@ internal class AnalysisRunStore(context: Context) {
                 target = target,
                 progress = progress,
                 startedAtEpochMs = obj.optLong("startedAtEpochMs", System.currentTimeMillis()),
+                artifactSha256 = obj.optString("artifactSha256")
+                    .takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
+                    ?.lowercase(),
             )
         }.getOrNull()
     }
@@ -68,12 +72,27 @@ internal class AnalysisRunStore(context: Context) {
         target: AnalysisTargetDescriptor,
         progress: EngineProgress?,
         startedAtEpochMs: Long,
+        artifactSha256: String? = null,
     ) = synchronized(lock) {
+        val previousArtifactSha = runCatching {
+            if (!file.isFile) null else JSONObject(file.readText(Charsets.UTF_8))
+                .takeIf { it.optLong("runId", Long.MIN_VALUE) == runId }
+                ?.optString("artifactSha256")
+                ?.takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
+                ?.lowercase()
+        }.getOrNull()
+        val resolvedArtifactSha = artifactSha256
+            ?.takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
+            ?.lowercase()
+            ?: previousArtifactSha
+
         val obj = JSONObject()
             .put("status", status)
             .put("runId", runId)
             .put("targetLabel", target.label)
             .put("startedAtEpochMs", startedAtEpochMs)
+
+        resolvedArtifactSha?.let { obj.put("artifactSha256", it) }
 
         when (target) {
             is AnalysisTargetDescriptor.FileUri -> {
