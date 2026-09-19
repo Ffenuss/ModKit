@@ -37,6 +37,19 @@ data class RepackedRuntimeNativeLookupReply(
     val resolvedRuntimeAddress: Long,
 )
 
+data class RepackedRuntimeNativeTraceStatus(
+    val schemaVersion: Int,
+    val packageName: String,
+    val pid: Int,
+    val sessionId: String,
+    val active: Boolean,
+    val truncated: Boolean,
+    val eventCount: Int,
+    val startedAtEpochMs: Long,
+    val stoppedAtEpochMs: Long,
+    val traceBytes: Int,
+)
+
 data class RepackedRuntimeProbeCaptureResult(
     val packageName: String,
     val authority: String,
@@ -100,6 +113,29 @@ interface RepackedRuntimeNativeLookupTransport :
     ): RepackedRuntimeNativeLookupReply
 }
 
+interface RepackedRuntimePassiveTraceTransport :
+    RepackedRuntimeNativeLookupTransport {
+    fun startNativeTrace(
+        authority: String,
+    ): RepackedRuntimeNativeTraceStatus
+
+    fun stopNativeTrace(
+        authority: String,
+    ): RepackedRuntimeNativeTraceStatus
+
+    fun nativeTraceStatus(
+        authority: String,
+    ): RepackedRuntimeNativeTraceStatus
+
+    fun readNativeTrace(
+        authority: String,
+        cancellation: CancellationSignal,
+        maxBytes: Int =
+            RepackedRuntimeNativeTraceExportProtocol
+                .MAX_EXPORT_BYTES,
+    ): ByteArray
+}
+
 object RepackedRuntimeProbeIdentityVerifier {
     fun verify(
         build: RepackedRuntimeBuildResult,
@@ -145,7 +181,7 @@ object RepackedRuntimeProbeIdentityVerifier {
 
 class AndroidRepackedRuntimeProbeTransport(
     private val context: Context,
-) : RepackedRuntimeNativeLookupTransport {
+) : RepackedRuntimePassiveTraceTransport {
     override fun inspectInstalled(
         packageName: String,
         authority: String,
@@ -265,6 +301,110 @@ class AndroidRepackedRuntimeProbeTransport(
         )
     }
 
+    override fun startNativeTrace(
+        authority: String,
+    ): RepackedRuntimeNativeTraceStatus =
+        nativeTraceControl(
+            authority = authority,
+            method = "nativeTraceStart",
+        )
+
+    override fun stopNativeTrace(
+        authority: String,
+    ): RepackedRuntimeNativeTraceStatus =
+        nativeTraceControl(
+            authority = authority,
+            method = "nativeTraceStop",
+        )
+
+    override fun nativeTraceStatus(
+        authority: String,
+    ): RepackedRuntimeNativeTraceStatus =
+        nativeTraceControl(
+            authority = authority,
+            method = "nativeTraceStatus",
+        )
+
+    override fun readNativeTrace(
+        authority: String,
+        cancellation: CancellationSignal,
+        maxBytes: Int,
+    ): ByteArray {
+        require(
+            maxBytes in 1..
+                RepackedRuntimeNativeTraceExportProtocol
+                    .MAX_EXPORT_BYTES,
+        ) {
+            "Runtime native trace read limit is invalid."
+        }
+        val uri = Uri.parse(
+            "content://" + authority + "/" +
+                RuntimeEvidenceProviderContract
+                    .PATH_NATIVE_TRACE,
+        )
+        val descriptor = requireNotNull(
+            context.contentResolver
+                .openFileDescriptor(uri, "r"),
+        ) {
+            "Runtime probe did not return a native trace descriptor."
+        }
+        return descriptor.use {
+            readBounded(
+                descriptor = it,
+                cancellation = cancellation,
+                maxBytes = maxBytes,
+            )
+        }
+    }
+
+    private fun nativeTraceControl(
+        authority: String,
+        method: String,
+    ): RepackedRuntimeNativeTraceStatus {
+        val uri = Uri.parse(
+            "content://" + authority + "/" +
+                RuntimeEvidenceProviderContract
+                    .PATH_NATIVE_TRACE,
+        )
+        val result = requireNotNull(
+            context.contentResolver.call(
+                uri,
+                method,
+                null,
+                null,
+            ),
+        ) {
+            "Runtime probe native trace control returned no result."
+        }
+        return RepackedRuntimeNativeTraceStatus(
+            schemaVersion =
+                result.getInt("schemaVersion", -1),
+            packageName =
+                result.getString("packageName").orEmpty(),
+            pid = result.getInt("pid", -1),
+            sessionId =
+                result.getString("sessionId").orEmpty(),
+            active =
+                result.getBoolean("active", false),
+            truncated =
+                result.getBoolean("truncated", false),
+            eventCount =
+                result.getInt("eventCount", -1),
+            startedAtEpochMs =
+                result.getLong(
+                    "startedAtEpochMs",
+                    -1L,
+                ),
+            stoppedAtEpochMs =
+                result.getLong(
+                    "stoppedAtEpochMs",
+                    -1L,
+                ),
+            traceBytes =
+                result.getInt("traceBytes", -1),
+        )
+    }
+
     override fun readEvidence(
         authority: String,
         cancellation: CancellationSignal,
@@ -329,6 +469,7 @@ class AndroidRepackedRuntimeProbeTransport(
 object RuntimeEvidenceProviderContract {
     const val SCHEMA_VERSION = 1
     const val PATH_EVIDENCE = "evidence"
+    const val PATH_NATIVE_TRACE = "native-trace"
     const val HEADER_MAGIC = "MODKIT_RUNTIME_EVIDENCE_V1"
     val MAPS_DELIMITER: ByteArray =
         "\n---MAPS---\n".toByteArray(Charsets.UTF_8)
