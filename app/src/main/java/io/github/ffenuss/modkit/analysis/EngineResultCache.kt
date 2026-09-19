@@ -19,7 +19,7 @@ import java.io.Serializable
  * optimization only and can never create evidence that the engine did not
  * produce itself.
  */
-internal class EngineResultCache(
+class EngineResultCache(
     private val root: File,
 ) {
     private data class Envelope(
