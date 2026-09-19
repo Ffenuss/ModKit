@@ -95,6 +95,9 @@ object Il2CppCodeGenScanner {
                     libraryEntry = libraryEntry,
                     blockers = blockers,
                 )
+                if (candidate != null) {
+                    blockers.remove("CODE_REGISTRATION_SYMBOL_UNRESOLVED")
+                }
             }
 
             val modules = candidate?.modules.orEmpty()
