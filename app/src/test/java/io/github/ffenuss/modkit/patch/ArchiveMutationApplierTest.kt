@@ -1,5 +1,7 @@
 package io.github.ffenuss.modkit.patch
 
+import java.nio.file.Files
+
 import io.github.ffenuss.modkit.analysis.AnalysisWorkspace
 import io.github.ffenuss.modkit.analysis.ArtifactIndex
 import io.github.ffenuss.modkit.analysis.ArtifactSource
@@ -25,7 +27,7 @@ import org.junit.Test
 class ArchiveMutationApplierTest {
     @Test
     fun nativePatchRewritesOnlyRequestedRangeAndStripsOldV1Signature() {
-        val root = createTempDir(prefix = "modkit-archive-apply-")
+        val root = Files.createTempDirectory("modkit-archive-apply-").toFile()
         try {
             val source = File(root, "base.apk")
             val library = ByteArray(16) { it.toByte() }
@@ -138,7 +140,7 @@ class ArchiveMutationApplierTest {
 
     @Test
     fun changedOriginalRangeAbortsBeforeProducingStagingApk() {
-        val root = createTempDir(prefix = "modkit-archive-block-")
+        val root = Files.createTempDirectory("modkit-archive-block-").toFile()
         try {
             val source = File(root, "base.apk")
             val library = ByteArray(12) { (it + 1).toByte() }
