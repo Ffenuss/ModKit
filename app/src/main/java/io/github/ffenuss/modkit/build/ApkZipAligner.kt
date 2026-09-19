@@ -37,7 +37,7 @@ data class ZipAlignResult(
  * Pure-Java APK zip alignment stage.
  *
  * STORED entries are aligned to 4 bytes. Uncompressed native libraries under
- * lib/*.so are aligned to 16 KiB for modern Android page-size compatibility.
+ * uncompressed native library entries are aligned to 16 KiB for modern Android page-size compatibility.
  * The stage is fail-closed for ZIP64 until an explicit ZIP64 writer/parser is
  * added.
  */
