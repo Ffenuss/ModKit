@@ -30,6 +30,24 @@ class EngineResultCache(
         val payload: Serializable,
     ) : Serializable
 
+    fun loadArtifactIndex(artifactSha256: String): ArtifactIndex? =
+        load(
+            artifactSha256 = artifactSha256,
+            engineId = ARTIFACT_INDEX_ENGINE_ID,
+            engineVersion = ARTIFACT_INDEX_ENGINE_VERSION,
+            type = ArtifactIndex::class.java,
+        )
+
+    fun saveArtifactIndex(
+        artifactSha256: String,
+        index: ArtifactIndex,
+    ): Boolean = save(
+        artifactSha256 = artifactSha256,
+        engineId = ARTIFACT_INDEX_ENGINE_ID,
+        engineVersion = ARTIFACT_INDEX_ENGINE_VERSION,
+        payload = index,
+    )
+
     fun loadIl2CppFastDump(artifactSha256: String): Il2CppFastDumpResult? {
         val value = load(
             artifactSha256 = artifactSha256,
@@ -179,6 +197,9 @@ class EngineResultCache(
         private const val BUFFER_BYTES = 128 * 1024
         private const val MAX_ENTRY_BYTES = 192L * 1024L * 1024L
         private val NON_SAFE = Regex("[^A-Za-z0-9._-]")
+
+        const val ARTIFACT_INDEX_ENGINE_ID = "artifact.fast-index"
+        const val ARTIFACT_INDEX_ENGINE_VERSION = "2"
 
         const val IL2CPP_FAST_DUMP_ENGINE_ID = "il2cpp.fast-dump"
         const val IL2CPP_FAST_DUMP_ENGINE_VERSION = "2"
