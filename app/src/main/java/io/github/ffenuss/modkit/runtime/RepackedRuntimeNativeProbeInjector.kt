@@ -43,6 +43,7 @@ data class RepackedRuntimeNativeProbeInjectionResult(
  */
 object RepackedRuntimeNativeProbeInjector {
     private const val BUFFER_BYTES = 128 * 1024
+    private const val MAX_HELPER_BYTES = 4L * 1024L * 1024L
     private val nativeEntry = Regex(
         """lib/(arm64-v8a|armeabi-v7a|x86|x86_64)/[^/]+\.so""",
     )
@@ -256,8 +257,15 @@ object RepackedRuntimeNativeProbeInjector {
                 require(!entry.isDirectory) {
                     "Runtime probe native helper path is a directory."
                 }
+                require(entry.size in 1..MAX_HELPER_BYTES) {
+                    "Existing runtime probe native helper size is outside limits for $abi."
+                }
                 val existingSha = zip.getInputStream(entry).use {
-                    sha256(it.readBytes())
+                    sha256Bounded(
+                        input = it,
+                        expectedSize = entry.size,
+                        cancellation = cancellation,
+                    )
                 }
                 val expected = requireNotNull(payloads[abi])
                 require(
@@ -342,12 +350,19 @@ object RepackedRuntimeNativeProbeInjector {
                     val entry = requireNotNull(zip.getEntry(path)) {
                         "Runtime probe native helper is missing after injection: $abi"
                     }
-                    val bytes = zip.getInputStream(entry).use {
-                        it.readBytes()
+                    require(entry.size in 1..MAX_HELPER_BYTES) {
+                        "Injected runtime probe native helper size is outside limits for $abi."
+                    }
+                    val actualSha = zip.getInputStream(entry).use {
+                        sha256Bounded(
+                            input = it,
+                            expectedSize = entry.size,
+                            cancellation = cancellation,
+                        )
                     }
                     val payload = requireNotNull(payloads[abi])
                     require(
-                        sha256(bytes).equals(
+                        actualSha.equals(
                             payload.sha256,
                             ignoreCase = true,
                         ),
@@ -434,6 +449,34 @@ object RepackedRuntimeNativeProbeInjector {
             if (read < 0) break
             if (read > 0) output.write(buffer, 0, read)
         }
+    }
+
+    private fun sha256Bounded(
+        input: java.io.InputStream,
+        expectedSize: Long,
+        cancellation: CancellationSignal,
+    ): String {
+        require(expectedSize in 1..MAX_HELPER_BYTES) {
+            "Runtime probe native helper size is outside limits."
+        }
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(16 * 1024)
+        var total = 0L
+        while (true) {
+            checkCancelled(cancellation)
+            val read = input.read(buffer)
+            if (read < 0) break
+            if (read == 0) continue
+            total = Math.addExact(total, read.toLong())
+            require(total <= MAX_HELPER_BYTES) {
+                "Runtime probe native helper exceeded bounded read limit."
+            }
+            digest.update(buffer, 0, read)
+        }
+        require(total == expectedSize) {
+            "Runtime probe native helper size changed while reading."
+        }
+        return digest.digest().toHex()
     }
 
     private fun sha256(
