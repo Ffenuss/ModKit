@@ -273,6 +273,19 @@ object ExpertLabReportWriter {
                         appendLine("  static: " + it)
                     }
                 }
+                appendLine("MEMORY-BACKED EXECUTABLE CANDIDATES")
+                runtime.memoryMappingCandidates.forEach { candidate ->
+                    appendLine(
+                        "- 0x" + candidate.start.toString(16) +
+                            "-0x" + candidate.endExclusive.toString(16),
+                    )
+                    appendLine("  permissions: " + candidate.permissions)
+                    appendLine("  path: " + (candidate.path ?: "null"))
+                    appendLine("  reason: " + candidate.reason)
+                    appendLine(
+                        "  status: candidate_only_until_memory_ELF_header_validation",
+                    )
+                }
                 runtime.blockers.forEach {
                     appendLine("runtime-blocker: " + it)
                 }
