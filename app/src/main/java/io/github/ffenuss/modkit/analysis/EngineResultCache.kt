@@ -38,6 +38,47 @@ class EngineResultCache(
             type = ArtifactIndex::class.java,
         )
 
+    fun restorePartialResult(artifactSha256: String): FastAnalysisResult? {
+        val index = loadArtifactIndex(artifactSha256) ?: return null
+        val dump = loadIl2CppFastDump(artifactSha256)
+        val binding = loadIl2CppBinaryBinding(artifactSha256)
+        val cacheHits = buildSet {
+            add(ARTIFACT_INDEX_ENGINE_ID)
+            if (dump != null) add(IL2CPP_FAST_DUMP_ENGINE_ID)
+            if (binding != null) add(IL2CPP_BINARY_BINDING_ENGINE_ID)
+        }
+
+        var result = FastAnalysisResult(
+            index = index,
+            routingPlan = EngineRouter.plan(index),
+            elapsedMs = 0L,
+            il2cppFastDump = dump,
+            il2cppBinaryBinding = binding,
+            engineCacheHits = cacheHits,
+        )
+        if (dump != null) {
+            result = result.copy(
+                il2cppEvidence = EvidenceGate.evaluate(
+                    artifactSha256 = artifactSha256,
+                    metadataIdentityExact = dump.metadata.magicValid &&
+                        dump.metadata.structuredSupported &&
+                        !dump.metadata.truncated,
+                    binaryIdentityExact = binding?.exactBindingAvailable == true,
+                    runtimeConfirmed = false,
+                    mutationValidated = false,
+                    requestedChangeReady = false,
+                    suppliedBlockers = if (binding == null || binding.exactBindingAvailable) {
+                        emptyList()
+                    } else {
+                        binding.toEvidenceBlockers()
+                    },
+                ),
+            ).withEvidenceGraph()
+        }
+        return result
+    }
+
+
     fun saveArtifactIndex(
         artifactSha256: String,
         index: ArtifactIndex,
