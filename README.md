@@ -49,6 +49,12 @@ See [docs/PORTING_MATRIX.md](docs/PORTING_MATRIX.md) and [docs/ROADMAP.md](docs/
 - cancellation;
 - heartbeat + stalled-state watchdog;
 - interrupted-analysis recovery UI;
+- Evidence Graph + ConfirmationQueue for fail-closed IL2CPP proof transitions;
+- compact AutoMod / Patch Lab with automatic static confirmation during preparation;
+- exact IL2CPP native mutation draft + internal mutation preflight;
+- streaming staging APK/APK-set mutation with stale-signature removal;
+- align → sign → verify → mutation-diff check → post-build re-analysis;
+- human-readable build report and scoped APK/APK-set export;
 - CI that tests, lints, builds, verifies zip container/alignment and publishes an APK artifact.
 
 The deep engines are being migrated one at a time. A runtime being detected does **not** mean its deep backend is already complete.
@@ -56,6 +62,8 @@ The deep engines are being migrated one at a time. A runtime being detected does
 ## Build
 
 CI uses Java 17, Gradle 9.5 and Android SDK 37.0.
+
+ModKit's in-app verified build path currently signs generated test outputs with an app-private AndroidKeyStore identity. This is intentionally separate from a customer's production signing identity; replacing an already installed production APK requires a compatible owner-provided signing key.
 
 ```bash
 gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
