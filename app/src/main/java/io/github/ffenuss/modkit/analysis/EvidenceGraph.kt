@@ -226,17 +226,16 @@ object EvidenceGraphBuilder {
             append(':')
             append(binding.moduleName)
         }
+        val binaryEvidence = result.il2cppBinaryBinding
+            ?.evidence
+            ?.firstOrNull { binding in it.bindings }
         return EvidenceTarget(
             id = id,
             runtimeId = IL2CPP_RUNTIME,
             kind = EvidenceTargetKind.METHOD,
             displayName = binding.managedIdentity,
-            artifact = binding.moduleName,
-            abi = result.il2cppBinaryBinding
-                ?.evidence
-                ?.firstOrNull { binding in it.bindings }
-                ?.libraryEntry
-                ?.let(::abiFromPath),
+            artifact = binaryEvidence?.libraryEntry,
+            abi = binaryEvidence?.libraryEntry?.let(::abiFromPath),
             declaringType = binding.managedIdentity.substringBeforeLast('.', ""),
             memberName = binding.managedIdentity.substringAfterLast('.'),
             metadataToken = binding.metadataToken,
