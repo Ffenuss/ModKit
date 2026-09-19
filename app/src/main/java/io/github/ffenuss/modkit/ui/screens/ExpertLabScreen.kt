@@ -653,6 +653,25 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                 }
+                                val runtimeOnly = runtimeEvidence.moduleInventory
+                                    .filter { it.runtimeOnlyRelativeToArtifact }
+                                if (runtimeEvidence.moduleInventory.isNotEmpty()) {
+                                    Text(
+                                        "Mapped modules: " +
+                                            runtimeEvidence.moduleInventory.size +
+                                            " · runtime-only относительно APK: " +
+                                            runtimeOnly.size,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                runtimeOnly.take(8).forEach { module ->
+                                    Text(
+                                        "• runtime module: " + module.fileName +
+                                            " · exec regions=" +
+                                            module.executableRegionCount,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                             }
                         }
                     }
