@@ -1,5 +1,6 @@
 package io.github.ffenuss.modkit.analysis
 
+import io.github.ffenuss.modkit.runtime.RepackedTestRuntimePlanner
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceContract
 import java.io.File
 import java.text.SimpleDateFormat
@@ -373,6 +374,58 @@ object ExpertLabReportWriter {
                 }
                 runtime.blockers.forEach {
                     appendLine("runtime-blocker: " + it)
+                }
+                appendLine()
+            }
+
+            val repackedPlan = RepackedTestRuntimePlanner.plan(result)
+            if (repackedPlan.required) {
+                appendLine("REPACKED TEST RUNTIME PLAN")
+                appendLine("artifactSha256: " + repackedPlan.artifactSha256)
+                appendLine("sourcePolicy: READ_ONLY_COPY_ONLY")
+                appendLine(
+                    "fallbackStage: " + repackedPlan.fallbackStage.name,
+                )
+                appendLine(
+                    "readyToBuildTestCopy: " +
+                        repackedPlan.readyToBuildTestCopy,
+                )
+                appendLine(
+                    "registeredCapabilities: " +
+                        repackedPlan.registeredCapabilities
+                            .sortedBy { it.ordinal }
+                            .joinToString { it.name }
+                            .ifBlank { "none" },
+                )
+                appendLine(
+                    "requiredCapabilities: " +
+                        repackedPlan.requiredCapabilities
+                            .sortedBy { it.ordinal }
+                            .joinToString { it.name },
+                )
+                appendLine(
+                    "evidenceKinds: " +
+                        repackedPlan.evidenceKinds
+                            .sortedBy { it.ordinal }
+                            .joinToString { it.name },
+                )
+                appendLine(
+                    "manifest: preservePackageName=" +
+                        repackedPlan.manifestContract.preserveOriginalPackageName +
+                        " parsedTargetPackageRequired=" +
+                        repackedPlan.manifestContract.requiresParsedTargetPackage +
+                        " instrumentationDeclarationRequired=" +
+                        repackedPlan.manifestContract.requiresInstrumentationDeclaration +
+                        " probeEntryPointRequired=" +
+                        repackedPlan.manifestContract.requiresProbeEntryPoint,
+                )
+                repackedPlan.targetIds.forEach {
+                    appendLine("target: " + it)
+                }
+                repackedPlan.blockers.forEach {
+                    appendLine(
+                        "repacked-blocker: " + it.code + " / " + it.message,
+                    )
                 }
                 appendLine()
             }
