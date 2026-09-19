@@ -15,6 +15,7 @@ object BuildReportWriter {
         files: List<BuiltApkFile>,
         mutationDiffs: List<MutationDiff>,
         diffVerification: MutationDiffVerification,
+        installability: InstallabilityVerification,
         signerAlias: String,
         signerCertificateSha256: List<String>,
         postBuildAnalysis: FastAnalysisResult,
@@ -75,6 +76,21 @@ object BuildReportWriter {
             if (diffVerification.blockers.isNotEmpty()) {
                 appendLine("Diff blockers:")
                 diffVerification.blockers.forEach { appendLine("- " + it) }
+            }
+            appendLine()
+            appendLine("INSTALLABILITY")
+            appendLine("Verified: " + installability.verified)
+            appendLine("Package: " + (installability.packageName ?: "unknown"))
+            installability.files.forEach { parsed ->
+                appendLine(
+                    "- " + parsed.fileName +
+                        " · split=" + (parsed.splitName ?: "base") +
+                        " · versionCode=" + parsed.versionCode,
+                )
+            }
+            if (installability.blockers.isNotEmpty()) {
+                appendLine("Installability blockers:")
+                installability.blockers.forEach { appendLine("- " + it) }
             }
             appendLine()
             appendLine("POST-BUILD RE-ANALYSIS")
