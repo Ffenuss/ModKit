@@ -120,8 +120,8 @@ fun ModKitApp() {
         is AnalysisRunState.Cancelled -> AnalysisScreen(
             title = state.target.label,
             progress = null,
-            result = state.partialResult,
-            active = true,
+            result = null,
+            active = false,
             error = null,
             cancelled = true,
             cancelling = false,
