@@ -42,25 +42,31 @@ object EvidenceGate {
     ): ExecutableBindingEvidence {
         val blockers = suppliedBlockers.toMutableList()
 
-        if (requestedChangeReady) {
-            if (!metadataIdentityExact) {
+        when {
+            !metadataIdentityExact -> {
                 blockers += EvidenceBlocker(
                     code = "METADATA_IDENTITY_MISSING",
                     message = "Exact metadata identity/token proof is missing.",
-                    requiredFor = ProofLevel.CHANGE_READY,
+                    requiredFor = ProofLevel.EXACT_METADATA,
                 )
             }
-            if (!binaryIdentityExact && !runtimeConfirmed) {
-                blockers += EvidenceBlocker(
-                    code = "EXECUTABLE_BINDING_MISSING",
-                    message = "Exact executable binding or runtime confirmation is missing.",
-                    requiredFor = ProofLevel.CHANGE_READY,
-                )
+            !binaryIdentityExact && !runtimeConfirmed -> {
+                if (blockers.none { it.requiredFor == ProofLevel.EXACT_BINARY }) {
+                    blockers += EvidenceBlocker(
+                        code = "EXECUTABLE_BINDING_MISSING",
+                        message = "Exact executable binding or runtime confirmation is missing.",
+                        requiredFor = ProofLevel.EXACT_BINARY,
+                    )
+                }
             }
-            if (!mutationValidated) {
+            !mutationValidated -> {
                 blockers += EvidenceBlocker(
                     code = "MUTATION_NOT_VALIDATED",
-                    message = "The proposed mutation has not passed prepare/preflight validation.",
+                    message = if (requestedChangeReady) {
+                        "The proposed mutation has not passed prepare/preflight validation."
+                    } else {
+                        "Prepare/preflight has not validated a concrete mutation yet."
+                    },
                     requiredFor = ProofLevel.CHANGE_READY,
                 )
             }
