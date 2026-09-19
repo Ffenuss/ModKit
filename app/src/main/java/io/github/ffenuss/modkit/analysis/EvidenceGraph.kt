@@ -130,7 +130,7 @@ object EvidenceGraphBuilder {
         val status = when {
             evidence.proofLevel == ProofLevel.CHANGE_READY -> UserFindingStatus.READY
             evidence.proofLevel == ProofLevel.RUNTIME_CONFIRMED -> UserFindingStatus.CONFIRMED
-            binaryAttempted -> UserFindingStatus.COULD_NOT_CONFIRM
+            binaryAttempted -> UserFindingStatus.RUNTIME_REQUIRED
             evidence.proofLevel == ProofLevel.EXACT_METADATA -> UserFindingStatus.CONFIRMING
             else -> UserFindingStatus.FOUND
         }
