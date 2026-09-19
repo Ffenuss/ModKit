@@ -45,6 +45,7 @@ object AnalysisManager {
     @Volatile private var watchdogJob: Job? = null
     @Volatile private var activeSignal: AtomicCancellationSignal? = null
     @Volatile private var activeSkipController: EngineSkipController? = null
+    @Volatile private var activeArtifactSha256: String? = null
     private var lastPersistAtMs = 0L
 
     fun initialize(context: Context) {
@@ -61,10 +62,20 @@ object AnalysisManager {
                     AnalysisRunStore.STALLED,
                 )
             ) {
+                val recovered = saved.artifactSha256?.let { artifactSha ->
+                    EngineResultCache(File(application.filesDir, "analysis-cache"))
+                        .restorePartialResult(artifactSha)
+                }
                 mutableState.value = AnalysisRunState.Interrupted(
+                    runId = saved.runId,
                     target = saved.target,
                     previousProgress = saved.progress,
-                    message = "Предыдущий анализ был прерван системой или перезапуском. Можно продолжить ту же цель; завершённые движки будут переиспользованы из SHA-привязанного кэша.",
+                    partialResult = recovered,
+                    message = if (recovered != null) {
+                        "Предыдущий анализ был прерван. Готовые стадии восстановлены из SHA-привязанного кэша: их можно открыть сейчас или продолжить анализ."
+                    } else {
+                        "Предыдущий анализ был прерван системой или перезапуском. Можно продолжить ту же цель; доступные завершённые стадии будут переиспользованы."
+                    },
                 )
             }
         }
@@ -79,6 +90,19 @@ object AnalysisManager {
     fun resumeInterrupted() {
         val current = mutableState.value as? AnalysisRunState.Interrupted ?: return
         start(current.target)
+    }
+
+    fun openInterruptedPartial() {
+        synchronized(lock) {
+            val current = mutableState.value as? AnalysisRunState.Interrupted ?: return
+            val partial = current.partialResult ?: return
+            mutableState.value = AnalysisRunState.RecoveredPartial(
+                runId = current.runId,
+                target = current.target,
+                result = partial,
+                message = "Восстановлены только стадии, которые были полностью завершены до прерывания. Можно просмотреть их без повторного анализа.",
+            )
+        }
     }
 
     fun dismissInterrupted() {
@@ -215,6 +239,7 @@ object AnalysisManager {
         synchronized(lock) {
             activeSignal = signal
             activeSkipController = skipController
+            activeArtifactSha256 = null
             mutableState.value = AnalysisRunState.Running(runId, target, initial, startedAt)
             persist(AnalysisRunStore.RUNNING, runId, target, initial, startedAt, force = true)
         }
@@ -263,6 +288,7 @@ object AnalysisManager {
                         cache = engineCache,
                     )
                 }
+                activeArtifactSha256 = result.index.artifactSha256
                 publishPartial(runId, result)
 
                 val workspace = AnalysisWorkspace(
@@ -291,6 +317,7 @@ object AnalysisManager {
                             target,
                             null,
                             startedAt,
+                            artifactSha256 = result.index.artifactSha256,
                         )
                     }
                 }
@@ -309,6 +336,7 @@ object AnalysisManager {
                             target,
                             null,
                             startedAt,
+                            artifactSha256 = activeArtifactSha256,
                         )
                     }
                 }
@@ -424,15 +452,43 @@ object AnalysisManager {
         result: FastAnalysisResult,
     ) {
         synchronized(lock) {
+            activeArtifactSha256 = result.index.artifactSha256
             when (val current = mutableState.value) {
                 is AnalysisRunState.Running -> if (current.runId == runId) {
-                    mutableState.value = current.copy(partialResult = result)
+                    val updated = current.copy(partialResult = result)
+                    mutableState.value = updated
+                    persist(
+                        AnalysisRunStore.RUNNING,
+                        runId,
+                        updated.target,
+                        updated.progress,
+                        updated.startedAtEpochMs,
+                        force = true,
+                    )
                 }
                 is AnalysisRunState.Cancelling -> if (current.runId == runId) {
-                    mutableState.value = current.copy(partialResult = result)
+                    val updated = current.copy(partialResult = result)
+                    mutableState.value = updated
+                    persist(
+                        AnalysisRunStore.CANCELLING,
+                        runId,
+                        updated.target,
+                        updated.progress,
+                        updated.startedAtEpochMs,
+                        force = true,
+                    )
                 }
                 is AnalysisRunState.Stalled -> if (current.runId == runId) {
-                    mutableState.value = current.copy(partialResult = result)
+                    val updated = current.copy(partialResult = result)
+                    mutableState.value = updated
+                    persist(
+                        AnalysisRunStore.STALLED,
+                        runId,
+                        updated.target,
+                        updated.progress,
+                        updated.startedAtEpochMs,
+                        force = true,
+                    )
                 }
                 else -> Unit
             }
@@ -459,6 +515,7 @@ object AnalysisManager {
                     target,
                     null,
                     startedAt,
+                    artifactSha256 = activeArtifactSha256,
                 )
             }
         }
@@ -474,7 +531,14 @@ object AnalysisManager {
     ) {
         val now = System.currentTimeMillis()
         if (!force && now - lastPersistAtMs < 2_000L) return
-        store?.write(status, runId, target, progress, startedAt)
+        store?.write(
+            status,
+            runId,
+            target,
+            progress,
+            startedAt,
+            artifactSha256 = activeArtifactSha256,
+        )
         lastPersistAtMs = now
     }
 
@@ -485,6 +549,7 @@ object AnalysisManager {
         is AnalysisRunState.Completed -> state.runId
         is AnalysisRunState.Cancelled -> state.runId
         is AnalysisRunState.Failed -> state.runId
+        is AnalysisRunState.RecoveredPartial -> state.runId
         else -> null
     }
 }
