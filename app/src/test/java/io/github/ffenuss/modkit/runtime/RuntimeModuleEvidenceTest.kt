@@ -84,6 +84,10 @@ class RuntimeModuleEvidenceTest {
             moduleMappings = listOf(mapping),
             addressConfirmations = emptyList(),
             blockers = emptyList(),
+            captureSource = ProcMapsCaptureSource.NON_ROOT_PROCESS,
+            capturePid = 321,
+            processIdentity = "com.example.target",
+            processIdentityConfirmed = true,
         )
 
         val integrated = RuntimeEvidenceIntegrator.integrate(
@@ -109,6 +113,40 @@ class RuntimeModuleEvidenceTest {
                 ?.addressConfirmations
                 ?.single()
                 ?.runtimeVirtualAddress,
+        )
+    }
+
+    @Test
+    fun importedSnapshotWithoutProcessIdentityNeverPromotesRuntimeProof() {
+        val mapsText = mapsText()
+        val mapping = RuntimeModuleMappingResolver.resolve(
+            moduleName = "libil2cpp.so",
+            loadSegments = segments(),
+            regions = ProcMapsParser.parse(mapsText),
+        )
+        val result = exactBinaryResult()
+        val evidence = RuntimeEvidenceBundle(
+            artifactSha256 = SHA,
+            procMapsSha256 = sha256(mapsText.toByteArray()),
+            moduleMappings = listOf(mapping),
+            addressConfirmations = emptyList(),
+            blockers = emptyList(),
+            captureSource = ProcMapsCaptureSource.IMPORTED_SNAPSHOT,
+        )
+
+        val integrated = RuntimeEvidenceIntegrator.integrate(
+            result = result,
+            evidence = evidence,
+            procMapsText = mapsText,
+        )
+
+        val target = requireNotNull(integrated.evidenceGraph).targets.single()
+        assertEquals(ProofLevel.EXACT_BINARY, target.proofLevel)
+        assertEquals(null, target.runtimeVirtualAddress)
+        assertTrue(
+            integrated.runtimeEvidence?.blockers.orEmpty().any {
+                "Process identity" in it
+            },
         )
     }
 
