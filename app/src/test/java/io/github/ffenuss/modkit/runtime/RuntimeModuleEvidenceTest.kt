@@ -46,6 +46,29 @@ class RuntimeModuleEvidenceTest {
         assertTrue(mapping.blockers.isNotEmpty())
     }
 
+
+
+    @Test
+    fun refusesSameModulePathWhenMappingsComeFromDifferentInodes() {
+        val mapping = RuntimeModuleMappingResolver.resolve(
+            moduleName = "libil2cpp.so",
+            loadSegments = segments(),
+            regions = ProcMapsParser.parse(
+                """
+                70000000-70010000 r--p 00000000 103:02 42 /data/app/pkg/lib/arm64/libil2cpp.so
+                70020000-70040000 r-xp 00020000 103:02 43 /data/app/pkg/lib/arm64/libil2cpp.so
+                """.trimIndent(),
+            ),
+        )
+
+        assertFalse(mapping.confirmed)
+        assertTrue(
+            mapping.blockers.any {
+                "device/inode" in it
+            },
+        )
+    }
+
     @Test
     fun integratesExactBinaryTargetIntoRuntimeConfirmedAddress() {
         val mapsText = mapsText()
