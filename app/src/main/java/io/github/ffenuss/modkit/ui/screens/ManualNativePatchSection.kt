@@ -43,6 +43,7 @@ fun ManualNativePatchSection(
     target: AnalysisTargetDescriptor,
     analysis: FastAnalysisResult,
     preparation: PatchPreparationPlan,
+    onStagingReady: (MutationApplyOutcome) -> Unit = { },
 ) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
@@ -252,7 +253,9 @@ fun ManualNativePatchSection(
                                     },
                                 )
                                 applyOutcome = outcome
-                                if (!outcome.applied) {
+                                if (outcome.applied) {
+                                    onStagingReady(outcome)
+                                } else {
                                     error = outcome.blockers.firstOrNull()
                                         ?: "Staging не выполнен."
                                 }
