@@ -1,6 +1,7 @@
 package io.github.ffenuss.modkit.runtime
 
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
+import io.github.ffenuss.modkit.analysis.ArtifactEntry
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.analysis.ElfImage
 import io.github.ffenuss.modkit.analysis.ElfLoadSegment
@@ -41,6 +42,7 @@ data class RuntimeEvidenceBundle(
     val moduleMappings: List<RuntimeModuleMappingEvidence>,
     val addressConfirmations: List<RuntimeAddressConfirmation>,
     val blockers: List<String>,
+    val moduleInventory: List<RuntimeMappedModule> = emptyList(),
     val captureSource: ProcMapsCaptureSource = ProcMapsCaptureSource.IMPORTED_SNAPSHOT,
     val capturePid: Int? = null,
     val capturedAtEpochMs: Long? = null,
@@ -236,6 +238,7 @@ object RuntimeModuleEvidenceCollector {
         moduleName: String,
         procMapsText: String,
         cancellation: CancellationSignal,
+        artifactEntries: List<ArtifactEntry> = emptyList(),
     ): RuntimeEvidenceBundle =
         collect(
             artifactSha256 = artifactSha256,
@@ -243,6 +246,7 @@ object RuntimeModuleEvidenceCollector {
             moduleName = moduleName,
             capture = ProcMapsCaptureReader.imported(procMapsText),
             cancellation = cancellation,
+            artifactEntries = artifactEntries,
         )
 
     fun collect(
@@ -251,6 +255,7 @@ object RuntimeModuleEvidenceCollector {
         moduleName: String,
         capture: ProcMapsCapture,
         cancellation: CancellationSignal,
+        artifactEntries: List<ArtifactEntry> = emptyList(),
     ): RuntimeEvidenceBundle {
         if (cancellation.isCancelled()) throw AnalysisCancelledException()
         require(!capture.truncated) {
@@ -270,6 +275,10 @@ object RuntimeModuleEvidenceCollector {
             moduleMappings = listOf(mapping),
             addressConfirmations = emptyList(),
             blockers = mapping.blockers,
+            moduleInventory = RuntimeModuleInventoryBuilder.build(
+                regions = regions,
+                artifactEntries = artifactEntries,
+            ),
             captureSource = capture.source,
             capturePid = capture.pid,
             capturedAtEpochMs = capture.capturedAtEpochMs,
