@@ -97,4 +97,52 @@ class FastArtifactIndexerTest {
         })
         dir.deleteRecursively()
     }
+
+
+    @Test
+    fun secondIndexRunReusesContentAddressedArtifactIndex() {
+        val dir = Files.createTempDirectory("modkit-index-cache-test").toFile()
+        val apk = dir.resolve("sample.apk")
+        ZipOutputStream(apk.outputStream()).use { zip ->
+            zip.putNextEntry(ZipEntry("classes.dex"))
+            zip.write(
+                byteArrayOf(
+                    'd'.code.toByte(), 'e'.code.toByte(), 'x'.code.toByte(), '\n'.code.toByte(),
+                    '0'.code.toByte(), '3'.code.toByte(), '5'.code.toByte(), 0,
+                ),
+            )
+            zip.closeEntry()
+        }
+
+        try {
+            val cache = EngineResultCache(dir.resolve("cache"))
+            val cancellation = object : CancellationSignal {
+                override fun isCancelled(): Boolean = false
+            }
+            val first = FastArtifactIndexer.index(
+                files = listOf(apk),
+                cancellation = cancellation,
+                progress = ProgressSink { },
+                cache = cache,
+            )
+            assertTrue(first.engineCacheHits.isEmpty())
+
+            val second = FastArtifactIndexer.index(
+                files = listOf(apk),
+                cancellation = cancellation,
+                progress = ProgressSink { },
+                knownSha256 = mapOf(
+                    apk.absolutePath to first.index.sources.single().sha256,
+                ),
+                cache = cache,
+            )
+
+            assertEquals(first.index, second.index)
+            assertTrue(
+                EngineResultCache.ARTIFACT_INDEX_ENGINE_ID in second.engineCacheHits,
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
 }
