@@ -206,6 +206,71 @@ data class RepackedRuntimeBuildPreflightResult(
 )
 
 object RepackedRuntimeBuildPreflight {
+    fun validateProbeInjection(
+        manifestInventory: RepackedRuntimeManifestInventory,
+        injection: RepackedRuntimeProbeInjectionResult,
+    ): RepackedRuntimeBuildPreflightResult {
+        val blockers = mutableListOf<String>()
+        if (!injection.artifactSha256.equals(
+                manifestInventory.artifactSha256,
+                ignoreCase = true,
+            )
+        ) {
+            blockers +=
+                "Probe injection artifact SHA does not match manifest inventory."
+        }
+        if (injection.packageName != manifestInventory.packageName) {
+            blockers +=
+                "Probe injection package does not match manifest inventory."
+        }
+        if (
+            injection.baseSourceDisplayName !=
+            manifestInventory.baseSourceDisplayName
+        ) {
+            blockers +=
+                "Probe injection base APK identity does not match manifest inventory."
+        }
+
+        val basePayload = injection.sources.singleOrNull {
+            it.sourceDisplayName == injection.baseSourceDisplayName
+        }
+        if (
+            basePayload == null ||
+            basePayload.payloadDexEntry != injection.payloadDexEntry ||
+            basePayload.payloadSha256 != injection.payloadSha256
+        ) {
+            blockers +=
+                "Probe injection result does not contain a consistent base payload."
+        }
+
+        val generic = validate(
+            artifactSha256 = injection.artifactSha256,
+            manifestInventory = manifestInventory,
+            instrumentedApks = injection.sources.map {
+                it.sourceDisplayName to File(it.outputPath)
+            },
+        )
+        blockers += generic.blockers
+
+        injection.sources.forEach { source ->
+            val file = File(source.outputPath)
+            if (file.isFile && file.canRead()) {
+                val actual = sha256ForPreflight(file)
+                if (!actual.equals(source.outputSha256, ignoreCase = true)) {
+                    blockers +=
+                        "Probe-injected APK changed before build: " +
+                            source.sourceDisplayName
+                }
+            }
+        }
+
+        return RepackedRuntimeBuildPreflightResult(
+            ready = blockers.isEmpty() && generic.ready,
+            packageName = generic.packageName,
+            blockers = blockers.distinct(),
+        )
+    }
+
     fun validate(
         artifactSha256: String,
         manifestInventory: RepackedRuntimeManifestInventory,
@@ -253,6 +318,20 @@ object RepackedRuntimeBuildPreflight {
             blockers = blockers.distinct(),
         )
     }
+
+    private fun sha256ForPreflight(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        BufferedInputStream(FileInputStream(file), 128 * 1024).use { input ->
+            val buffer = ByteArray(128 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (read > 0) digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest()
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
 }
 
 /**
@@ -264,6 +343,37 @@ object RepackedRuntimeBuildPreflight {
  * development signing, package verification and report generation.
  */
 object RepackedRuntimeBuildCoordinator {
+    fun buildProbeInjected(
+        context: Context,
+        manifestInventory: RepackedRuntimeManifestInventory,
+        injection: RepackedRuntimeProbeInjectionResult,
+        outputRoot: File,
+        cancellation: CancellationSignal,
+        progress: ProgressSink,
+    ): RepackedRuntimeBuildResult {
+        val preflight =
+            RepackedRuntimeBuildPreflight.validateProbeInjection(
+                manifestInventory = manifestInventory,
+                injection = injection,
+            )
+        require(preflight.ready) {
+            preflight.blockers.firstOrNull()
+                ?: "Probe-injected repacked build preflight is not ready."
+        }
+
+        return build(
+            context = context,
+            artifactSha256 = injection.artifactSha256,
+            manifestInventory = manifestInventory,
+            instrumentedApks = injection.sources.map {
+                it.sourceDisplayName to File(it.outputPath)
+            },
+            outputRoot = outputRoot,
+            cancellation = cancellation,
+            progress = progress,
+        )
+    }
+
     fun build(
         context: Context,
         artifactSha256: String,
