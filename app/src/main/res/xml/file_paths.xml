@@ -3,4 +3,7 @@
     <files-path
         name="verified_patch_build"
         path="patch-build/" />
+    <files-path
+        name="expert_lab_export"
+        path="expert-lab-export/" />
 </paths>
