@@ -119,6 +119,8 @@ Status: **ACTIVE**
 - [x] Bounded binary AndroidManifest identity parser with exact package/application extraction
 - [x] Verified APK-set manifest inventory with one-base/unique-split/package consistency gates
 - [x] Repacked build preflight is bound to the verified manifest inventory and source relationships
+- [x] Copy-only binary AndroidManifest rewrite executor for the verified base APK
+- [x] Manifest probe declaration round-trip preserves package/application identity and split APK bytes
 - [x] Repacked test build tail reuses real signature-strip/alignment/signing/package-verification stages
 - [x] Repacked test build report records signer, alignment, signature and final APK SHA
 - [x] Non-root installed-app process discovery with exact `/proc/<pid>/cmdline` identity proof
