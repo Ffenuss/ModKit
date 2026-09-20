@@ -1533,8 +1533,12 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                 RuntimeEvidenceContract
                                     .observations(evidence)
                                     .filter {
-                                        it.kind.name ==
-                                            "JNI_DLSYM_OBSERVED"
+                                        it.kind.name in
+                                            setOf(
+                                                "JNI_DLSYM_OBSERVED",
+                                                "JNI_REGISTER_NATIVE_OBSERVED",
+                                                "JNI_ON_LOAD_INVOCATION_OBSERVED",
+                                            )
                                     }
                                     .takeLast(8)
                                     .forEach { observation ->
