@@ -64,6 +64,9 @@ fun ManualNativePatchSection(
     var selectedOpportunityIds by remember(key) {
         mutableStateOf<Set<String>>(emptySet())
     }
+    var showAllDeferred by remember(key) {
+        mutableStateOf(false)
+    }
     var queuedDrafts by remember(key) {
         mutableStateOf<List<NativeMutationDraft>>(emptyList())
     }
@@ -99,6 +102,8 @@ fun ManualNativePatchSection(
             preparation = preparation,
             projectCodeOnly = effectiveProjectCodeOnly,
             limit = MAX_SUGGESTED_MODIFICATIONS,
+            perCategoryLimit =
+                MAX_SUGGESTED_PER_CATEGORY,
         )
     }
     val actionableOpportunities =
@@ -227,6 +232,38 @@ fun ManualNativePatchSection(
                         actionableOpportunities.size,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                OutlinedButton(
+                    onClick = {
+                        selectedOpportunityIds =
+                            if (
+                                selectedOpportunityIds.size ==
+                                actionableOpportunities.size
+                            ) {
+                                emptySet()
+                            } else {
+                                actionableOpportunities
+                                    .map { it.id }
+                                    .toSet()
+                            }
+                        onStagingInvalidated()
+                        applyOutcome = null
+                    },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        if (
+                            selectedOpportunityIds.size ==
+                            actionableOpportunities.size
+                        ) {
+                            "Снять выбор со всех"
+                        } else {
+                            "Выбрать все готовые (" +
+                                actionableOpportunities.size +
+                                ")"
+                        },
+                    )
+                }
                 actionableOpportunities.forEach { opportunity ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -365,31 +402,81 @@ fun ManualNativePatchSection(
                         deferredSummary,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                deferredOpportunities
-                    .take(MAX_VISIBLE_DEFERRED_MODIFICATIONS)
-                    .forEach { opportunity ->
-                        Column(
-                            modifier =
-                                Modifier.fillMaxWidth(),
-                            verticalArrangement =
-                                Arrangement.spacedBy(2.dp),
+                val visibleDeferred =
+                    if (showAllDeferred) {
+                        deferredOpportunities
+                    } else {
+                        deferredOpportunities.take(
+                            MAX_VISIBLE_DEFERRED_MODIFICATIONS,
+                        )
+                    }
+                visibleDeferred.forEach { opportunity ->
+                    Column(
+                        modifier =
+                            Modifier.fillMaxWidth(),
+                        verticalArrangement =
+                            Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(opportunity.title)
+                        Text(
+                            opportunity.targetDisplayName,
+                            style =
+                                MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            opportunity.blocker
+                                ?: opportunity.evidenceSummary,
+                            style =
+                                MaterialTheme.typography.bodySmall,
+                            color =
+                                MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (
+                            preparation.targets.any {
+                                it.target.id ==
+                                    opportunity.targetId &&
+                                    isManualNativeEligible(it)
+                            }
                         ) {
-                            Text(opportunity.title)
-                            Text(
-                                opportunity.targetDisplayName,
-                                style =
-                                    MaterialTheme.typography.bodySmall,
-                            )
-                            Text(
-                                opportunity.blocker
-                                    ?: opportunity.evidenceSummary,
-                                style =
-                                    MaterialTheme.typography.bodySmall,
-                                color =
-                                    MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            OutlinedButton(
+                                onClick = {
+                                    selectedTargetId =
+                                        opportunity.targetId
+                                    replacementHex = ""
+                                    draft = null
+                                    preflight = null
+                                    applyOutcome = null
+                                    error = null
+                                },
+                                modifier =
+                                    Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Открыть цель в Patch Lab")
+                            }
                         }
                     }
+                }
+                if (
+                    deferredOpportunities.size >
+                    MAX_VISIBLE_DEFERRED_MODIFICATIONS
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            showAllDeferred = !showAllDeferred
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (showAllDeferred) {
+                                "Свернуть кандидатов"
+                            } else {
+                                "Показать все кандидаты (" +
+                                    deferredOpportunities.size +
+                                    ")"
+                            },
+                        )
+                    }
+                }
             }
 
             Text(
@@ -1026,5 +1113,6 @@ private fun isManualNativeEligible(
         prepared.target.abi != null
 
 private const val MAX_VISIBLE_TARGETS = 24
-private const val MAX_SUGGESTED_MODIFICATIONS = 24
-private const val MAX_VISIBLE_DEFERRED_MODIFICATIONS = 12
+private const val MAX_SUGGESTED_MODIFICATIONS = 128
+private const val MAX_SUGGESTED_PER_CATEGORY = 16
+private const val MAX_VISIBLE_DEFERRED_MODIFICATIONS = 24
