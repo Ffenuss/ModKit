@@ -54,6 +54,10 @@ fun ManualNativePatchSection(
     var selectedTargetId by remember(key) { mutableStateOf<String?>(null) }
     var targetFilter by remember(key) { mutableStateOf("") }
     var replacementHex by remember(key) { mutableStateOf("") }
+    var projectCodeOnly by remember(key) { mutableStateOf(true) }
+    var queuedDrafts by remember(key) {
+        mutableStateOf<List<NativeMutationDraft>>(emptyList())
+    }
     var draft by remember(key) { mutableStateOf<NativeMutationDraft?>(null) }
     var preflight by remember(key) { mutableStateOf<MutationPreflightResult?>(null) }
     var applyOutcome by remember(key) { mutableStateOf<MutationApplyOutcome?>(null) }
@@ -67,14 +71,31 @@ fun ManualNativePatchSection(
     val eligibleCount = remember(key) {
         preparation.targets.count(::isManualNativeEligible)
     }
+    val assemblyCSharpCount = remember(key) {
+        preparation.targets.count {
+            isManualNativeEligible(it) &&
+                Il2CppPatchTargetBrowser.isAssemblyCSharp(
+                    it.target,
+                )
+        }
+    }
+    val effectiveProjectCodeOnly =
+        projectCodeOnly && assemblyCSharpCount > 0
     val normalizedFilter = targetFilter.trim().lowercase()
     val visibleEligible = remember(
         key,
         normalizedFilter,
+        effectiveProjectCodeOnly,
     ) {
         preparation.targets
             .asSequence()
             .filter(::isManualNativeEligible)
+            .filter { prepared ->
+                !effectiveProjectCodeOnly ||
+                    Il2CppPatchTargetBrowser.isAssemblyCSharp(
+                        prepared.target,
+                    )
+            }
             .filter { prepared ->
                 Il2CppPatchTargetBrowser.matches(
                     target = prepared.target,
@@ -101,15 +122,6 @@ fun ManualNativePatchSection(
             ?.abi
             ?.let(NativePatchPresetCatalog::forAbi)
             .orEmpty()
-
-    val assemblyCSharpCount = remember(key) {
-        preparation.targets.count {
-            isManualNativeEligible(it) &&
-                Il2CppPatchTargetBrowser.isAssemblyCSharp(
-                    it.target,
-                )
-        }
-    }
 
     val selectedSharedBodyCount = remember(
         key,
