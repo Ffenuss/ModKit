@@ -64,6 +64,24 @@ object Il2CppNativeMutationDraftBuilder {
         }
         require(offset >= 0L) { "Некорректный file offset." }
 
+        val sameExecutableOffset =
+            result.evidenceGraph
+                ?.targets
+                .orEmpty()
+                .filter {
+                    it.runtimeId == "unity_il2cpp" &&
+                        it.kind ==
+                        EvidenceTargetKind.METHOD &&
+                        it.artifact == target.artifact &&
+                        it.fileOffset == offset
+                }
+        require(sameExecutableOffset.size == 1) {
+            "Этот executable offset разделяется " +
+                sameExecutableOffset.size +
+                " IL2CPP-методами. Изменение одной metadata-цели " +
+                "заблокировано, пока общий native target не выбран явно."
+        }
+
         val abi = requireNotNull(target.abi) {
             "Для метода не определён ABI."
         }
