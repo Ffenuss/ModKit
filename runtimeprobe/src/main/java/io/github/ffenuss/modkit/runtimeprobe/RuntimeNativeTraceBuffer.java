@@ -95,6 +95,24 @@ public final class RuntimeNativeTraceBuffer {
         );
     }
 
+    public static boolean appendRegisterNativeClass(
+            Class<?> targetClass,
+            String moduleName,
+            String methodName,
+            String signature,
+            long runtimeAddress
+    ) {
+        if (targetClass == null) return false;
+        String className = targetClass.getName().replace('.', '/');
+        return appendRegisterNative(
+                moduleName,
+                className,
+                methodName,
+                signature,
+                runtimeAddress
+        );
+    }
+
     private static boolean appendLine(String... fields) {
         synchronized (LOCK) {
             if (!active || truncated) return false;
