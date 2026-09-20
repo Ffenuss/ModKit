@@ -79,6 +79,7 @@ class RuntimeProbeNativePayloadValidatorTest {
             "RuntimeNativeBridge_nativeStopPassiveDlsymTrace",
             "RuntimeNativeBridge_nativeStartPassiveJniTrace",
             "RuntimeNativeBridge_nativeStopPassiveJniTrace",
+            "RuntimeNativeBridge_nativePassiveJniOnLoadInvocationReady",
         ).map {
             it.toByteArray(Charsets.US_ASCII)
         }
