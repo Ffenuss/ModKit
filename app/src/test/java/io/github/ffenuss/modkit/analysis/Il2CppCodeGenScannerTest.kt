@@ -42,15 +42,31 @@ class Il2CppCodeGenScannerTest {
         assertBinding(result)
     }
 
+    @Test
+    fun strippedBinaryRecoversCodegenPointersThroughRelativeRelocations() {
+        val result = scanFixture(
+            includeCodeRegistrationSymbol = false,
+            includeRelativeRelocations = true,
+        )
+
+        assertNull(result.codeRegistrationVirtualAddress)
+        assertTrue(result.moduleArrayDiscovery.orEmpty().startsWith(
+            "BOUNDED_IMAGE_SET_SCAN@",
+        ))
+        assertBinding(result)
+    }
+
     private fun scanFixture(
         includeCodeRegistrationSymbol: Boolean,
         includeOutsideFileNobits: Boolean = false,
+        includeRelativeRelocations: Boolean = false,
     ): Il2CppBinaryEvidence {
         val file = Files.createTempFile("modkit-codegen", ".so").toFile()
         file.writeBytes(
             elfFixture(
                 includeCodeRegistrationSymbol,
                 includeOutsideFileNobits,
+                includeRelativeRelocations,
             ),
         )
         try {
@@ -128,6 +144,7 @@ class Il2CppCodeGenScannerTest {
     private fun elfFixture(
         includeCodeRegistrationSymbol: Boolean,
         includeOutsideFileNobits: Boolean,
+        includeRelativeRelocations: Boolean,
     ): ByteArray {
         val bytes = ByteArray(0x2600)
         val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
@@ -149,10 +166,11 @@ class Il2CppCodeGenScannerTest {
         buffer.putShort(54, 56.toShort())
         buffer.putShort(56, 2.toShort())
         buffer.putShort(58, 64.toShort())
-        buffer.putShort(
-            60,
-            (if (includeOutsideFileNobits) 4 else 3).toShort(),
-        )
+        val sectionCount =
+            3 +
+                (if (includeOutsideFileNobits) 1 else 0) +
+                (if (includeRelativeRelocations) 1 else 0)
+        buffer.putShort(60, sectionCount.toShort())
         buffer.putShort(62, 0.toShort())
 
         // PT_LOAD #0: executable code.
@@ -200,11 +218,22 @@ class Il2CppCodeGenScannerTest {
         buffer.putInt(symSection + 40, 1)
         buffer.putLong(symSection + 56, 24)
 
+        var nextSectionIndex = 3
         if (includeOutsideFileNobits) {
-            val bssSection = 0x2200 + 192
+            val bssSection =
+                0x2200 + nextSectionIndex * 64
             buffer.putInt(bssSection + 4, 8)
             buffer.putLong(bssSection + 24, 0x5000)
             buffer.putLong(bssSection + 32, 0x2000)
+            nextSectionIndex++
+        }
+        if (includeRelativeRelocations) {
+            val relaSection =
+                0x2200 + nextSectionIndex * 64
+            buffer.putInt(relaSection + 4, 4)
+            buffer.putLong(relaSection + 24, 0x1800)
+            buffer.putLong(relaSection + 32, 5L * 24L)
+            buffer.putLong(relaSection + 56, 24)
         }
 
         fun symbol(index: Int, nameOffset: Int, value: Long, typeInfo: Int = 0x11) {
@@ -227,18 +256,40 @@ class Il2CppCodeGenScannerTest {
 
         // CodeRegistration candidate pair #0 at VA 0x200100.
         buffer.putInt(0x1100, 1)
-        buffer.putLong(0x1108, 0x200200)
 
-        // CodeGenModule* array.
-        buffer.putLong(0x1200, 0x200250)
+        if (includeRelativeRelocations) {
+            fun rela(
+                index: Int,
+                targetVa: Long,
+                addendVa: Long,
+            ) {
+                val base = 0x1800 + index * 24
+                buffer.putLong(base, targetVa)
+                buffer.putLong(base + 8, 1027L)
+                buffer.putLong(base + 16, addendVa)
+            }
 
-        // Il2CppCodeGenModule: name*, methodPointerCount, methodPointers*.
-        buffer.putLong(0x1250, 0x200300)
+            // Android/AArch64 ET_DYN stores these local pointers through
+            // R_AARCH64_RELATIVE relocations rather than absolute file bytes.
+            rela(0, 0x200108, 0x200200)
+            rela(1, 0x200200, 0x200250)
+            rela(2, 0x200250, 0x200300)
+            rela(3, 0x200260, 0x200380)
+            rela(4, 0x200380, 0x100900)
+        } else {
+            buffer.putLong(0x1108, 0x200200)
+            buffer.putLong(0x1200, 0x200250)
+            buffer.putLong(0x1250, 0x200300)
+            buffer.putLong(0x1260, 0x200380)
+            buffer.putLong(0x1380, 0x100900)
+        }
+
+        // Il2CppCodeGenModule: methodPointerCount remains scalar data.
         buffer.putInt(0x1258, 1)
-        buffer.putLong(0x1260, 0x200380)
 
-        "Assembly-CSharp.dll\u0000".toByteArray(Charsets.US_ASCII).copyInto(bytes, 0x1300)
-        buffer.putLong(0x1380, 0x100900)
+        "Assembly-CSharp.dll\u0000"
+            .toByteArray(Charsets.US_ASCII)
+            .copyInto(bytes, 0x1300)
 
         // Executable method body sample.
         bytes[0x900] = 0xC0.toByte()
