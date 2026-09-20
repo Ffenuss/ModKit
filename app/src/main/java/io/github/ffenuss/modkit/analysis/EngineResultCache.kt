@@ -367,10 +367,10 @@ class EngineResultCache(
         const val UNIVERSAL_ELF_INVENTORY_ENGINE_VERSION = "2"
 
         const val IL2CPP_FAST_DUMP_ENGINE_ID = "il2cpp.fast-dump"
-        const val IL2CPP_FAST_DUMP_ENGINE_VERSION = "3"
+        const val IL2CPP_FAST_DUMP_ENGINE_VERSION = "4"
 
         const val IL2CPP_BINARY_BINDING_ENGINE_ID = "il2cpp.codegen-bind"
-        const val IL2CPP_BINARY_BINDING_ENGINE_VERSION = "10"
+        const val IL2CPP_BINARY_BINDING_ENGINE_VERSION = "11"
 
         const val RUNTIME_EVIDENCE_ENGINE_ID = "runtime.evidence"
         const val RUNTIME_EVIDENCE_ENGINE_VERSION = "3"

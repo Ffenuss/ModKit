@@ -28,6 +28,7 @@ data class Il2CppMethodDefinition(
     val parameterCount: Int,
     val token: Long,
     val flags: Int,
+    val returnTypeIndex: Int = -1,
 ) : java.io.Serializable
 
 data class Il2CppFieldDefinition(
@@ -315,6 +316,7 @@ object Il2CppMetadataReader {
                     parameterCount = u16(raf, base + parameterCountOffset),
                     token = u32(raf, base + tokenOffset),
                     flags = u16(raf, base + flagsOffset),
+                    returnTypeIndex = i32(raf, base + 8),
                 )
             }
 

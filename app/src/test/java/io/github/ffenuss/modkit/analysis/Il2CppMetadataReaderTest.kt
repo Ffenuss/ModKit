@@ -38,6 +38,7 @@ class Il2CppMetadataReaderTest {
             assertEquals("health", model.fields.single().name)
             assertEquals("Game.Player", model.methods.single().declaringType)
             assertEquals("Game.Player", model.fields.single().declaringType)
+            assertEquals(7, model.methods.single().returnTypeIndex)
             assertEquals("Assembly-CSharp.dll", model.images.single().name)
             assertEquals(0, model.images.single().typeStart)
             assertEquals(1, model.images.single().typeCount)
@@ -138,6 +139,7 @@ class Il2CppMetadataReaderTest {
 
         buffer.putInt(500, 12)
         buffer.putInt(504, 0)
+        buffer.putInt(508, 7)
         buffer.putInt(520, 0x06000001)
         buffer.putShort(524, 0x0006.toShort())
         buffer.putShort(530, 0.toShort())

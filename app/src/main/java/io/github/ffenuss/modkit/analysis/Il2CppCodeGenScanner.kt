@@ -14,6 +14,16 @@ data class Il2CppCodeGenModuleEvidence(
     val executablePointers: Int,
 ) : java.io.Serializable
 
+enum class Il2CppNativeReturnKind {
+    VOID,
+    BOOLEAN,
+    INTEGER,
+    POINTER_OR_REFERENCE,
+    FLOATING_POINT,
+    VALUE_TYPE,
+    UNKNOWN,
+}
+
 data class Il2CppMethodBinaryBinding(
     val methodIndex: Int,
     val managedIdentity: String,
@@ -23,6 +33,9 @@ data class Il2CppMethodBinaryBinding(
     val slotIndex: Int,
     val functionVirtualAddress: Long,
     val functionFileOffset: Long?,
+    val returnTypeIndex: Int = -1,
+    val returnKind: Il2CppNativeReturnKind = Il2CppNativeReturnKind.UNKNOWN,
+    val returnTypeProof: String? = null,
 ) : java.io.Serializable
 
 data class Il2CppBinaryEvidence(
@@ -147,6 +160,7 @@ object Il2CppCodeGenScanner {
                     cancellation = cancellation,
                     progress = progress,
                     libraryEntry = libraryEntry,
+                    metadataRegistrationVa = metadataRegistration,
                 )
             } else {
                 emptyList()
@@ -881,6 +895,7 @@ object Il2CppCodeGenScanner {
         cancellation: CancellationSignal,
         progress: ProgressSink,
         libraryEntry: String,
+        metadataRegistrationVa: Long?,
     ): List<Il2CppMethodBinaryBinding> {
         val modulesByName =
             modules.groupBy {
@@ -977,8 +992,64 @@ object Il2CppCodeGenScanner {
                 slotIndex = slot,
                 functionVirtualAddress = functionVa,
                 functionFileOffset = image.fileOffsetForVa(functionVa),
+                returnTypeIndex = method.returnTypeIndex,
+                returnKind = resolveReturnKind(
+                    image = image,
+                    metadataRegistrationVa = metadataRegistrationVa,
+                    returnTypeIndex = method.returnTypeIndex,
+                ),
+                returnTypeProof = metadataRegistrationVa?.let {
+                    "Il2CppMetadataRegistration.types[" + method.returnTypeIndex + "]"
+                },
             )
         }
         return out
     }
+
+    private fun resolveReturnKind(
+        image: ElfImage,
+        metadataRegistrationVa: Long?,
+        returnTypeIndex: Int,
+    ): Il2CppNativeReturnKind {
+        if (metadataRegistrationVa == null || returnTypeIndex < 0) {
+            return Il2CppNativeReturnKind.UNKNOWN
+        }
+
+        val pairStride = image.pointerSize * 2L
+        val typesPairVa = metadataRegistrationVa + METADATA_REGISTRATION_TYPES_PAIR_INDEX * pairStride
+        val typeCount = image.readU32AtVa(typesPairVa)?.toLong()
+            ?: return Il2CppNativeReturnKind.UNKNOWN
+        if (returnTypeIndex.toLong() >= typeCount || typeCount <= 0L || typeCount > MAX_METADATA_TYPES) {
+            return Il2CppNativeReturnKind.UNKNOWN
+        }
+
+        val typesArrayVa = image.readPointerAtVa(typesPairVa + image.pointerSize)
+            ?: return Il2CppNativeReturnKind.UNKNOWN
+        if (typesArrayVa <= 0L) return Il2CppNativeReturnKind.UNKNOWN
+
+        val typeVa = image.readPointerAtVa(
+            typesArrayVa + returnTypeIndex.toLong() * image.pointerSize,
+        ) ?: return Il2CppNativeReturnKind.UNKNOWN
+        if (typeVa <= 0L) return Il2CppNativeReturnKind.UNKNOWN
+
+        val raw = image.readFileWindowAtVa(
+            typeVa + image.pointerSize + 2L,
+            1,
+        )?.firstOrNull()?.toInt()?.and(0xff)
+            ?: return Il2CppNativeReturnKind.UNKNOWN
+
+        return when (raw) {
+            0x01 -> Il2CppNativeReturnKind.VOID
+            0x02 -> Il2CppNativeReturnKind.BOOLEAN
+            0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
+            0x0a, 0x0b, 0x18, 0x19 -> Il2CppNativeReturnKind.INTEGER
+            0x0c, 0x0d -> Il2CppNativeReturnKind.FLOATING_POINT
+            0x0e, 0x0f, 0x12, 0x1c, 0x1d -> Il2CppNativeReturnKind.POINTER_OR_REFERENCE
+            0x11 -> Il2CppNativeReturnKind.VALUE_TYPE
+            else -> Il2CppNativeReturnKind.UNKNOWN
+        }
+    }
+
+    private const val METADATA_REGISTRATION_TYPES_PAIR_INDEX = 3L
+    private const val MAX_METADATA_TYPES = 10_000_000L
 }
