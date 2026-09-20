@@ -34,6 +34,7 @@ import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.AutoModPreparationCoordinator
 import io.github.ffenuss.modkit.patch.AutoModRuntimeTestMenuBuild
 import io.github.ffenuss.modkit.patch.AutoModRuntimeTestMenuCoordinator
+import io.github.ffenuss.modkit.patch.GameplayModificationFinder
 import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
 import io.github.ffenuss.modkit.patch.MutationApplyOutcome
 import io.github.ffenuss.modkit.patch.PatchLabDiagnosticReportExporter
@@ -694,23 +695,26 @@ fun AutoModScreen(
 
         plan?.let { prepared ->
             item {
-                val preview =
-                    io.github.ffenuss.modkit.patch
-                        .RuntimeGameplayTestMenuBuilder
-                        .build(
+                val previewFindings =
+                    remember(
+                        analysisResult.index.artifactSha256,
+                        prepared.preparedAtEpochMs,
+                    ) {
+                        GameplayModificationFinder.find(
                             result = analysisResult,
                             preparation = prepared,
-                            analysisResultsRoot =
-                                File(
-                                    context.filesDir,
-                                    "analysis-results",
-                                ),
-                            stagingRoot =
-                                File(
-                                    context.filesDir,
-                                    "runtime-menu-preview",
-                                ),
+                            projectCodeOnly = true,
+                            limit = 128,
+                            perCategoryLimit = 16,
                         )
+                    }
+                val previewPatchCount =
+                    previewFindings.count {
+                        it.selectable
+                    }
+                val previewInfoCount =
+                    previewFindings.size -
+                        previewPatchCount
                 Card(Modifier.fillMaxWidth()) {
                     Column(
                         Modifier.padding(16.dp),
@@ -723,9 +727,9 @@ fun AutoModScreen(
                         )
                         Text(
                             "Проверяемые runtime-переключатели: " +
-                                preview.patchItemCount +
+                                previewPatchCount +
                                 " · диагностические цели: " +
-                                preview.infoItemCount +
+                                previewInfoCount +
                                 ".",
                             style =
                                 MaterialTheme.typography.bodySmall,
@@ -742,7 +746,7 @@ fun AutoModScreen(
                                 !runtimeMenuBusy &&
                                     !preparing &&
                                     !building &&
-                                    preview.items.isNotEmpty(),
+                                    previewFindings.isNotEmpty(),
                             modifier =
                                 Modifier.fillMaxWidth(),
                         ) {
