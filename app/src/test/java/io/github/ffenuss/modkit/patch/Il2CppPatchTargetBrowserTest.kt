@@ -2,6 +2,11 @@ package io.github.ffenuss.modkit.patch
 
 import io.github.ffenuss.modkit.analysis.EvidenceTarget
 import io.github.ffenuss.modkit.analysis.EvidenceTargetKind
+import io.github.ffenuss.modkit.analysis.FastAnalysisResult
+import io.github.ffenuss.modkit.analysis.Il2CppBinaryBindingResult
+import io.github.ffenuss.modkit.analysis.Il2CppBinaryEvidence
+import io.github.ffenuss.modkit.analysis.Il2CppMethodBinaryBinding
+import io.github.ffenuss.modkit.analysis.Il2CppNativeReturnKind
 import io.github.ffenuss.modkit.analysis.UserFindingStatus
 import io.github.ffenuss.modkit.domain.ProofLevel
 import org.junit.Assert.assertEquals
@@ -88,31 +93,49 @@ class Il2CppPatchTargetBrowserTest {
     }
 
     @Test
-    fun givesConservativePresetAdviceFromMethodConvention() {
-        val lifecycle =
+    fun semanticAdviceUsesProvenReturnKindInsteadOfMethodName() {
+        val target =
             target(
                 id =
                     "il2cpp:method:Assembly-CSharp.dll:" +
                         "6000001:Assembly-CSharp.dll",
                 memberName = "Update",
             )
-        val predicate =
-            target(
-                id =
-                    "il2cpp:method:Assembly-CSharp.dll:" +
-                        "6000002:Assembly-CSharp.dll",
-                memberName = "IsReady",
-            )
+        val result = resultWithBinding(
+            target = target,
+            returnKind = Il2CppNativeReturnKind.BOOLEAN,
+        )
 
         assertTrue(
             Il2CppPatchTargetBrowser
-                .presetAdvice(lifecycle)
+                .presetAdvice(result, target)
+                .contains("доказал bool"),
+        )
+        assertFalse(
+            Il2CppPatchTargetBrowser
+                .presetAdvice(result, target)
                 .contains("обычно void"),
         )
+    }
+
+    @Test
+    fun unknownReturnKindDoesNotGuessFromLifecycleName() {
+        val target =
+            target(
+                id =
+                    "il2cpp:method:Assembly-CSharp.dll:" +
+                        "6000001:Assembly-CSharp.dll",
+                memberName = "Update",
+            )
+        val result = resultWithBinding(
+            target = target,
+            returnKind = Il2CppNativeReturnKind.UNKNOWN,
+        )
+
         assertTrue(
             Il2CppPatchTargetBrowser
-                .presetAdvice(predicate)
-                .contains("0 обычно означает"),
+                .presetAdvice(result, target)
+                .contains("не доказан"),
         )
     }
 
@@ -129,6 +152,65 @@ class Il2CppPatchTargetBrowserTest {
             Il2CppPatchTargetBrowser.isAssemblyCSharp(
                 target,
             ),
+        )
+    }
+
+    private fun resultWithBinding(
+        target: EvidenceTarget,
+        returnKind: Il2CppNativeReturnKind,
+    ): FastAnalysisResult {
+        val binding =
+            Il2CppMethodBinaryBinding(
+                methodIndex = 0,
+                managedIdentity = target.displayName,
+                metadataToken = requireNotNull(target.metadataToken),
+                imageName = "Assembly-CSharp.dll",
+                moduleName = "Assembly-CSharp.dll",
+                slotIndex = 0,
+                functionVirtualAddress = 0x1000,
+                functionFileOffset = 0x200,
+                returnTypeIndex = 7,
+                returnKind = returnKind,
+                returnTypeProof = "test-proof",
+            )
+        return FastAnalysisResult(
+            index =
+                io.github.ffenuss.modkit.analysis.ArtifactIndex(
+                    artifactSha256 =
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    sources = emptyList(),
+                    entries = emptyList(),
+                    detectedAbis = setOf("arm64-v8a"),
+                    runtimeProfiles = emptyList(),
+                ),
+            routingPlan =
+                io.github.ffenuss.modkit.analysis.EngineRoutingPlan(
+                    emptyList(),
+                    emptyList(),
+                ),
+            elapsedMs = 0,
+            il2cppBinaryBinding =
+                Il2CppBinaryBindingResult(
+                    evidence =
+                        listOf(
+                            Il2CppBinaryEvidence(
+                                libraryEntry =
+                                    requireNotNull(target.artifact),
+                                machine = 183,
+                                pointerSize = 8,
+                                relativeRelocationCount = 0,
+                                codeRegistrationVirtualAddress = null,
+                                metadataRegistrationVirtualAddress = 0x3000,
+                                codegenRegisterVirtualAddress = null,
+                                moduleArrayDiscovery = "TEST",
+                                modules = emptyList(),
+                                bindings = listOf(binding),
+                                blockers = emptyList(),
+                            ),
+                        ),
+                    exactBindingCount = 1,
+                    warnings = emptyList(),
+                ),
         )
     }
 

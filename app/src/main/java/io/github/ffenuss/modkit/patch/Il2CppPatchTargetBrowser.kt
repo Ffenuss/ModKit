@@ -1,6 +1,9 @@
 package io.github.ffenuss.modkit.patch
 
 import io.github.ffenuss.modkit.analysis.EvidenceTarget
+import io.github.ffenuss.modkit.analysis.FastAnalysisResult
+import io.github.ffenuss.modkit.analysis.Il2CppMethodBinaryBinding
+import io.github.ffenuss.modkit.analysis.Il2CppNativeReturnKind
 
 object Il2CppPatchTargetBrowser {
     private const val METHOD_PREFIX = "il2cpp:method:"
@@ -72,45 +75,62 @@ object Il2CppPatchTargetBrowser {
         }
     }
 
+    fun bindingFor(
+        result: FastAnalysisResult,
+        target: EvidenceTarget,
+    ): Il2CppMethodBinaryBinding? {
+        val token = target.metadataToken ?: return null
+        val artifact = target.artifact ?: return null
+        return result.il2cppBinaryBinding
+            ?.evidence
+            .orEmpty()
+            .asSequence()
+            .filter { it.libraryEntry == artifact }
+            .flatMap { it.bindings.asSequence() }
+            .filter { it.metadataToken == token }
+            .singleOrNull()
+    }
+
+    fun returnKindLabel(
+        kind: Il2CppNativeReturnKind,
+    ): String = when (kind) {
+        Il2CppNativeReturnKind.VOID ->
+            "void — значение не возвращается"
+        Il2CppNativeReturnKind.BOOLEAN ->
+            "bool"
+        Il2CppNativeReturnKind.INTEGER ->
+            "целочисленный"
+        Il2CppNativeReturnKind.POINTER_OR_REFERENCE ->
+            "ссылка / указатель"
+        Il2CppNativeReturnKind.FLOATING_POINT ->
+            "float / double"
+        Il2CppNativeReturnKind.VALUE_TYPE ->
+            "value type / структура"
+        Il2CppNativeReturnKind.UNKNOWN ->
+            "не доказан"
+    }
+
     fun presetAdvice(
+        result: FastAnalysisResult,
         target: EvidenceTarget,
     ): String {
-        val name =
-            target.memberName.orEmpty()
-        return when {
-            name in setOf(
-                "Awake",
-                "Start",
-                "Update",
-                "LateUpdate",
-                "FixedUpdate",
-                "OnEnable",
-                "OnDisable",
-                "OnDestroy",
-            ) ->
-                "Unity lifecycle-методы по соглашению обычно void. " +
-                    "«Сразу вернуть (void)» пропустит тело метода."
-
-            name.startsWith("set_") ->
-                "Setter обычно не возвращает полезное значение. " +
-                    "Для пропуска записи чаще подходит «Сразу вернуть (void)», " +
-                    "но это подсказка по соглашению, не доказательство сигнатуры."
-
-            name.startsWith("On") ->
-                "По имени это callback/обработчик. Такие методы часто void. " +
-                    "Если сигнатура неизвестна, не выбирайте 0/1 только по названию."
-
-            name.startsWith("get_") ||
-                name.startsWith("Is") ||
-                name.startsWith("Has") ||
-                name.startsWith("Can") ->
-                "Метод похож на возврат значения. 0 обычно означает false/0/null, " +
-                    "1 — true/1 для bool/int-подобного результата. " +
-                    "Точный return type здесь не подтверждён."
-
-            else ->
-                "Тип возврата не подтверждён. «void», «0» и «1» имеют разную " +
-                    "семантику; выбирайте шаблон только когда понимаете контракт метода."
+        val binding = bindingFor(result, target)
+            ?: return "Точный return type не связан с этой binary-целью; semantic presets скрыты."
+        return when (binding.returnKind) {
+            Il2CppNativeReturnKind.VOID ->
+                "ModKit доказал void: доступно действие «сразу завершить метод»."
+            Il2CppNativeReturnKind.BOOLEAN ->
+                "ModKit доказал bool: доступны «всегда false» и «всегда true»."
+            Il2CppNativeReturnKind.INTEGER ->
+                "ModKit доказал целочисленный return: доступны возврат 0 или 1."
+            Il2CppNativeReturnKind.POINTER_OR_REFERENCE ->
+                "ModKit доказал ссылочный/указательный return: безопасный готовый вариант — вернуть null."
+            Il2CppNativeReturnKind.FLOATING_POINT ->
+                "Доказан float/double return, но готового ARM64 semantic preset пока нет."
+            Il2CppNativeReturnKind.VALUE_TYPE ->
+                "Доказан value-type return; простой X0 preset запрещён ABI-правилами."
+            Il2CppNativeReturnKind.UNKNOWN ->
+                "Return type не доказан. ModKit не предлагает void/0/1 по имени метода."
         }
     }
 

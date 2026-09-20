@@ -2,9 +2,11 @@ package io.github.ffenuss.modkit.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -17,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -29,6 +32,7 @@ import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.Il2CppNativeMutationDraftBuilder
 import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
+import io.github.ffenuss.modkit.analysis.Il2CppNativeReturnKind
 import io.github.ffenuss.modkit.patch.MutationApplyCoordinator
 import io.github.ffenuss.modkit.patch.MutationApplyOutcome
 import io.github.ffenuss.modkit.patch.MutationPreflightEngine
@@ -117,11 +121,30 @@ fun ManualNativePatchSection(
             }
         }
     }
+    val selectedBinding = remember(
+        key,
+        selectedTargetId,
+    ) {
+        selectedPrepared?.target?.let {
+            Il2CppPatchTargetBrowser.bindingFor(
+                result = analysis,
+                target = it,
+            )
+        }
+    }
+    val selectedReturnKind =
+        selectedBinding?.returnKind
+            ?: Il2CppNativeReturnKind.UNKNOWN
     val presets =
         selectedPrepared
             ?.target
             ?.abi
-            ?.let(NativePatchPresetCatalog::forAbi)
+            ?.let { abi ->
+                NativePatchPresetCatalog.forProvenReturnKind(
+                    abi = abi,
+                    returnKind = selectedReturnKind,
+                )
+            }
             .orEmpty()
 
     val selectedSharedBodyCount = remember(
@@ -320,8 +343,22 @@ fun ManualNativePatchSection(
                 Text(
                     "Как выбирать шаблон: " +
                         Il2CppPatchTargetBrowser.presetAdvice(
-                            evidenceTarget,
+                            result = analysis,
+                            target = evidenceTarget,
                         ),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+
+                Text(
+                    "Return type: " +
+                        Il2CppPatchTargetBrowser.returnKindLabel(
+                            selectedReturnKind,
+                        ) +
+                        (
+                            selectedBinding?.returnTypeProof
+                                ?.let { " · proof: " + it }
+                                .orEmpty()
+                            ),
                     style = MaterialTheme.typography.bodySmall,
                 )
 
@@ -353,26 +390,56 @@ fun ManualNativePatchSection(
                         style = MaterialTheme.typography.bodySmall,
                     )
                     presets.forEach { preset ->
-                        OutlinedButton(
-                            onClick = {
-                                replacementHex =
-                                    preset.replacementHex
-                                draft = null
-                                preflight = null
-                                applyOutcome = null
-                                error = null
-                            },
-                            modifier =
-                                Modifier.fillMaxWidth(),
+                        val checked =
+                            replacementHex.trim().equals(
+                                preset.replacementHex,
+                                ignoreCase = true,
+                            )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(preset.label)
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = { enabled ->
+                                    replacementHex =
+                                        if (enabled) {
+                                            preset.replacementHex
+                                        } else {
+                                            ""
+                                        }
+                                    draft = null
+                                    preflight = null
+                                    applyOutcome = null
+                                    error = null
+                                },
+                            )
+                            Column(
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(preset.label)
+                                Text(
+                                    preset.description,
+                                    style =
+                                        MaterialTheme.typography.bodySmall,
+                                )
+                            }
                         }
-                        Text(
-                            preset.description,
-                            style =
-                                MaterialTheme.typography.bodySmall,
-                        )
                     }
+                }
+                if (
+                    presets.isEmpty() &&
+                    selectedSharedBodyCount == 1
+                ) {
+                    Text(
+                        if (selectedReturnKind == Il2CppNativeReturnKind.UNKNOWN) {
+                            "Готовые действия скрыты: ModKit пока не доказал return type этого метода. " +
+                                "Имя метода не используется как доказательство."
+                        } else {
+                            "Для доказанного типа возврата пока нет готового безопасного ARM64 действия."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             }
 
