@@ -11,6 +11,7 @@ enum class ProcMapsCaptureSource {
     IMPORTED_SNAPSHOT,
     CURRENT_PROCESS,
     NON_ROOT_PROCESS,
+    ROOT_PROCESS,
     REPACKED_TEST_RUNTIME,
 }
 
@@ -64,6 +65,23 @@ object ProcMapsCaptureReader {
             source = ProcMapsCaptureSource.NON_ROOT_PROCESS,
             pid = pid,
             cancellation = cancellation,
+            maxBytes = maxBytes,
+        )
+    }
+
+    internal fun rootProcess(
+        pid: Int,
+        bytes: ByteArray,
+        maxBytes: Int = DEFAULT_MAX_BYTES,
+    ): ProcMapsCapture {
+        require(pid > 0) { "PID must be positive." }
+        require(maxBytes in 1..64 * 1024 * 1024) {
+            "Invalid proc maps capture limit."
+        }
+        return fromBytes(
+            source = ProcMapsCaptureSource.ROOT_PROCESS,
+            pid = pid,
+            bytes = bytes,
             maxBytes = maxBytes,
         )
     }
