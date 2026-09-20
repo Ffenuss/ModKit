@@ -309,9 +309,17 @@ class RepackedRuntimeNativeProbeInjectorTest {
         putU16(bytes, 16, 3)
         putU16(bytes, 18, machine)
         if (marker) {
-            "RuntimeNativeBridge_nativeResolveLoadedSymbol"
-                .toByteArray(Charsets.US_ASCII)
-                .copyInto(bytes, 64)
+            var offset = 64
+            listOf(
+                "RuntimeNativeBridge_nativeResolveLoadedSymbol",
+                "RuntimeNativeBridge_nativeStartPassiveDlsymTrace",
+                "RuntimeNativeBridge_nativeStopPassiveDlsymTrace",
+            ).forEach { value ->
+                val markerBytes =
+                    value.toByteArray(Charsets.US_ASCII)
+                markerBytes.copyInto(bytes, offset)
+                offset += markerBytes.size + 8
+            }
         }
         return bytes
     }
