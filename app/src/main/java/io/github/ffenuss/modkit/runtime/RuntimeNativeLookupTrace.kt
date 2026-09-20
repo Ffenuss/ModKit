@@ -344,7 +344,16 @@ object RuntimeNativeLookupValidator {
             RuntimeEvidenceObservation(
                 id = "runtime:native-lookup:" +
                     capture.sha256.take(16) + ":" + event.index,
-                kind = RuntimeEvidenceObservationKind.JNI_DLSYM_OBSERVED,
+                kind = when (event.kind) {
+                    RuntimeNativeLookupKind.DLSYM ->
+                        RuntimeEvidenceObservationKind.JNI_DLSYM_OBSERVED
+                    RuntimeNativeLookupKind.JNI_REGISTER_NATIVE ->
+                        RuntimeEvidenceObservationKind
+                            .JNI_REGISTER_NATIVE_OBSERVED
+                    RuntimeNativeLookupKind.JNI_ON_LOAD ->
+                        RuntimeEvidenceObservationKind
+                            .JNI_ON_LOAD_INVOCATION_OBSERVED
+                },
                 strength = if (blockers.isEmpty()) {
                     RuntimeEvidenceObservationStrength.CONFIRMED
                 } else {
