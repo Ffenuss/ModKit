@@ -314,6 +314,8 @@ class RepackedRuntimeNativeProbeInjectorTest {
                 "RuntimeNativeBridge_nativeResolveLoadedSymbol",
                 "RuntimeNativeBridge_nativeStartPassiveDlsymTrace",
                 "RuntimeNativeBridge_nativeStopPassiveDlsymTrace",
+                "RuntimeNativeBridge_nativeStartPassiveJniTrace",
+                "RuntimeNativeBridge_nativeStopPassiveJniTrace",
             ).forEach { value ->
                 val markerBytes =
                     value.toByteArray(Charsets.US_ASCII)
