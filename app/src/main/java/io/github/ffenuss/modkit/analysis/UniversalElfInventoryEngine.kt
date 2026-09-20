@@ -39,7 +39,7 @@ data class UniversalElfInventoryResult(
  */
 object UniversalElfInventoryEngine {
     const val ID = "elf.universal-inventory"
-    const val VERSION = "1"
+    const val VERSION = "2"
 
     private const val MAX_ELF_BYTES = 512L * 1024L * 1024L
     private const val BUFFER_BYTES = 128 * 1024
