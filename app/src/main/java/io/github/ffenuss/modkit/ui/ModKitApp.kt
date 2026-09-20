@@ -4,6 +4,7 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -15,6 +16,7 @@ import io.github.ffenuss.modkit.analysis.AnalysisManager
 import io.github.ffenuss.modkit.analysis.AnalysisRunState
 import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
+import io.github.ffenuss.modkit.analysis.EngineResultCache
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.ui.screens.AnalysisScreen
@@ -27,6 +29,7 @@ import io.github.ffenuss.modkit.ui.screens.TargetSelectionScreen
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 private enum class Screen { TARGET, INSTALLED_APPS, EXPERT_LAB, AUTOMOD }
 
@@ -34,7 +37,27 @@ private enum class Screen { TARGET, INSTALLED_APPS, EXPERT_LAB, AUTOMOD }
 fun ModKitApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val installedRepository = remember { InstalledAppRepository(context.applicationContext) }
+    val installedRepository =
+        remember {
+            InstalledAppRepository(
+                context.applicationContext,
+            )
+        }
+    val autoModSessionStore =
+        remember {
+            AutoModSessionStore(
+                context.applicationContext,
+            )
+        }
+    val analysisCache =
+        remember {
+            EngineResultCache(
+                File(
+                    context.filesDir,
+                    "analysis-cache",
+                ),
+            )
+        }
     remember(context.applicationContext) {
         AnalysisManager.initialize(context.applicationContext)
         true
@@ -49,12 +72,46 @@ fun ModKitApp() {
     var autoModTarget by remember { mutableStateOf<AnalysisTargetDescriptor?>(null) }
     var autoModResult by remember { mutableStateOf<FastAnalysisResult?>(null) }
 
+    LaunchedEffect(Unit) {
+        if (
+            AnalysisManager.state.value is
+                AnalysisRunState.Idle
+        ) {
+            val saved =
+                withContext(Dispatchers.IO) {
+                    autoModSessionStore.load()
+                }
+            if (saved != null) {
+                val restored =
+                    withContext(Dispatchers.IO) {
+                        analysisCache
+                            .restorePartialResult(
+                                saved.artifactSha256,
+                            )
+                    }
+                if (restored != null) {
+                    autoModTarget = saved.target
+                    autoModResult = restored
+                    screen = Screen.AUTOMOD
+                } else {
+                    withContext(Dispatchers.IO) {
+                        autoModSessionStore.clear()
+                    }
+                }
+            }
+        }
+    }
+
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching {
                 context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            AnalysisManager.startFile(uri, uri.lastPathSegment ?: "Выбранный файл")
+            autoModSessionStore.clear()
+            AnalysisManager.startFile(
+                uri,
+                uri.lastPathSegment ?: "Выбранный файл",
+            )
         }
     }
 
@@ -144,6 +201,14 @@ fun ModKitApp() {
             stalledAgeMs = null,
             canSkipStalled = false,
             onOpenAutoMod = {
+                runCatching {
+                    autoModSessionStore.save(
+                        target = state.target,
+                        artifactSha256 =
+                            state.result.index
+                                .artifactSha256,
+                    )
+                }
                 autoModTarget = state.target
                 autoModResult = state.result
                 AnalysisManager.clearTerminalState()
@@ -228,7 +293,10 @@ fun ModKitApp() {
                 loading = installedLoading,
                 error = installedError,
                 onBack = { screen = Screen.TARGET },
-                onSelect = { app -> AnalysisManager.startInstalled(app) },
+                onSelect = { app ->
+                    autoModSessionStore.clear()
+                    AnalysisManager.startInstalled(app)
+                },
             )
 
             Screen.EXPERT_LAB -> ExpertLabScreen(onBack = { screen = Screen.TARGET })
@@ -241,6 +309,7 @@ fun ModKitApp() {
                         target = target,
                         result = result,
                         onBack = {
+                            autoModSessionStore.clear()
                             autoModTarget = null
                             autoModResult = null
                             screen = Screen.TARGET
