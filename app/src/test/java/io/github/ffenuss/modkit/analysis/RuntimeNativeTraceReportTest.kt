@@ -39,6 +39,11 @@ class RuntimeNativeTraceReportTest {
                     "- REPACKED_TARGETED_DLSYM_PROBE: true",
                 ),
             )
+            assertTrue(
+                text.contains(
+                    "- REPACKED_PASSIVE_DLSYM_CAPTURE: true",
+                ),
+            )
             assertTrue(text.contains("capture-REPACKED_TEST_RUNTIME: false"))
             assertTrue(text.contains("capture-NON_ROOT_RUNTIME: false"))
             assertTrue(text.contains("capture-ROOT_RUNTIME: false"))
