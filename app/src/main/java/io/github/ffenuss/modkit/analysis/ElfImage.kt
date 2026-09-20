@@ -592,7 +592,6 @@ class ElfImage private constructor(
                         it.type,
                         it.offset,
                         it.size,
-                        it.entrySize,
                     )
                 }
             for (section in uniqueSections) {
