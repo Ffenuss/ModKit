@@ -312,6 +312,13 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
                     "traceSha256=" + sha256(trace) + "\n" +
                     "traceBytes=" + trace.length + "\n" +
                     "truncated=" + snapshot.truncated + "\n" +
+                    "producerKind=PLT_DLSYM_GOT\n" +
+                    "hookedSlotCount=" +
+                    RuntimeNativeBridge.passiveDlsymHookedSlotCount() + "\n" +
+                    "producerIncomplete=" +
+                    RuntimeNativeBridge.passiveDlsymIncomplete() + "\n" +
+                    "producerRestoreFailed=" +
+                    RuntimeNativeBridge.passiveDlsymRestoreFailed() + "\n" +
                     "---TRACE---\n";
             output.write(header.getBytes(StandardCharsets.UTF_8));
             output.write(trace);
