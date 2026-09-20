@@ -10,6 +10,15 @@ import org.junit.Test
 
 class Il2CppMetadataReaderTest {
     @Test
+    fun defaultLargeGameLimitsExceedLegacyHundredThousandCap() {
+        val limits = Il2CppMetadataReader.Limits()
+
+        assertTrue(limits.maxMethods > 100_000)
+        assertTrue(limits.maxFields > 100_000)
+        assertTrue(limits.maxTypes > 30_000)
+    }
+
+    @Test
     fun reconstructsV29TypeMethodAndField() {
         val bytes = fixture(version = 29)
         val file = Files.createTempFile("modkit-il2cpp", ".dat").toFile()
