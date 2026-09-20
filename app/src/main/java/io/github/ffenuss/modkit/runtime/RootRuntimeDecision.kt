@@ -46,10 +46,12 @@ data class RootRuntimeDecision(
 
 object RootRuntimeCapabilityRegistry {
     /**
-     * No su/Magisk/root command executor is registered in clean ModKit yet.
-     * Keep this false until a concrete executor and its tests exist.
+     * A concrete, bounded su-based privileged maps executor is registered.
+     * This does not imply ROOT_TRACE_CAPTURE: native trace interposition under
+     * root remains a separate capability and stays unavailable until its own
+     * executor exists.
      */
-    const val executorRegistered: Boolean = false
+    const val executorRegistered: Boolean = true
 }
 
 /**
