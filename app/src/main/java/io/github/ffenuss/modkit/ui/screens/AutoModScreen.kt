@@ -13,6 +13,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,6 +36,7 @@ import io.github.ffenuss.modkit.patch.AutoModPreparationCoordinator
 import io.github.ffenuss.modkit.patch.AutoModRuntimeTestMenuBuild
 import io.github.ffenuss.modkit.patch.AutoModRuntimeTestMenuCoordinator
 import io.github.ffenuss.modkit.patch.GameplayModificationFinder
+import io.github.ffenuss.modkit.patch.GameplayModificationOpportunity
 import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
 import io.github.ffenuss.modkit.patch.MutationApplyOutcome
 import io.github.ffenuss.modkit.patch.PatchLabDiagnosticReportExporter
@@ -86,6 +88,15 @@ fun AutoModScreen(
         mutableStateOf<RepackedRuntimeInstallReadiness?>(null)
     }
     var runtimeMenuNote by remember(result.index.artifactSha256) {
+        mutableStateOf<String?>(null)
+    }
+    var previewFindings by remember(result.index.artifactSha256) {
+        mutableStateOf<List<GameplayModificationOpportunity>?>(null)
+    }
+    var previewFindingBusy by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
+    }
+    var previewFindingError by remember(result.index.artifactSha256) {
         mutableStateOf<String?>(null)
     }
     var cancellation by remember(result.index.artifactSha256) {
@@ -356,6 +367,40 @@ fun AutoModScreen(
                         ?: failure.javaClass.simpleName
             } finally {
                 runtimeMenuBusy = false
+            }
+        }
+    }
+
+    LaunchedEffect(
+        analysisResult.index.artifactSha256,
+        plan?.preparedAtEpochMs,
+    ) {
+        val prepared = plan
+        if (prepared == null) {
+            previewFindings = null
+            previewFindingBusy = false
+            previewFindingError = null
+        } else {
+            previewFindingBusy = true
+            previewFindingError = null
+            try {
+                previewFindings =
+                    withContext(Dispatchers.Default) {
+                        GameplayModificationFinder.find(
+                            result = analysisResult,
+                            preparation = prepared,
+                            projectCodeOnly = true,
+                            limit = 128,
+                            perCategoryLimit = 16,
+                        )
+                    }
+            } catch (failure: Throwable) {
+                previewFindings = emptyList()
+                previewFindingError =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                previewFindingBusy = false
             }
         }
     }
@@ -708,25 +753,14 @@ fun AutoModScreen(
 
         plan?.let { prepared ->
             item {
-                val previewFindings =
-                    remember(
-                        analysisResult.index.artifactSha256,
-                        prepared.preparedAtEpochMs,
-                    ) {
-                        GameplayModificationFinder.find(
-                            result = analysisResult,
-                            preparation = prepared,
-                            projectCodeOnly = true,
-                            limit = 128,
-                            perCategoryLimit = 16,
-                        )
-                    }
+                val currentPreview =
+                    previewFindings.orEmpty()
                 val previewPatchCount =
-                    previewFindings.count {
+                    currentPreview.count {
                         it.selectable
                     }
                 val previewInfoCount =
-                    previewFindings.size -
+                    currentPreview.size -
                         previewPatchCount
                 Card(Modifier.fillMaxWidth()) {
                     Column(
@@ -739,14 +773,26 @@ fun AutoModScreen(
                             fontWeight = FontWeight.SemiBold,
                         )
                         Text(
-                            "Проверяемые runtime-переключатели: " +
-                                previewPatchCount +
-                                " · диагностические цели: " +
-                                previewInfoCount +
-                                ".",
+                            if (previewFindingBusy) {
+                                "Поиск модификаций выполняется в фоне…"
+                            } else {
+                                "Проверяемые runtime-переключатели: " +
+                                    previewPatchCount +
+                                    " · диагностические цели: " +
+                                    previewInfoCount +
+                                    "."
+                            },
                             style =
                                 MaterialTheme.typography.bodySmall,
                         )
+                        previewFindingError?.let { message ->
+                            Text(
+                                "Поиск модификаций: " + message,
+                                color = MaterialTheme.colorScheme.error,
+                                style =
+                                    MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         Text(
                             "Переключатели создаются только для exact локальных целей. " +
                                 "Billing/auth/anti-cheat и server-backed RNG показываются как INFO без bypass-патча.",
@@ -759,7 +805,8 @@ fun AutoModScreen(
                                 !runtimeMenuBusy &&
                                     !preparing &&
                                     !building &&
-                                    previewFindings.isNotEmpty(),
+                                    !previewFindingBusy &&
+                                    currentPreview.isNotEmpty(),
                             modifier =
                                 Modifier.fillMaxWidth(),
                         ) {
