@@ -30,6 +30,7 @@ import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.domain.EngineProgress
+import io.github.ffenuss.modkit.patch.GameplayModificationFinder
 import io.github.ffenuss.modkit.patch.Il2CppNativeMutationDraftBuilder
 import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
 import io.github.ffenuss.modkit.analysis.Il2CppNativeReturnKind
@@ -60,6 +61,9 @@ fun ManualNativePatchSection(
     var targetFilter by remember(key) { mutableStateOf("") }
     var replacementHex by remember(key) { mutableStateOf("") }
     var projectCodeOnly by remember(key) { mutableStateOf(true) }
+    var selectedOpportunityIds by remember(key) {
+        mutableStateOf<Set<String>>(emptySet())
+    }
     var queuedDrafts by remember(key) {
         mutableStateOf<List<NativeMutationDraft>>(emptyList())
     }
@@ -86,6 +90,22 @@ fun ManualNativePatchSection(
     }
     val effectiveProjectCodeOnly =
         projectCodeOnly && assemblyCSharpCount > 0
+    val opportunities = remember(
+        key,
+        effectiveProjectCodeOnly,
+    ) {
+        GameplayModificationFinder.find(
+            result = analysis,
+            preparation = preparation,
+            projectCodeOnly = effectiveProjectCodeOnly,
+            limit = MAX_SUGGESTED_MODIFICATIONS,
+        )
+    }
+    val selectedOpportunities =
+        opportunities.filter {
+            it.id in selectedOpportunityIds &&
+                it.selectable
+        }
     val normalizedFilter = targetFilter.trim().lowercase()
     val visibleEligible = remember(
         key,
@@ -182,6 +202,161 @@ fun ManualNativePatchSection(
                 return@Column
             }
 
+            Text(
+                "Предлагаемые модификации",
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "ModKit сам ищет gameplay-кандидаты среди точных IL2CPP-методов. " +
+                    "Активная галочка означает только конкретную доказуемую операцию над exact method; " +
+                    "игровой эффект всё равно проверяется после сборки.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (opportunities.isEmpty()) {
+                Text(
+                    "Автоматически распознаваемых gameplay-кандидатов в текущем наборе не найдено.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else {
+                val selectableCount =
+                    opportunities.count { it.selectable }
+                Text(
+                    "Найдено кандидатов: " + opportunities.size +
+                        " · можно выбрать сейчас: " + selectableCount,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                opportunities.forEach { opportunity ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked =
+                                opportunity.id in
+                                    selectedOpportunityIds,
+                            enabled = opportunity.selectable && !busy,
+                            onCheckedChange = { checked ->
+                                selectedOpportunityIds =
+                                    if (checked) {
+                                        selectedOpportunityIds +
+                                            opportunity.id
+                                    } else {
+                                        selectedOpportunityIds -
+                                            opportunity.id
+                                    }
+                                onStagingInvalidated()
+                                applyOutcome = null
+                            },
+                        )
+                        Column {
+                            Text(opportunity.title)
+                            Text(
+                                opportunity.targetDisplayName,
+                                style =
+                                    MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                opportunity.blocker
+                                    ?: opportunity.evidenceSummary,
+                                style =
+                                    MaterialTheme.typography.bodySmall,
+                                color =
+                                    if (opportunity.blocker != null) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                            )
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        error = null
+                        runCatching {
+                            val generated =
+                                selectedOpportunities.map { opportunity ->
+                                    Il2CppNativeMutationDraftBuilder.build(
+                                        result = analysis,
+                                        targetId = opportunity.targetId,
+                                        replacementHex =
+                                            requireNotNull(
+                                                opportunity.replacementHex,
+                                            ),
+                                        analysisResultsRoot =
+                                            File(
+                                                context.filesDir,
+                                                "analysis-results",
+                                            ),
+                                        stagingRoot =
+                                            File(
+                                                context.filesDir,
+                                                "patch-staging",
+                                            ),
+                                    )
+                                }
+                            val replacedTargets =
+                                generated.map {
+                                    it.request.targetId
+                                }.toSet()
+                            val candidate =
+                                queuedDrafts.filterNot {
+                                    it.request.targetId in
+                                        replacedTargets
+                                } + generated
+                            val combined =
+                                MutationPreflightEngine.validate(
+                                    preparation = preparation,
+                                    requests =
+                                        candidate.map {
+                                            it.request
+                                        },
+                                )
+                            require(combined.readyForApply) {
+                                (
+                                    combined.globalBlockers +
+                                        combined.blockedItems
+                                            .flatMap {
+                                                it.blockers
+                                            }
+                                    )
+                                    .distinct()
+                                    .firstOrNull()
+                                    ?: "Выбранные модификации не прошли preflight."
+                            }
+                            queuedDrafts = candidate
+                            selectedOpportunityIds =
+                                emptySet()
+                            draft = null
+                            preflight = null
+                            replacementHex = ""
+                            selectedTargetId = null
+                            applyOutcome = null
+                            onStagingInvalidated()
+                        }.onFailure { failure ->
+                            error =
+                                failure.message
+                                    ?: failure.javaClass.simpleName
+                        }
+                    },
+                    enabled =
+                        selectedOpportunities.isNotEmpty() &&
+                            !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "Добавить выбранные модификации (" +
+                            selectedOpportunities.size +
+                            ")",
+                    )
+                }
+            }
+
+            Text(
+                "Ручной выбор метода",
+                fontWeight = FontWeight.SemiBold,
+            )
             Text("Цель", fontWeight = FontWeight.SemiBold)
             OutlinedTextField(
                 value = targetFilter,
@@ -213,6 +388,7 @@ fun ManualNativePatchSection(
                 OutlinedButton(
                     onClick = {
                         projectCodeOnly = !projectCodeOnly
+                        selectedOpportunityIds = emptySet()
                         selectedTargetId = null
                         replacementHex = ""
                         draft = null
@@ -811,3 +987,4 @@ private fun isManualNativeEligible(
         prepared.target.abi != null
 
 private const val MAX_VISIBLE_TARGETS = 24
+private const val MAX_SUGGESTED_MODIFICATIONS = 24

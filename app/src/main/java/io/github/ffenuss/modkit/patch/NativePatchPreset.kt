@@ -16,6 +16,12 @@ object NativePatchPresetCatalog {
             else -> emptyList()
         }
 
+    fun find(
+        abi: String,
+        id: String,
+    ): NativePatchPreset? =
+        forAbi(abi).firstOrNull { it.id == id }
+
     fun forProvenReturnKind(
         abi: String,
         returnKind: Il2CppNativeReturnKind,
