@@ -149,7 +149,7 @@ class ArchiveMutationApplierTest {
                 base,
                 mapOf(
                     "AndroidManifest.xml" to byteArrayOf(1),
-                    "lib/arm64-v8a/libil2cpp.so" to library,
+                    "assets/base.txt" to "base-unchanged".toByteArray(),
                     "META-INF/CERT.SF" to "base-signature".toByteArray(),
                 ),
             )
@@ -157,6 +157,7 @@ class ArchiveMutationApplierTest {
                 split,
                 mapOf(
                     "AndroidManifest.xml" to byteArrayOf(2),
+                    "lib/arm64-v8a/libil2cpp.so" to library,
                     "assets/split.txt" to "unchanged".toByteArray(),
                     "META-INF/CERT.SF" to "split-signature".toByteArray(),
                 ),
@@ -166,7 +167,12 @@ class ArchiveMutationApplierTest {
             val replacement = File(root, "replacement.bin").apply {
                 writeBytes(replacementBytes)
             }
-            val target = evidenceTarget(fileOffset = 4)
+            val target = evidenceTarget(
+                fileOffset = 4,
+                artifact =
+                    "split_config.arm64_v8a.apk:" +
+                        "lib/arm64-v8a/libil2cpp.so",
+            )
             val request = MutationRequest(
                 id = "native-split-test",
                 artifactSha256 = ARTIFACT_SHA,
@@ -222,7 +228,36 @@ class ArchiveMutationApplierTest {
                     "unchanged".toByteArray(),
                     zip.getInputStream(zip.getEntry("assets/split.txt")).readBytes(),
                 )
+                val patched = zip.getInputStream(
+                    zip.getEntry("lib/arm64-v8a/libil2cpp.so"),
+                ).readBytes()
+                val expected = library.copyOf().also {
+                    replacementBytes.copyInto(it, destinationOffset = 4)
+                }
+                assertArrayEquals(expected, patched)
             }
+            val outputBase = result.outputFiles.single {
+                it.name == "base.apk"
+            }
+            ZipFile(outputBase).use { zip ->
+                assertEquals(null, zip.getEntry("META-INF/CERT.SF"))
+                assertArrayEquals(
+                    "base-unchanged".toByteArray(),
+                    zip.getInputStream(zip.getEntry("assets/base.txt")).readBytes(),
+                )
+                assertEquals(
+                    null,
+                    zip.getEntry("lib/arm64-v8a/libil2cpp.so"),
+                )
+            }
+            assertEquals(
+                "split_config.arm64_v8a.apk",
+                result.diffs.single().container,
+            )
+            assertEquals(
+                "lib/arm64-v8a/libil2cpp.so",
+                result.diffs.single().entryPath,
+            )
             assertTrue(
                 result.strippedSignatureEntries.any {
                     it == "split_config.arm64_v8a.apk:META-INF/CERT.SF"
@@ -299,12 +334,15 @@ class ArchiveMutationApplierTest {
         }
     }
 
-    private fun evidenceTarget(fileOffset: Long) = EvidenceTarget(
+    private fun evidenceTarget(
+        fileOffset: Long,
+        artifact: String = "base.apk:lib/arm64-v8a/libil2cpp.so",
+    ) = EvidenceTarget(
         id = "target-1",
         runtimeId = "unity_il2cpp",
         kind = EvidenceTargetKind.METHOD,
         displayName = "Game.Player.Hit",
-        artifact = "base.apk:lib/arm64-v8a/libil2cpp.so",
+        artifact = artifact,
         abi = "arm64-v8a",
         declaringType = "Game.Player",
         memberName = "Hit",
