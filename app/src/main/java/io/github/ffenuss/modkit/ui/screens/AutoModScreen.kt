@@ -412,13 +412,16 @@ fun AutoModScreen(
                     }
                 } else {
                     OutlinedButton(
-                        onClick = { showManualPatch = !showManualPatch },
+                        onClick = { },
+                        enabled = false,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Text("Ручной Patch Lab")
+                        Text("IL2CPP Patch Lab недоступен")
                     }
                     Text(
-                        "Подтверждённых IL2CPP-методов с точным file offset пока нет.",
+                        "Нет подтверждённых IL2CPP-методов с точным file offset. " +
+                            "Для обычного Android DEX/NDK это другой тип изменений; " +
+                            "он не подменяется IL2CPP-шаблонами.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
