@@ -176,6 +176,49 @@ object ExpertLabReportWriter {
             }
             appendLine()
 
+            result.dexInventory?.let { inventory ->
+                appendLine("DEX INVENTORY")
+                appendLine("entries: " + inventory.records.size)
+                inventory.records.forEach { record ->
+                    appendLine("- " + record.container + ":" + record.entryPath)
+                    appendLine("  version: " + record.version)
+                    appendLine("  size: " + record.size)
+                    appendLine(
+                        "  declaredFileSize: " +
+                            (record.declaredFileSize?.toString()
+                                ?: "not_decoded"),
+                    )
+                    appendLine(
+                        "  standardEndian: " +
+                            record.standardEndian,
+                    )
+                    appendLine(
+                        "  strings/types/protos/fields/methods/classes: " +
+                            listOf(
+                                record.stringIdsCount,
+                                record.typeIdsCount,
+                                record.protoIdsCount,
+                                record.fieldIdsCount,
+                                record.methodIdsCount,
+                                record.classDefsCount,
+                            ).joinToString("/") {
+                                it?.toString() ?: "n/a"
+                            },
+                    )
+                    appendLine(
+                        "  dataSize: " +
+                            (record.dataSize?.toString() ?: "n/a"),
+                    )
+                    record.warnings.forEach {
+                        appendLine("  warning: " + it)
+                    }
+                }
+                inventory.warnings.forEach {
+                    appendLine("warning: " + it)
+                }
+                appendLine()
+            }
+
             result.il2cppFastDump?.let { dump ->
                 appendLine("IL2CPP FAST DUMP")
                 appendLine("metadataEntry: " + dump.metadataEntry)
