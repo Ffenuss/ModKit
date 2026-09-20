@@ -25,6 +25,8 @@ import io.github.ffenuss.modkit.runtime.RuntimeEvidenceIntegrator
 import io.github.ffenuss.modkit.runtime.RuntimeModuleEvidenceCollector
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationPlanner
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationStage
+import io.github.ffenuss.modkit.runtime.RootRuntimeCaptureCoordinator
+import io.github.ffenuss.modkit.runtime.RootRuntimeDecisionEngine
 import io.github.ffenuss.modkit.runtime.RuntimeStageAttempt
 import io.github.ffenuss.modkit.runtime.RuntimeStageAttemptRecorder
 import io.github.ffenuss.modkit.runtime.RuntimeStageAttemptState
@@ -364,6 +366,143 @@ object ExpertLabSessionController {
                 engineWarnings = (
                     session.result.engineWarnings +
                         "runtime.non-root: " +
+                        (failure.message ?: failure.javaClass.simpleName)
+                    ).distinct(),
+            )
+            return persistRuntimeAttempts(
+                context = context,
+                session = session.withResult(updated),
+            )
+        }
+    }
+
+    /**
+     * Explicit last-resort privileged maps capture.
+     *
+     * This method never auto-escalates. Root must already be justified by the
+     * lower-privilege attempt ledger, and the user invokes it from Expert Lab.
+     */
+    suspend fun integrateRootRuntime(
+        context: Context,
+        session: ExpertLabSession,
+        cancellation: CancellationSignal,
+    ): ExpertLabSession {
+        val plan = RuntimeEscalationPlanner.plan(session.result)
+        val decision = RootRuntimeDecisionEngine.decide(
+            plan = plan,
+            attempts = session.result.runtimeStageAttempts,
+        )
+        val requestedTargets = decision.unresolvedTargetIds
+
+        try {
+            require(decision.readyToRunRoot) {
+                (
+                    decision.blockers.map { it.message } +
+                        decision.reasons
+                    )
+                    .distinct()
+                    .joinToString("; ")
+                    .ifBlank {
+                        "Root runtime is not justified by the current evidence state."
+                    }
+            }
+            require(requestedTargets.isNotEmpty()) {
+                "No unresolved runtime confirmation target requires root."
+            }
+            val packageName = requireNotNull(session.packageName) {
+                "Root runtime capture is available only for an installed-app target."
+            }
+
+            val rootCapture = withContext(Dispatchers.IO) {
+                RootRuntimeCaptureCoordinator.captureMaps(
+                    packageName = packageName,
+                    cancellation = cancellation,
+                )
+            }
+            val module = resolveIl2CppRuntimeModule(context, session.result)
+            val evidence = withContext(Dispatchers.IO) {
+                RuntimeModuleEvidenceCollector.collect(
+                    artifactSha256 = session.result.index.artifactSha256,
+                    moduleFile = module.file,
+                    moduleName = module.moduleName,
+                    capture = rootCapture.capture,
+                    cancellation = cancellation,
+                    artifactEntries = session.result.index.entries,
+                ).copy(
+                    processIdentity = packageName,
+                    processIdentityConfirmed = true,
+                )
+            }
+            val integrated = RuntimeEvidenceIntegrator.integrate(
+                result = session.result,
+                evidence = evidence,
+                procMapsText = rootCapture.capture.text,
+            )
+
+            val resolvedTargets = integrated.evidenceGraph
+                ?.targets
+                .orEmpty()
+                .asSequence()
+                .filter { it.id in requestedTargets }
+                .filter {
+                    it.proofLevel.ordinal >=
+                        ProofLevel.RUNTIME_CONFIRMED.ordinal
+                }
+                .mapTo(linkedSetOf()) { it.id }
+            val unresolvedTargets = requestedTargets - resolvedTargets
+            val attempt = RuntimeStageAttempt(
+                stage = RuntimeEscalationStage.ROOT_RUNTIME,
+                state = if (unresolvedTargets.isEmpty()) {
+                    RuntimeStageAttemptState.COMPLETED
+                } else {
+                    RuntimeStageAttemptState.BLOCKED
+                },
+                attemptedAtEpochMs = System.currentTimeMillis(),
+                requestedTargetIds = requestedTargets,
+                resolvedTargetIds = resolvedTargets,
+                blockers = if (unresolvedTargets.isEmpty()) {
+                    emptyList()
+                } else {
+                    listOf(
+                        RuntimeStageBlocker(
+                            code = "ROOT_EVIDENCE_UNRESOLVED",
+                            message =
+                                "Privileged maps capture completed, but runtime proof remains unresolved for: " +
+                                    unresolvedTargets.sorted().joinToString(),
+                            category = RuntimeStageBlockerCategory.EVIDENCE_GAP,
+                        ),
+                    )
+                },
+            )
+            val withAttempt = appendAttempt(
+                result = integrated,
+                attempt = attempt,
+            )
+            val withEvidence = persistRuntimeEvidence(
+                context = context,
+                session = session,
+                integrated = withAttempt,
+                fallbackEvidence = evidence,
+            )
+            return persistRuntimeAttempts(
+                context = context,
+                session = withEvidence,
+            )
+        } catch (failure: Throwable) {
+            if (failure is AnalysisCancelledException) throw failure
+
+            val attempt = RuntimeStageAttemptRecorder.blockedAttempt(
+                stage = RuntimeEscalationStage.ROOT_RUNTIME,
+                requestedTargetIds = requestedTargets,
+                failure = failure,
+            )
+            val updated = appendAttempt(
+                result = session.result,
+                attempt = attempt,
+            ).copy(
+                engineWarnings = (
+                    session.result.engineWarnings +
+                        "runtime.root: " +
                         (failure.message ?: failure.javaClass.simpleName)
                     ).distinct(),
             )
