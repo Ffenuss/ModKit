@@ -46,7 +46,8 @@ object Il2CppCodeGenScanner {
     private const val MAX_MODULES = 4_096
     private const val MAX_METHOD_POINTERS = 5_000_000
     private const val MAX_SAMPLED_POINTERS = 32
-    private const val MAX_FALLBACK_SCAN_BYTES = 64L * 1024L * 1024L
+    private const val MAX_FALLBACK_SCAN_BYTES = 256L * 1024L * 1024L
+    private const val FALLBACK_WINDOW_BYTES = 1 * 1024 * 1024
     private const val HEARTBEAT_MS = 1_500L
 
     private data class ModuleArrayCandidate(
@@ -91,6 +92,21 @@ object Il2CppCodeGenScanner {
                 blockers += "CODE_REGISTRATION_SYMBOL_UNRESOLVED"
             }
 
+            if (
+                candidate == null &&
+                metadata.images.isNotEmpty() &&
+                image.relativeRelocationCount > 0
+            ) {
+                candidate = recoverByRelativeRelocations(
+                    image = image,
+                    metadata = metadata,
+                    cancellation = cancellation,
+                    progress = progress,
+                    libraryEntry = libraryEntry,
+                    blockers = blockers,
+                )
+            }
+
             if (candidate == null && metadata.images.isNotEmpty()) {
                 candidate = recoverByImageSetScan(
                     image = image,
@@ -100,10 +116,11 @@ object Il2CppCodeGenScanner {
                     libraryEntry = libraryEntry,
                     blockers = blockers,
                 )
-                if (candidate != null) {
-                    blockers.remove("CODE_REGISTRATION_SYMBOL_UNRESOLVED")
-                    blockers.remove("CODEGEN_MODULE_ARRAY_UNRESOLVED")
-                }
+            }
+
+            if (candidate != null) {
+                blockers.remove("CODE_REGISTRATION_SYMBOL_UNRESOLVED")
+                blockers.remove("CODEGEN_MODULE_ARRAY_UNRESOLVED")
             }
 
             val modules = candidate?.modules.orEmpty()
@@ -210,6 +227,109 @@ object Il2CppCodeGenScanner {
         return uniqueCandidate(candidates, blockers)
     }
 
+    private fun recoverByRelativeRelocations(
+        image: ElfImage,
+        metadata: Il2CppMetadataModel,
+        cancellation: CancellationSignal,
+        progress: ProgressSink,
+        libraryEntry: String,
+        blockers: MutableList<String>,
+    ): ModuleArrayCandidate? {
+        val expectedNames =
+            metadata.images
+                .map { it.name.lowercase() }
+                .toSet()
+        if (
+            expectedNames.isEmpty() ||
+            expectedNames.size > MAX_MODULES
+        ) {
+            return null
+        }
+
+        val pointerSize = image.pointerSize
+        val requiredArrayBytes =
+            expectedNames.size.toLong() * pointerSize
+        val candidates =
+            mutableListOf<ModuleArrayCandidate>()
+        var inspected = 0L
+        var lastHeartbeat = 0L
+
+        image.forEachRelativeRelocation { pointerFieldVa, modulesVa ->
+            inspected++
+            if (inspected % 1024L == 0L) {
+                if (cancellation.isCancelled()) {
+                    throw AnalysisCancelledException()
+                }
+                val now = System.currentTimeMillis()
+                if (now - lastHeartbeat >= HEARTBEAT_MS) {
+                    lastHeartbeat = now
+                    progress.publish(
+                        EngineProgress(
+                            engineId = "il2cpp.codegen-bind",
+                            scheduleClass =
+                                EngineScheduleClass.CONFIRMATION,
+                            state = RunState.RUNNING,
+                            currentTask =
+                                "IL2CPP: relocation-guided CodeGenModule recovery",
+                            currentArtifact = libraryEntry,
+                            processed = inspected,
+                            total =
+                                image.relativeRelocationCount
+                                    .toLong(),
+                            lastHeartbeatEpochMs = now,
+                        ),
+                    )
+                }
+            }
+
+            if (pointerFieldVa < pointerSize) {
+                return@forEachRelativeRelocation true
+            }
+            if (
+                modulesVa <= 0L ||
+                !image.isFileBackedVa(
+                    modulesVa,
+                    requiredArrayBytes,
+                )
+            ) {
+                return@forEachRelativeRelocation true
+            }
+
+            val countVa = pointerFieldVa - pointerSize
+            val count =
+                image.readU32AtVa(countVa)?.toInt()
+                    ?: return@forEachRelativeRelocation true
+            if (count != expectedNames.size) {
+                return@forEachRelativeRelocation true
+            }
+
+            val modules =
+                readModuleArray(
+                    image = image,
+                    modulesVa = modulesVa,
+                    count = count,
+                    cancellation = cancellation,
+                ) ?: return@forEachRelativeRelocation true
+            if (!matchesImageSet(modules, expectedNames)) {
+                return@forEachRelativeRelocation true
+            }
+
+            candidates +=
+                ModuleArrayCandidate(
+                    modules = modules,
+                    discovery =
+                        "RELATIVE_RELOCATION_PAIR@0x" +
+                            countVa.toString(16),
+                )
+            candidates.size <= 8
+        }
+
+        return uniqueCandidate(
+            candidates = candidates,
+            blockers = blockers,
+        )
+    }
+
     /**
      * Stripped libil2cpp builds often remove g_CodeRegistration from dynsym.
      * Fallback scans only bounded, file-backed non-executable PT_LOAD data and accepts
@@ -224,50 +344,131 @@ object Il2CppCodeGenScanner {
         libraryEntry: String,
         blockers: MutableList<String>,
     ): ModuleArrayCandidate? {
-        val expectedNames = metadata.images.map { it.name.lowercase() }.toSet()
-        if (expectedNames.isEmpty() || expectedNames.size > MAX_MODULES) return null
+        val expectedNames =
+            metadata.images
+                .map { it.name.lowercase() }
+                .toSet()
+        if (
+            expectedNames.isEmpty() ||
+            expectedNames.size > MAX_MODULES
+        ) {
+            return null
+        }
 
         val pointerSize = image.pointerSize
         val pairSize = pointerSize * 2L
-        val candidates = mutableListOf<ModuleArrayCandidate>()
+        val candidates =
+            mutableListOf<ModuleArrayCandidate>()
         var scanned = 0L
         var lastHeartbeat = 0L
 
-        val segments = image.loadSegments
-            .filter { !it.executable && it.fileSize >= pairSize }
-            .sortedBy { it.virtualAddress }
+        val segments =
+            image.loadSegments
+                .filter {
+                    !it.executable &&
+                        it.fileSize >= pairSize
+                }
+                .sortedBy { it.virtualAddress }
+
+        var total = 0L
+        for (segment in segments) {
+            if (total >= MAX_FALLBACK_SCAN_BYTES) break
+            total +=
+                minOf(
+                    segment.fileSize,
+                    MAX_FALLBACK_SCAN_BYTES - total,
+                )
+        }
 
         outer@ for (segment in segments) {
             var relative = 0L
-            while (relative + pairSize <= segment.fileSize) {
-                if (scanned >= MAX_FALLBACK_SCAN_BYTES) {
-                    blockers += "CODEGEN_FALLBACK_SCAN_LIMIT_REACHED"
-                    break@outer
-                }
-                if ((scanned and 0x3fffL) == 0L && cancellation.isCancelled()) {
+            while (
+                relative + 4L <= segment.fileSize &&
+                scanned < MAX_FALLBACK_SCAN_BYTES
+            ) {
+                if (cancellation.isCancelled()) {
                     throw AnalysisCancelledException()
                 }
 
-                val fieldVa = segment.virtualAddress + relative
-                val count = image.readU32AtVa(fieldVa)?.toInt()
-                if (count == expectedNames.size) {
-                    val modulesVa = image.readPointerAtVa(fieldVa + pointerSize)
-                    if (modulesVa != null && modulesVa > 0L &&
-                        image.isFileBackedVa(modulesVa, count.toLong() * pointerSize)
-                    ) {
-                        val modules = readModuleArray(image, modulesVa, count, cancellation)
-                        if (modules != null && matchesImageSet(modules, expectedNames)) {
-                            candidates += ModuleArrayCandidate(
-                                modules = modules,
-                                discovery = "BOUNDED_IMAGE_SET_SCAN@0x" + fieldVa.toString(16),
+                val remainingBudget =
+                    MAX_FALLBACK_SCAN_BYTES - scanned
+                val request =
+                    minOf(
+                        FALLBACK_WINDOW_BYTES.toLong(),
+                        segment.fileSize - relative,
+                        remainingBudget,
+                    ).toInt()
+                if (request <= 0) break
+
+                val fieldVa =
+                    segment.virtualAddress + relative
+                val window =
+                    image.readFileWindowAtVa(
+                        virtualAddress = fieldVa,
+                        maxBytes = request,
+                    ) ?: break
+                if (window.size < 4) break
+
+                var local = 0
+                while (local + 4 <= window.size) {
+                    val count =
+                        u32le(window, local)
+                    if (count == expectedNames.size.toLong()) {
+                        val candidateFieldVa =
+                            fieldVa + local
+                        val modulesVa =
+                            image.readPointerAtVa(
+                                candidateFieldVa +
+                                    pointerSize,
                             )
-                            if (candidates.size > 8) break@outer
+                        if (
+                            modulesVa != null &&
+                            modulesVa > 0L &&
+                            image.isFileBackedVa(
+                                modulesVa,
+                                expectedNames.size
+                                    .toLong() *
+                                    pointerSize,
+                            )
+                        ) {
+                            val modules =
+                                readModuleArray(
+                                    image = image,
+                                    modulesVa = modulesVa,
+                                    count = expectedNames.size,
+                                    cancellation =
+                                        cancellation,
+                                )
+                            if (
+                                modules != null &&
+                                matchesImageSet(
+                                    modules,
+                                    expectedNames,
+                                )
+                            ) {
+                                candidates +=
+                                    ModuleArrayCandidate(
+                                        modules = modules,
+                                        discovery =
+                                            "BOUNDED_IMAGE_SET_SCAN@0x" +
+                                                candidateFieldVa
+                                                    .toString(16),
+                                    )
+                                if (candidates.size > 8) {
+                                    break@outer
+                                }
+                            }
                         }
                     }
+                    local += pointerSize
                 }
 
-                relative += pointerSize
-                scanned += pointerSize
+                val advance =
+                    (window.size / pointerSize) *
+                        pointerSize
+                if (advance <= 0) break
+                relative += advance
+                scanned += advance
 
                 val now = System.currentTimeMillis()
                 if (now - lastHeartbeat >= HEARTBEAT_MS) {
@@ -275,25 +476,66 @@ object Il2CppCodeGenScanner {
                     progress.publish(
                         EngineProgress(
                             engineId = "il2cpp.codegen-bind",
-                            scheduleClass = EngineScheduleClass.CONFIRMATION,
+                            scheduleClass =
+                                EngineScheduleClass.CONFIRMATION,
                             state = RunState.RUNNING,
-                            currentTask = "IL2CPP: stripped CodeGenModule fallback",
+                            currentTask =
+                                "IL2CPP: stripped CodeGenModule fallback",
                             currentArtifact = libraryEntry,
                             processed = scanned,
-                            total = MAX_FALLBACK_SCAN_BYTES,
+                            total = total,
                             lastHeartbeatEpochMs = now,
                         ),
                     )
                 }
             }
+            if (scanned >= MAX_FALLBACK_SCAN_BYTES) {
+                break
+            }
         }
 
-        val result = uniqueCandidate(candidates, blockers)
+        if (
+            scanned >= MAX_FALLBACK_SCAN_BYTES &&
+            segments.sumOf {
+                minOf(
+                    it.fileSize,
+                    MAX_FALLBACK_SCAN_BYTES + 1L,
+                )
+            } > MAX_FALLBACK_SCAN_BYTES
+        ) {
+            blockers +=
+                "CODEGEN_FALLBACK_SCAN_LIMIT_REACHED"
+        }
+
+        val result =
+            uniqueCandidate(
+                candidates = candidates,
+                blockers = blockers,
+            )
         if (result == null && candidates.isEmpty()) {
-            blockers += "STRIPPED_CODEGEN_MODULE_ARRAY_UNRESOLVED"
+            blockers +=
+                "STRIPPED_CODEGEN_MODULE_ARRAY_UNRESOLVED"
         }
         return result
     }
+
+    private fun u32le(
+        bytes: ByteArray,
+        offset: Int,
+    ): Long =
+        (bytes[offset].toLong() and 0xffL) or
+            (
+                (bytes[offset + 1].toLong() and 0xffL)
+                    shl 8
+                ) or
+            (
+                (bytes[offset + 2].toLong() and 0xffL)
+                    shl 16
+                ) or
+            (
+                (bytes[offset + 3].toLong() and 0xffL)
+                    shl 24
+                )
 
     private fun readModuleArray(
         image: ElfImage,
