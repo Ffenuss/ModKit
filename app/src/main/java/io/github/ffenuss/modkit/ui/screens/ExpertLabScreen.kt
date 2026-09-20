@@ -54,6 +54,10 @@ import io.github.ffenuss.modkit.runtime.RuntimeEvidenceContract
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationPlanner
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationStage
 import io.github.ffenuss.modkit.runtime.RootRuntimeDecisionEngine
+import io.github.ffenuss.modkit.runtime.RootRuntimeValueScanCoordinator
+import io.github.ffenuss.modkit.runtime.RootRuntimeValueScanResult
+import io.github.ffenuss.modkit.runtime.RuntimeValueRefinement
+import io.github.ffenuss.modkit.runtime.RuntimeValueType
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -77,6 +81,15 @@ fun ExpertLabScreen(onBack: () -> Unit) {
     var nativeLookupSymbol by remember { mutableStateOf("") }
     var backendFilter by remember { mutableStateOf("") }
     var targetFilter by remember { mutableStateOf("") }
+    var runtimeValueType by remember {
+        mutableStateOf(RuntimeValueType.INT32)
+    }
+    var runtimeValueQuery by remember {
+        mutableStateOf("")
+    }
+    var runtimeValueScan by remember {
+        mutableStateOf<RootRuntimeValueScanResult?>(null)
+    }
     var installReadiness by remember {
         mutableStateOf<RepackedRuntimeInstallReadiness?>(null)
     }
@@ -137,6 +150,8 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 )
                 session?.close()
                 session = opened
+                runtimeValueScan = null
+                runtimeValueQuery = ""
                 showInstalled = false
             } catch (_: AnalysisCancelledException) {
                 error = "Открытие цели отменено."
@@ -162,6 +177,8 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 )
                 session?.close()
                 session = opened
+                runtimeValueScan = null
+                runtimeValueQuery = ""
                 showInstalled = false
             } catch (_: AnalysisCancelledException) {
                 error = "Открытие установленного приложения отменено."
@@ -256,6 +273,90 @@ fun ExpertLabScreen(onBack: () -> Unit) {
             } catch (_: AnalysisCancelledException) {
                 error =
                     "Root-подключение к процессу отменено."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun scanRootRuntimeValue() {
+        val current = session ?: return
+        val packageName =
+            current.packageName
+                ?: run {
+                    error =
+                        "Поиск памяти доступен только для установленного приложения."
+                    return
+                }
+        val signal =
+            beginOperation(
+                "runtime.root-value-scan",
+            ) ?: return
+
+        scope.launch {
+            try {
+                runtimeValueScan =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootRuntimeValueScanCoordinator
+                            .scanExact(
+                                packageName =
+                                    packageName,
+                                valueType =
+                                    runtimeValueType,
+                                query =
+                                    runtimeValueQuery,
+                                cancellation =
+                                    signal,
+                            )
+                    }
+            } catch (_: AnalysisCancelledException) {
+                error =
+                    "Root-поиск значений отменён."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun refineRootRuntimeValue(
+        refinement: RuntimeValueRefinement,
+    ) {
+        val previous =
+            runtimeValueScan ?: return
+        val signal =
+            beginOperation(
+                "runtime.root-value-refine",
+            ) ?: return
+
+        scope.launch {
+            try {
+                runtimeValueScan =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootRuntimeValueScanCoordinator
+                            .refine(
+                                previous =
+                                    previous,
+                                refinement =
+                                    refinement,
+                                cancellation =
+                                    signal,
+                            )
+                    }
+            } catch (_: AnalysisCancelledException) {
+                error =
+                    "Фильтрация runtime-значений отменена."
             } catch (failure: Throwable) {
                 error =
                     failure.message
@@ -1359,6 +1460,192 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                     Text(
                                         "Подключиться к процессу (root)",
                                     )
+                                }
+
+                                Text(
+                                    "Live Memory Scanner",
+                                    fontWeight =
+                                        FontWeight.SemiBold,
+                                )
+                                Text(
+                                    "Read-only поиск значений в private readable+writable памяти процесса. " +
+                                        "Первый проход ищет точное значение; затем результаты можно " +
+                                        "фильтровать по изменению без повторного полного сканирования.",
+                                    style =
+                                        MaterialTheme.typography.bodySmall,
+                                )
+                                OutlinedButton(
+                                    onClick = {
+                                        runtimeValueType =
+                                            runtimeValueType.next()
+                                        runtimeValueScan = null
+                                    },
+                                    enabled = !busy,
+                                    modifier =
+                                        Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        "Тип значения: " +
+                                            runtimeValueType.title +
+                                            " · нажмите для смены",
+                                    )
+                                }
+                                OutlinedTextField(
+                                    value =
+                                        runtimeValueQuery,
+                                    onValueChange = {
+                                        runtimeValueQuery = it
+                                        runtimeValueScan = null
+                                    },
+                                    label = {
+                                        Text(
+                                            "Точное значение",
+                                        )
+                                    },
+                                    supportingText = {
+                                        Text(
+                                            "Например: 100, 9999, 2.5",
+                                        )
+                                    },
+                                    singleLine = true,
+                                    modifier =
+                                        Modifier.fillMaxWidth(),
+                                )
+                                Button(
+                                    onClick =
+                                        ::scanRootRuntimeValue,
+                                    enabled =
+                                        !busy &&
+                                            runtimeValueQuery
+                                                .isNotBlank(),
+                                    modifier =
+                                        Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        "Найти значение в процессе",
+                                    )
+                                }
+
+                                runtimeValueScan?.let {
+                                        scan ->
+                                    Text(
+                                        "PID " +
+                                            scan.pid +
+                                            " · найдено " +
+                                            scan.snapshot
+                                                .hits.size +
+                                            " · просканировано " +
+                                            (
+                                                scan.snapshot
+                                                    .scannedBytes /
+                                                    (1024L * 1024L)
+                                                ) +
+                                            " MiB · регионов " +
+                                            scan.snapshot
+                                                .scannedRegions,
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                    )
+                                    if (
+                                        scan.snapshot
+                                            .truncatedByHitLimit
+                                    ) {
+                                        Text(
+                                            "Результаты ограничены лимитом найденных адресов; уточните значение или используйте фильтрацию.",
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .bodySmall,
+                                        )
+                                    }
+                                    if (
+                                        scan.snapshot
+                                            .truncatedByByteLimit
+                                    ) {
+                                        Text(
+                                            "Первый проход остановлен на лимите объёма памяти для одного сканирования.",
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .bodySmall,
+                                        )
+                                    }
+
+                                    RuntimeValueRefinement
+                                        .entries
+                                        .forEach {
+                                            refinement ->
+                                            OutlinedButton(
+                                                onClick = {
+                                                    refineRootRuntimeValue(
+                                                        refinement,
+                                                    )
+                                                },
+                                                enabled =
+                                                    !busy &&
+                                                        scan.snapshot
+                                                            .hits
+                                                            .isNotEmpty(),
+                                                modifier =
+                                                    Modifier
+                                                        .fillMaxWidth(),
+                                            ) {
+                                                Text(
+                                                    "Фильтр: " +
+                                                        refinement
+                                                            .title,
+                                                )
+                                            }
+                                        }
+
+                                    scan.snapshot.hits
+                                        .take(24)
+                                        .forEachIndexed {
+                                                index,
+                                                hit,
+                                            ->
+                                            Text(
+                                                (
+                                                    index + 1
+                                                    ).toString() +
+                                                    ". 0x" +
+                                                    hit.address
+                                                        .toString(16) +
+                                                    " = " +
+                                                    hit.displayValue(
+                                                        scan.snapshot
+                                                            .valueType,
+                                                    ) +
+                                                    (
+                                                        hit.regionPath
+                                                            ?.let {
+                                                                " · " +
+                                                                    it
+                                                            }
+                                                            .orEmpty()
+                                                        ),
+                                                style =
+                                                    MaterialTheme
+                                                        .typography
+                                                        .bodySmall,
+                                            )
+                                        }
+                                    if (
+                                        scan.snapshot.hits
+                                            .size > 24
+                                    ) {
+                                        Text(
+                                            "Показаны первые 24 адреса из " +
+                                                scan.snapshot
+                                                    .hits.size +
+                                                ".",
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .bodySmall,
+                                        )
+                                    }
                                 }
                             }
                             val rootDecision =
