@@ -21,6 +21,11 @@ data class RepackedRuntimeNativeLookupExecution(
     val attachedEvidence: RuntimeEvidenceBundle,
 )
 
+data class RepackedRuntimeResolvedModuleEvidence(
+    val artifact: ArtifactEntry,
+    val evidence: RuntimeEvidenceBundle,
+)
+
 /**
  * End-to-end targeted native lookup coordinator.
  *
@@ -56,6 +61,45 @@ object RepackedRuntimeNativeLookupCoordinator {
             transport = transport,
             cancellation = cancellation,
         )
+        val resolved = collectModuleEvidence(
+            workspace = workspace,
+            mapsCapture = mapsCapture,
+            moduleName = moduleName,
+            tempRoot = tempRoot,
+            cancellation = cancellation,
+        )
+        val moduleEvidence = resolved.evidence
+
+        val lookup = RepackedRuntimeNativeLookupCapture.capture(
+                build = build,
+                runtimeEvidence = moduleEvidence,
+                procMapsText = mapsCapture.maps.text,
+                moduleName = moduleName,
+                symbolName = symbolName,
+                transport = transport,
+                cancellation = cancellation,
+            )
+            val attached =
+                RepackedRuntimeNativeLookupCapture.attach(
+                    runtimeEvidence = moduleEvidence,
+                    result = lookup,
+                )
+        return RepackedRuntimeNativeLookupExecution(
+            mapsCapture = mapsCapture,
+            moduleArtifact = resolved.artifact,
+            moduleEvidence = moduleEvidence,
+            lookup = lookup,
+            attachedEvidence = attached,
+        )
+    }
+
+    internal fun collectModuleEvidence(
+        workspace: AnalysisWorkspace,
+        mapsCapture: RepackedRuntimeProbeCaptureResult,
+        moduleName: String,
+        tempRoot: File,
+        cancellation: CancellationSignal,
+    ): RepackedRuntimeResolvedModuleEvidence {
         val descriptive = mapsCapture.toEvidenceBundle(
             artifactSha256 = workspace.index.artifactSha256,
             artifactEntries = workspace.index.entries,
@@ -79,7 +123,7 @@ object RepackedRuntimeNativeLookupCoordinator {
             cancellation = cancellation,
         )
         try {
-            val moduleEvidence = RuntimeModuleEvidenceCollector.collect(
+            val evidence = RuntimeModuleEvidenceCollector.collect(
                 artifactSha256 = workspace.index.artifactSha256,
                 moduleFile = materialized.file,
                 moduleName = moduleName,
@@ -90,27 +134,9 @@ object RepackedRuntimeNativeLookupCoordinator {
                 processIdentity = mapsCapture.processIdentity,
                 processIdentityConfirmed = true,
             )
-
-            val lookup = RepackedRuntimeNativeLookupCapture.capture(
-                build = build,
-                runtimeEvidence = moduleEvidence,
-                procMapsText = mapsCapture.maps.text,
-                moduleName = moduleName,
-                symbolName = symbolName,
-                transport = transport,
-                cancellation = cancellation,
-            )
-            val attached =
-                RepackedRuntimeNativeLookupCapture.attach(
-                    runtimeEvidence = moduleEvidence,
-                    result = lookup,
-                )
-            return RepackedRuntimeNativeLookupExecution(
-                mapsCapture = mapsCapture,
-                moduleArtifact = selected,
-                moduleEvidence = moduleEvidence,
-                lookup = lookup,
-                attachedEvidence = attached,
+            return RepackedRuntimeResolvedModuleEvidence(
+                artifact = selected,
+                evidence = evidence,
             )
         } finally {
             if (materialized.temporary) {
