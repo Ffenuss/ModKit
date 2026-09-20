@@ -92,12 +92,34 @@ class Il2CppCodeGenScannerTest {
         assertBinding(result)
     }
 
+    @Test
+    fun strippedBinaryRecoversModuleWithoutRegistrationPair() {
+        val result = scanFixture(
+            includeCodeRegistrationSymbol = false,
+            includeRelativeRelocations = true,
+            codeRegistrationPairCount = 2,
+        )
+
+        assertNull(result.codeRegistrationVirtualAddress)
+        assertTrue(
+            result.moduleArrayDiscovery.orEmpty().startsWith(
+                "RELOCATED_MODULE_SIGNATURES_1_OF_1",
+            ),
+        )
+        assertTrue(
+            "CODE_REGISTRATION_SYMBOL_UNRESOLVED" !in
+                result.blockers,
+        )
+        assertBinding(result)
+    }
+
     private fun scanFixture(
         includeCodeRegistrationSymbol: Boolean,
         includeOutsideFileNobits: Boolean = false,
         includeRelativeRelocations: Boolean = false,
         includeAndroidPackedRelocations: Boolean = false,
         androidPackedRelocationsInDynamicOnly: Boolean = false,
+        codeRegistrationPairCount: Int = 1,
     ): Il2CppBinaryEvidence {
         val file = Files.createTempFile("modkit-codegen", ".so").toFile()
         file.writeBytes(
@@ -107,6 +129,7 @@ class Il2CppCodeGenScannerTest {
                 includeRelativeRelocations,
                 includeAndroidPackedRelocations,
                 androidPackedRelocationsInDynamicOnly,
+                codeRegistrationPairCount,
             ),
         )
         try {
@@ -187,6 +210,7 @@ class Il2CppCodeGenScannerTest {
         includeRelativeRelocations: Boolean,
         includeAndroidPackedRelocations: Boolean,
         androidPackedRelocationsInDynamicOnly: Boolean,
+        codeRegistrationPairCount: Int,
     ): ByteArray {
         require(
             !(includeRelativeRelocations &&
@@ -381,7 +405,10 @@ class Il2CppCodeGenScannerTest {
         }
 
         // CodeRegistration candidate pair #0 at VA 0x200100.
-        buffer.putInt(0x1100, 1)
+        buffer.putInt(
+            0x1100,
+            codeRegistrationPairCount,
+        )
 
         if (
             includeRelativeRelocations ||
