@@ -337,11 +337,32 @@ fun AnalysisScreen(
                                     Text(
                                         "metadata v" + (dump.metadata.metadataVersion ?: "?") +
                                             " · images " + dump.metadata.images.size +
+                                            "/" +
+                                            (dump.metadata.declaredImageCount
+                                                ?: dump.metadata.images.size) +
                                             " · types " + dump.metadata.types.size +
+                                            "/" +
+                                            (dump.metadata.declaredTypeCount
+                                                ?: dump.metadata.types.size) +
                                             " · methods " + dump.metadata.methods.size +
-                                            " · fields " + dump.metadata.fields.size,
+                                            "/" +
+                                            (dump.metadata.declaredMethodCount
+                                                ?: dump.metadata.methods.size) +
+                                            " · fields " + dump.metadata.fields.size +
+                                            "/" +
+                                            (dump.metadata.declaredFieldCount
+                                                ?: dump.metadata.fields.size),
                                         style = MaterialTheme.typography.bodySmall,
                                     )
+                                    if (dump.metadata.truncated) {
+                                        Text(
+                                            "Metadata прочитана частично. " +
+                                                "Точная IL2CPP-привязка не будет объявлена, " +
+                                                "пока все требуемые таблицы не реконструированы.",
+                                            color = MaterialTheme.colorScheme.error,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
                                     Text(
                                         if (dump.metadata.structuredSupported) {
                                             "Метаданные структурно подтверждены"
