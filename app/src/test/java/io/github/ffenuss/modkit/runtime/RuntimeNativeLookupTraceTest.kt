@@ -68,6 +68,18 @@ class RuntimeNativeLookupTraceTest {
         assertEquals("com/example/Game", event.jniClassName)
         assertEquals("nativeTick", event.jniMethodName)
         assertEquals("(I)V", event.jniSignature)
+
+        val validation = RuntimeNativeLookupValidator.validate(
+            capture = capture,
+            runtimeEvidence = runtimeEvidence(maps),
+            procMapsText = maps,
+        )
+        assertEquals(
+            RuntimeEvidenceObservationKind
+                .JNI_REGISTER_NATIVE_OBSERVED,
+            validation.observations.single().kind,
+        )
+        assertNull(validation.observations.single().proofLevel)
     }
 
     @Test
