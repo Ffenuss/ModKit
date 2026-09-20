@@ -80,10 +80,11 @@ class RuntimeProbeNativePayloadValidatorTest {
             "RuntimeNativeBridge_nativeStartPassiveJniTrace",
             "RuntimeNativeBridge_nativeStopPassiveJniTrace",
             "RuntimeNativeBridge_nativePassiveJniOnLoadInvocationReady",
+            "RuntimeNativeBridge_nativePatchCode",
         ).map {
             it.toByteArray(Charsets.US_ASCII)
         }
-        val bytes = ByteArray(512)
+        val bytes = ByteArray(1024)
         bytes[0] = 0x7f
         bytes[1] = 'E'.code.toByte()
         bytes[2] = 'L'.code.toByte()
