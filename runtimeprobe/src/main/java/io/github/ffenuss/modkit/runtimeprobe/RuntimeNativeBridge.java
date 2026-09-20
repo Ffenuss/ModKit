@@ -107,6 +107,31 @@ public final class RuntimeNativeBridge {
         return nativeResolveLoadedSymbol(moduleName, symbolName);
     }
 
+    public static boolean patchCode(
+            String moduleName,
+            long binaryVirtualAddress,
+            byte[] expectedBytes,
+            byte[] replacementBytes
+    ) {
+        if (!validModule(moduleName) ||
+                binaryVirtualAddress <= 0L ||
+                expectedBytes == null ||
+                replacementBytes == null ||
+                expectedBytes.length == 0 ||
+                expectedBytes.length != replacementBytes.length ||
+                expectedBytes.length > 64 ||
+                expectedBytes.length % 4 != 0) {
+            return false;
+        }
+        if (!ensureLoaded()) return false;
+        return nativePatchCode(
+                moduleName,
+                binaryVirtualAddress,
+                expectedBytes,
+                replacementBytes
+        );
+    }
+
     private static boolean validModule(String value) {
         if (value == null || value.isEmpty() || value.length() > MAX_MODULE_CHARS) {
             return false;
@@ -161,5 +186,12 @@ public final class RuntimeNativeBridge {
     private static native long nativeResolveLoadedSymbol(
             String moduleName,
             String symbolName
+    );
+
+    private static native boolean nativePatchCode(
+            String moduleName,
+            long binaryVirtualAddress,
+            byte[] expectedBytes,
+            byte[] replacementBytes
     );
 }
