@@ -12,7 +12,7 @@ import org.junit.Test
 
 class RepackedRuntimePassiveJniTraceSessionCaptureTest {
     @Test
-    fun signedPidBoundSessionExportsInvocationAndRegistrationEvents() {
+    fun signedPidBoundSessionExportsLookupAndRegistrationEvents() {
         val transport = FakeTransport(
             installed = installedProbe(),
             query = query(),
@@ -83,6 +83,46 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
                 "RegisterNatives",
             ),
         )
+    }
+
+    @Test
+    fun missingArtLookupHookKeepsRegistrationCaptureAvailableButIncomplete() {
+        val transport = FakeTransport(
+            installed = installedProbe(),
+            query = query(),
+            startStatus =
+                startStatus().copy(
+                    jniOnLoadLookupHookedSlotCount = 0,
+                    producerIncomplete = true,
+                ),
+            stopStatus =
+                stopStatus().copy(
+                    jniOnLoadLookupHookedSlotCount = 0,
+                    producerIncomplete = true,
+                ),
+            traceBytes =
+                exportBytes(
+                    producerIncomplete = true,
+                    jniOnLoadLookupHookedSlotCount = 0,
+                ),
+        )
+
+        val session =
+            RepackedRuntimePassiveJniTraceSessionCapture.start(
+                build = buildResult(),
+                transport = transport,
+                cancellation = AtomicCancellationSignal(),
+            )
+        val result =
+            RepackedRuntimePassiveJniTraceSessionCapture.stopAndRead(
+                build = buildResult(),
+                session = session,
+                transport = transport,
+                cancellation = AtomicCancellationSignal(),
+            )
+
+        assertEquals(0, result.status.jniOnLoadLookupHookedSlotCount)
+        assertTrue(result.status.producerIncomplete)
     }
 
     @Test
@@ -271,6 +311,7 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
 
     private fun exportBytes(
         producerIncomplete: Boolean = false,
+        jniOnLoadLookupHookedSlotCount: Int = 1,
     ): ByteArray {
         val traceBytes = TRACE.toByteArray(Charsets.UTF_8)
         val header = buildString {
@@ -291,7 +332,10 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
             appendLine("traceBytes=" + traceBytes.size)
             appendLine("truncated=false")
             appendLine("producerKind=ART_JNI_ONLOAD_LOOKUP_JNI_TABLE")
-            appendLine("jniOnLoadLookupHookedSlotCount=1")
+            appendLine(
+                "jniOnLoadLookupHookedSlotCount=" +
+                    jniOnLoadLookupHookedSlotCount,
+            )
             appendLine("registerNativesHooked=true")
             appendLine(
                 "producerIncomplete=$producerIncomplete",
