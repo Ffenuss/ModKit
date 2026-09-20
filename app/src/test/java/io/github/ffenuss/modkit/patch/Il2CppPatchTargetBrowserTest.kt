@@ -119,6 +119,45 @@ class Il2CppPatchTargetBrowserTest {
     }
 
     @Test
+    fun reconstructedSourceViewExplainsIl2CppLimitAndShowsReadableSignature() {
+        val target =
+            target(
+                id =
+                    "il2cpp:method:Assembly-CSharp.dll:" +
+                        "6000001:Assembly-CSharp.dll",
+                memberName = "Update",
+            )
+        val result =
+            resultWithBinding(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.BOOLEAN,
+            )
+
+        val view =
+            Il2CppPatchTargetBrowser
+                .reconstructedSourceView(
+                    result,
+                    target,
+                )
+
+        assertTrue(
+            view.contains("namespace Game"),
+        )
+        assertTrue(
+            view.contains("class Player"),
+        )
+        assertTrue(
+            view.contains("public bool Update()"),
+        )
+        assertTrue(
+            view.contains(
+                "не исходный .cs файл",
+            ),
+        )
+    }
+
+    @Test
     fun unknownReturnKindDoesNotGuessFromLifecycleName() {
         val target =
             target(

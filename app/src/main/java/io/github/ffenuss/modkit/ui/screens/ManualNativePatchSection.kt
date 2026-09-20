@@ -1,8 +1,11 @@
 package io.github.ffenuss.modkit.ui.screens
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
@@ -12,6 +15,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -23,8 +27,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
@@ -70,6 +77,9 @@ fun ManualNativePatchSection(
         mutableStateOf<NativeCodeWindow?>(null)
     }
     var codeWindowBusy by remember(key) {
+        mutableStateOf(false)
+    }
+    var showRawHex by remember(key) {
         mutableStateOf(false)
     }
     var projectCodeOnly by remember(key) { mutableStateOf(true) }
@@ -126,6 +136,7 @@ fun ManualNativePatchSection(
         selectedTargetId = targetId
         replacementHex = ""
         codeWindow = null
+        showRawHex = false
         draft = null
         preflight = null
         applyOutcome = null
@@ -272,6 +283,396 @@ fun ManualNativePatchSection(
                     selected.fileOffset
             }
         } ?: 0
+    }
+
+    if (codeWindowBusy || codeWindow != null) {
+        Dialog(
+            onDismissRequest = { },
+            properties =
+                DialogProperties(
+                    dismissOnBackPress = false,
+                    dismissOnClickOutside = false,
+                    usePlatformDefaultWidth = false,
+                ),
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background,
+            ) {
+                val window = codeWindow
+                if (window == null) {
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .padding(24.dp),
+                        verticalArrangement =
+                            Arrangement.spacedBy(16.dp),
+                    ) {
+                        Text(
+                            "Открываю код метода…",
+                            style =
+                                MaterialTheme.typography
+                                    .headlineSmall,
+                            fontWeight =
+                                FontWeight.SemiBold,
+                        )
+                        LinearProgressIndicator(
+                            Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            selectedPrepared
+                                ?.target
+                                ?.displayName
+                                ?: "Чтение exact native body",
+                            style =
+                                MaterialTheme.typography.bodyMedium,
+                        )
+                    }
+                } else {
+                    val evidenceTarget =
+                        selectedPrepared?.target
+                    val readableSource =
+                        evidenceTarget?.let {
+                            Il2CppPatchTargetBrowser
+                                .reconstructedSourceView(
+                                    result = analysis,
+                                    target = it,
+                                )
+                        } ?: "// Metadata-контекст метода недоступен."
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .verticalScroll(
+                                    rememberScrollState(),
+                                )
+                                .padding(20.dp),
+                        verticalArrangement =
+                            Arrangement.spacedBy(14.dp),
+                    ) {
+                        Text(
+                            "Код метода",
+                            style =
+                                MaterialTheme.typography
+                                    .headlineSmall,
+                            fontWeight =
+                                FontWeight.Bold,
+                        )
+                        Text(
+                            window.targetDisplayName,
+                            fontWeight =
+                                FontWeight.SemiBold,
+                        )
+                        Text(
+                            "Редактор открыт поверх списка найденного — " +
+                                "после сохранения или закрытия вы вернётесь " +
+                                "ровно к тому же месту.",
+                            style =
+                                MaterialTheme.typography.bodySmall,
+                        )
+
+                        Card(
+                            Modifier.fillMaxWidth(),
+                        ) {
+                            Column(
+                                Modifier.padding(14.dp),
+                                verticalArrangement =
+                                    Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    "Читаемый C#-вид",
+                                    fontWeight =
+                                        FontWeight.SemiBold,
+                                )
+                                Text(
+                                    readableSource,
+                                    fontFamily =
+                                        FontFamily.Monospace,
+                                    style =
+                                        MaterialTheme.typography
+                                            .bodySmall,
+                                )
+                            }
+                        }
+
+                        Text(
+                            "Важно: если APK собран через IL2CPP, точный текст, " +
+                                "который был в исходном .cs файле, внутри APK уже не хранится. " +
+                                "Unity преобразует C# в C++ и затем в ARM64. Поэтому ModKit " +
+                                "может восстановить класс, имя метода, часть сигнатуры и связать " +
+                                "их с точным native body, но не вернуть комментарии, локальные " +
+                                "имена и исходное тело один-в-один без оригинального проекта/символов.",
+                            style =
+                                MaterialTheme.typography.bodySmall,
+                        )
+
+                        Text(
+                            "Native: libil2cpp.so · " +
+                                window.abi +
+                                " · offset 0x" +
+                                window.fileOffset
+                                    .toString(16) +
+                                " · " +
+                                window.byteLength +
+                                " байт",
+                            style =
+                                MaterialTheme.typography.bodySmall,
+                        )
+
+                        if (
+                            presets.isNotEmpty() &&
+                            selectedSharedBodyCount == 1
+                        ) {
+                            Text(
+                                "Готовые изменения",
+                                fontWeight =
+                                    FontWeight.SemiBold,
+                            )
+                            presets.forEach { preset ->
+                                val checked =
+                                    replacementHex
+                                        .trim()
+                                        .equals(
+                                            preset.replacementHex,
+                                            ignoreCase = true,
+                                        )
+                                Row(
+                                    modifier =
+                                        Modifier.fillMaxWidth(),
+                                    verticalAlignment =
+                                        Alignment.CenterVertically,
+                                ) {
+                                    Checkbox(
+                                        checked = checked,
+                                        onCheckedChange = {
+                                            enabled ->
+                                            replacementHex =
+                                                if (enabled) {
+                                                    preset.replacementHex
+                                                } else {
+                                                    window.originalHex
+                                                }
+                                            draft = null
+                                            preflight = null
+                                            applyOutcome = null
+                                            error = null
+                                        },
+                                    )
+                                    Column {
+                                        Text(preset.label)
+                                        Text(
+                                            preset.description,
+                                            style =
+                                                MaterialTheme.typography
+                                                    .bodySmall,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                showRawHex =
+                                    !showRawHex
+                            },
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (showRawHex) {
+                                    "Скрыть низкоуровневый HEX"
+                                } else {
+                                    "Показать низкоуровневый HEX"
+                                },
+                            )
+                        }
+
+                        if (showRawHex) {
+                            OutlinedTextField(
+                                value = replacementHex,
+                                onValueChange = {
+                                    replacementHex = it
+                                    draft = null
+                                    preflight = null
+                                    applyOutcome = null
+                                },
+                                label = {
+                                    Text(
+                                        "Точный ARM64 body (hex)",
+                                    )
+                                },
+                                supportingText = {
+                                    Text(
+                                        "Это машинный код. Используйте его только " +
+                                            "для точной ручной правки; ARM64 — полными " +
+                                            "4-байтовыми инструкциями.",
+                                    )
+                                },
+                                singleLine = false,
+                                minLines = 6,
+                                maxLines = 14,
+                                textStyle =
+                                    MaterialTheme.typography
+                                        .bodyMedium
+                                        .copy(
+                                            fontFamily =
+                                                FontFamily.Monospace,
+                                        ),
+                                modifier =
+                                    Modifier.fillMaxWidth(),
+                            )
+                        }
+
+                        if (
+                            selectedSharedBodyCount > 1
+                        ) {
+                            Text(
+                                "Сохранение заблокировано: этот native body " +
+                                    "разделяется " +
+                                    selectedSharedBodyCount +
+                                    " metadata-методами.",
+                                color =
+                                    MaterialTheme.colorScheme.error,
+                                style =
+                                    MaterialTheme.typography.bodySmall,
+                            )
+                        }
+
+                        error?.let {
+                            Text(
+                                it,
+                                color =
+                                    MaterialTheme.colorScheme.error,
+                                style =
+                                    MaterialTheme.typography.bodySmall,
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                val currentTarget =
+                                    evidenceTarget
+                                if (currentTarget == null) {
+                                    error =
+                                        "Точная цель метода потеряна."
+                                    return@Button
+                                }
+                                error = null
+                                runCatching {
+                                    val built =
+                                        Il2CppNativeMutationDraftBuilder
+                                            .build(
+                                                result = analysis,
+                                                targetId =
+                                                    currentTarget.id,
+                                                replacementHex =
+                                                    replacementHex,
+                                                analysisResultsRoot =
+                                                    File(
+                                                        context.filesDir,
+                                                        "analysis-results",
+                                                    ),
+                                                stagingRoot =
+                                                    File(
+                                                        context.filesDir,
+                                                        "patch-staging",
+                                                    ),
+                                            )
+                                    val candidate =
+                                        queuedDrafts
+                                            .filterNot {
+                                                it.request
+                                                    .targetId ==
+                                                    currentTarget.id
+                                            } +
+                                            built
+                                    val combined =
+                                        MutationPreflightEngine
+                                            .validate(
+                                                preparation =
+                                                    preparation,
+                                                requests =
+                                                    candidate
+                                                        .map {
+                                                            it.request
+                                                        },
+                                            )
+                                    require(
+                                        combined.readyForApply,
+                                    ) {
+                                        (
+                                            combined.globalBlockers +
+                                                combined.blockedItems
+                                                    .flatMap {
+                                                        it.blockers
+                                                    }
+                                            )
+                                            .distinct()
+                                            .firstOrNull()
+                                            ?: "Изменение не прошло preflight."
+                                    }
+                                    queuedDrafts =
+                                        candidate
+                                    manualQueuedTargetIds =
+                                        manualQueuedTargetIds +
+                                            currentTarget.id
+                                    automaticQueuedTargetIds =
+                                        automaticQueuedTargetIds -
+                                            currentTarget.id
+                                    onStagingInvalidated()
+                                    codeWindow = null
+                                    showRawHex = false
+                                    replacementHex = ""
+                                    selectedTargetId = null
+                                    draft = null
+                                    preflight = null
+                                    applyOutcome = null
+                                    error = null
+                                }.onFailure {
+                                    failure ->
+                                    error =
+                                        failure.message
+                                            ?: failure
+                                                .javaClass
+                                                .simpleName
+                                }
+                            },
+                            enabled =
+                                !busy &&
+                                    evidenceTarget != null &&
+                                    selectedSharedBodyCount == 1 &&
+                                    replacementHex.isNotBlank(),
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                "Сохранить изменение и закрыть",
+                            )
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                codeWindow = null
+                                showRawHex = false
+                                replacementHex = ""
+                                selectedTargetId = null
+                                draft = null
+                                preflight = null
+                                applyOutcome = null
+                                error = null
+                            },
+                            enabled = !busy,
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Закрыть без сохранения")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Card(Modifier.fillMaxWidth()) {
@@ -834,182 +1235,6 @@ fun ManualNativePatchSection(
                     )
                 }
 
-                codeWindow
-                    ?.takeIf {
-                        it.targetId ==
-                            evidenceTarget.id
-                    }
-                    ?.let { window ->
-                        Text(
-                            "Редактор native-кода",
-                            fontWeight =
-                                FontWeight.SemiBold,
-                        )
-                        Text(
-                            "libil2cpp.so · " +
-                                window.abi +
-                                " · offset 0x" +
-                                window.fileOffset
-                                    .toString(16) +
-                                " · " +
-                                window.byteLength +
-                                " байт",
-                            style =
-                                MaterialTheme.typography.bodySmall,
-                        )
-                        window.nextMethodFileOffset
-                            ?.let { nextOffset ->
-                                Text(
-                                    "Окно ограничено перед следующим " +
-                                        "exact-методом: 0x" +
-                                        nextOffset
-                                            .toString(16),
-                                    style =
-                                        MaterialTheme.typography
-                                            .bodySmall,
-                                )
-                            }
-                        Text(
-                            "Это реальные исполняемые байты найденного " +
-                                "метода. dump.cs используется как metadata-контекст; " +
-                                "исходного C# тела в IL2CPP APK уже нет.",
-                            style =
-                                MaterialTheme.typography.bodySmall,
-                        )
-                        OutlinedTextField(
-                            value = replacementHex,
-                            onValueChange = {
-                                replacementHex = it
-                                draft = null
-                                preflight = null
-                                applyOutcome = null
-                            },
-                            label = {
-                                Text("Код метода (hex)")
-                            },
-                            supportingText = {
-                                Text(
-                                    "Можно менять только нужные байты. " +
-                                        "ARM64 сохраняется полными 4-байтовыми инструкциями.",
-                                )
-                            },
-                            singleLine = false,
-                            minLines = 5,
-                            maxLines = 12,
-                            modifier =
-                                Modifier.fillMaxWidth(),
-                        )
-                        Button(
-                            onClick = {
-                                error = null
-                                runCatching {
-                                    val built =
-                                        Il2CppNativeMutationDraftBuilder
-                                            .build(
-                                                result =
-                                                    analysis,
-                                                targetId =
-                                                    evidenceTarget.id,
-                                                replacementHex =
-                                                    replacementHex,
-                                                analysisResultsRoot =
-                                                    File(
-                                                        context.filesDir,
-                                                        "analysis-results",
-                                                    ),
-                                                stagingRoot =
-                                                    File(
-                                                        context.filesDir,
-                                                        "patch-staging",
-                                                    ),
-                                            )
-                                    val candidate =
-                                        queuedDrafts
-                                            .filterNot {
-                                                it.request
-                                                    .targetId ==
-                                                    evidenceTarget.id
-                                            } +
-                                            built
-                                    val combined =
-                                        MutationPreflightEngine
-                                            .validate(
-                                                preparation =
-                                                    preparation,
-                                                requests =
-                                                    candidate
-                                                        .map {
-                                                            it.request
-                                                        },
-                                            )
-                                    require(
-                                        combined.readyForApply,
-                                    ) {
-                                        (
-                                            combined
-                                                .globalBlockers +
-                                                combined
-                                                    .blockedItems
-                                                    .flatMap {
-                                                        it.blockers
-                                                    }
-                                            )
-                                            .distinct()
-                                            .firstOrNull()
-                                            ?: "Изменение не прошло preflight."
-                                    }
-                                    queuedDrafts =
-                                        candidate
-                                    manualQueuedTargetIds =
-                                        manualQueuedTargetIds +
-                                            evidenceTarget.id
-                                    automaticQueuedTargetIds =
-                                        automaticQueuedTargetIds -
-                                            evidenceTarget.id
-                                    onStagingInvalidated()
-                                    codeWindow = null
-                                    replacementHex = ""
-                                    selectedTargetId = null
-                                    draft = null
-                                    preflight = null
-                                    applyOutcome = null
-                                }.onFailure { failure ->
-                                    error =
-                                        failure.message
-                                            ?: failure
-                                                .javaClass
-                                                .simpleName
-                                }
-                            },
-                            enabled =
-                                !busy &&
-                                    selectedSharedBodyCount == 1 &&
-                                    replacementHex.isNotBlank(),
-                            modifier =
-                                Modifier.fillMaxWidth(),
-                        ) {
-                            Text(
-                                "Сохранить ручное изменение и закрыть",
-                            )
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                codeWindow = null
-                                replacementHex = ""
-                                selectedTargetId = null
-                                draft = null
-                                preflight = null
-                                applyOutcome = null
-                                error = null
-                            },
-                            enabled = !busy,
-                            modifier =
-                                Modifier.fillMaxWidth(),
-                        ) {
-                            Text("Закрыть без сохранения")
-                        }
-                    }
-
                 if (
                     presets.isNotEmpty() &&
                     selectedSharedBodyCount == 1
@@ -1088,7 +1313,8 @@ fun ManualNativePatchSection(
 
             if (
                 selectedPrepared != null &&
-                codeWindow == null
+                codeWindow == null &&
+                replacementHex.isNotBlank()
             ) {
             OutlinedTextField(
                 value = replacementHex,

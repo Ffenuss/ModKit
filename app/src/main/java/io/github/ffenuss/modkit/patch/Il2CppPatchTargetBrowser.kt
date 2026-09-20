@@ -149,6 +149,150 @@ object Il2CppPatchTargetBrowser {
         }
     }
 
+    fun reconstructedSourceView(
+        result: FastAnalysisResult,
+        target: EvidenceTarget,
+    ): String {
+        val binding = bindingFor(result, target)
+        val model = result.il2cppFastDump?.metadata
+        val method =
+            model?.methods
+                ?.firstOrNull {
+                    it.token == target.metadataToken &&
+                        it.declaringType ==
+                        target.declaringType
+                }
+        val fullType =
+            target.declaringType
+                ?.takeIf { it.isNotBlank() }
+                ?: "UnknownType"
+        val namespace =
+            fullType.substringBeforeLast(
+                '.',
+                missingDelimiterValue = "",
+            )
+        val className =
+            fullType.substringAfterLast('.')
+        val methodName =
+            target.memberName
+                ?.takeIf { it.isNotBlank() }
+                ?: "Method"
+        val parameterCount =
+            method?.parameterCount
+                ?: 0
+        val fields =
+            model?.types
+                ?.firstOrNull {
+                    it.fullName == fullType
+                }
+                ?.let { type ->
+                    model.fields
+                        .asSequence()
+                        .filter {
+                            it.declaringTypeIndex ==
+                                type.index
+                        }
+                        .take(12)
+                        .toList()
+                }
+                .orEmpty()
+
+        return buildString {
+            appendLine(
+                "// Восстановленное представление из IL2CPP metadata.",
+            )
+            appendLine(
+                "// Это не исходный .cs файл: комментарии, локальные имена " +
+                    "и точное C# тело после IL2CPP-компиляции в APK не хранятся.",
+            )
+            target.metadataToken?.let {
+                appendLine(
+                    "// metadata token: 0x" +
+                        it.toString(16),
+                )
+            }
+            target.fileOffset?.let {
+                appendLine(
+                    "// native file offset: 0x" +
+                        it.toString(16),
+                )
+            }
+            if (namespace.isNotBlank()) {
+                appendLine("namespace " + namespace)
+                appendLine("{")
+            }
+            val indent =
+                if (namespace.isBlank()) "" else "    "
+            appendLine(indent + "class " + className)
+            appendLine(indent + "{")
+            fields.forEach { field ->
+                appendLine(
+                    indent +
+                        "    object " +
+                        field.name +
+                        "; // TypeRef#" +
+                        field.typeIndex,
+                )
+            }
+            if (fields.isNotEmpty()) {
+                appendLine()
+            }
+            append(
+                indent +
+                    "    public " +
+                    sourceReturnType(
+                        binding?.returnKind
+                            ?: Il2CppNativeReturnKind.UNKNOWN,
+                    ) +
+                    " " +
+                    methodName +
+                    "(",
+            )
+            repeat(parameterCount) { index ->
+                if (index > 0) append(", ")
+                append("object arg" + index)
+            }
+            appendLine(")")
+            appendLine(indent + "    {")
+            appendLine(
+                indent +
+                    "        // Исходное C# тело невозможно извлечь из IL2CPP APK.",
+            )
+            appendLine(
+                indent +
+                    "        // Ниже в редакторе доступен точный ARM64 body этого метода.",
+            )
+            appendLine(indent + "    }")
+            appendLine(indent + "}")
+            if (namespace.isNotBlank()) {
+                appendLine("}")
+            }
+        }.trimEnd()
+    }
+
+    private fun sourceReturnType(
+        kind: Il2CppNativeReturnKind,
+    ): String = when (kind) {
+        Il2CppNativeReturnKind.VOID ->
+            "void"
+        Il2CppNativeReturnKind.BOOLEAN ->
+            "bool"
+        Il2CppNativeReturnKind.INTEGER ->
+            "long /* integer width unknown */"
+        Il2CppNativeReturnKind.POINTER_OR_REFERENCE ->
+            "object"
+        Il2CppNativeReturnKind.FLOAT32 ->
+            "float"
+        Il2CppNativeReturnKind.FLOAT64 ->
+            "double"
+        Il2CppNativeReturnKind.FLOATING_POINT ->
+            "double /* float/double width not proven */"
+        Il2CppNativeReturnKind.VALUE_TYPE ->
+            "object /* value type */"
+        Il2CppNativeReturnKind.UNKNOWN ->
+            "object /* return type unknown */"
+    }
+
     fun methodHint(
         target: EvidenceTarget,
     ): String {
