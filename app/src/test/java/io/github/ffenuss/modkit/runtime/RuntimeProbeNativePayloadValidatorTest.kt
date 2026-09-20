@@ -73,10 +73,14 @@ class RuntimeProbeNativePayloadValidatorTest {
         machine: Int,
         includeMarker: Boolean,
     ): ByteArray {
-        val marker =
-            "RuntimeNativeBridge_nativeResolveLoadedSymbol"
-                .toByteArray(Charsets.US_ASCII)
-        val bytes = ByteArray(256)
+        val markers = listOf(
+            "RuntimeNativeBridge_nativeResolveLoadedSymbol",
+            "RuntimeNativeBridge_nativeStartPassiveDlsymTrace",
+            "RuntimeNativeBridge_nativeStopPassiveDlsymTrace",
+        ).map {
+            it.toByteArray(Charsets.US_ASCII)
+        }
+        val bytes = ByteArray(512)
         bytes[0] = 0x7f
         bytes[1] = 'E'.code.toByte()
         bytes[2] = 'L'.code.toByte()
@@ -86,7 +90,11 @@ class RuntimeProbeNativePayloadValidatorTest {
         putU16(bytes, 16, 3)
         putU16(bytes, 18, machine)
         if (includeMarker) {
-            marker.copyInto(bytes, 64)
+            var offset = 64
+            markers.forEach { marker ->
+                marker.copyInto(bytes, offset)
+                offset += marker.size + 8
+            }
         }
         return bytes
     }
