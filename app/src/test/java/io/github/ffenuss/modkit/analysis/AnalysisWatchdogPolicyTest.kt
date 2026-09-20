@@ -53,4 +53,26 @@ class AnalysisWatchdogPolicyTest {
             AnalysisWatchdogPolicy.stalledAfterMs(null),
         )
     }
+
+    @Test
+    fun largeIl2CppExtractionGetsIoSpecificWindow() {
+        assertEquals(
+            180_000L,
+            AnalysisWatchdogPolicy.stalledAfterMs(
+                scheduleClass =
+                    EngineScheduleClass.CONFIRMATION,
+                currentTask =
+                    "IL2CPP: извлечение libil2cpp.so",
+            ),
+        )
+        assertEquals(
+            60_000L,
+            AnalysisWatchdogPolicy.stalledAfterMs(
+                scheduleClass =
+                    EngineScheduleClass.CONFIRMATION,
+                currentTask =
+                    "IL2CPP: relocated CodeGenModule signatures",
+            ),
+        )
+    }
 }
