@@ -147,7 +147,6 @@ object VerifiedBuildPipeline {
 
             val installability = withContext(Dispatchers.IO) {
                 BuiltPackageVerifier.verify(
-                    context = context,
                     files = built.map { it.file },
                 )
             }
