@@ -133,10 +133,17 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
             }
         }
         if ("nativeTraceStatus".equals(method)) {
-            return traceStatusBundle(
-                    RuntimeNativeTraceBuffer.snapshot(),
-                    RuntimeNativeBridge.ensureLoaded()
-            );
+            synchronized (TRACE_LOCK) {
+                if (!TRACE_MODE_DLSYM.equals(traceMode)) {
+                    throw new IllegalStateException(
+                            "No passive dlsym trace session is selected."
+                    );
+                }
+                return traceStatusBundle(
+                        RuntimeNativeTraceBuffer.snapshot(),
+                        RuntimeNativeBridge.ensureLoaded()
+                );
+            }
         }
         if ("nativeJniTraceStart".equals(method)) {
             synchronized (TRACE_LOCK) {
@@ -181,6 +188,11 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         }
         if ("nativeJniTraceStatus".equals(method)) {
             synchronized (TRACE_LOCK) {
+                if (!TRACE_MODE_JNI.equals(traceMode)) {
+                    throw new IllegalStateException(
+                            "No passive JNI registration trace session is selected."
+                    );
+                }
                 boolean ready = RuntimeNativeBridge.ensureLoaded() &&
                         !RuntimeNativeBridge.passiveJniRestoreFailed();
                 return jniTraceStatusBundle(
@@ -290,6 +302,13 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
             return openPipe("ModKitRuntimeProbe", this::writeEvidence);
         }
         if (("/" + PATH_NATIVE_TRACE).equals(path)) {
+            synchronized (TRACE_LOCK) {
+                if (!TRACE_MODE_DLSYM.equals(traceMode)) {
+                    throw new FileNotFoundException(
+                            "No passive dlsym trace session is available."
+                    );
+                }
+            }
             RuntimeNativeTraceBuffer.Snapshot snapshot =
                     RuntimeNativeTraceBuffer.snapshot();
             if (snapshot.sessionId.isEmpty()) {
