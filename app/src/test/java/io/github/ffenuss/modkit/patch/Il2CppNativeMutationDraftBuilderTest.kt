@@ -94,6 +94,109 @@ class Il2CppNativeMutationDraftBuilderTest {
         )
     }
 
+    @Test
+    fun refusesUnalignedArm64InstructionPayload() {
+        val root =
+            Files.createTempDirectory(
+                "modkit-native-draft-align-",
+            ).toFile()
+        try {
+            val analysisRoot =
+                File(root, "analysis-results")
+            val nativeDir =
+                File(
+                    analysisRoot,
+                    SHA + "/il2cpp/native",
+                ).apply { mkdirs() }
+            File(
+                nativeDir,
+                "arm64-v8a-libil2cpp.so",
+            ).writeBytes(ByteArray(32) { it.toByte() })
+
+            val failure =
+                runCatching {
+                    Il2CppNativeMutationDraftBuilder.build(
+                        result =
+                            analysisResult(
+                                proof =
+                                    ProofLevel.EXACT_BINARY,
+                                status =
+                                    UserFindingStatus.CONFIRMED,
+                            ),
+                        targetId = TARGET_ID,
+                        replacementHex = "AA BB",
+                        analysisResultsRoot =
+                            analysisRoot,
+                        stagingRoot =
+                            File(root, "staging"),
+                    )
+                }.exceptionOrNull()
+
+            assertTrue(
+                failure is IllegalArgumentException,
+            )
+            assertTrue(
+                failure?.message.orEmpty().contains(
+                    "4-байтовых",
+                ),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun refusesNoOpReplacement() {
+        val root =
+            Files.createTempDirectory(
+                "modkit-native-draft-noop-",
+            ).toFile()
+        try {
+            val analysisRoot =
+                File(root, "analysis-results")
+            val nativeDir =
+                File(
+                    analysisRoot,
+                    SHA + "/il2cpp/native",
+                ).apply { mkdirs() }
+            val bytes = ByteArray(32) { it.toByte() }
+            File(
+                nativeDir,
+                "arm64-v8a-libil2cpp.so",
+            ).writeBytes(bytes)
+
+            val failure =
+                runCatching {
+                    Il2CppNativeMutationDraftBuilder.build(
+                        result =
+                            analysisResult(
+                                proof =
+                                    ProofLevel.EXACT_BINARY,
+                                status =
+                                    UserFindingStatus.CONFIRMED,
+                            ),
+                        targetId = TARGET_ID,
+                        replacementHex = "08 09 0A 0B",
+                        analysisResultsRoot =
+                            analysisRoot,
+                        stagingRoot =
+                            File(root, "staging"),
+                    )
+                }.exceptionOrNull()
+
+            assertTrue(
+                failure is IllegalArgumentException,
+            )
+            assertTrue(
+                failure?.message.orEmpty().contains(
+                    "изменение отсутствует",
+                ),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun analysisResult(
         proof: ProofLevel,
         status: UserFindingStatus,
