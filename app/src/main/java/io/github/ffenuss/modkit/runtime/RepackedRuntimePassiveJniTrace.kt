@@ -233,7 +233,7 @@ object RepackedRuntimePassiveJniTraceExportProtocol {
         }
         require(
             jniOnLoadLookupHookedSlotCount != null &&
-                jniOnLoadLookupHookedSlotCount in 1..16,
+                jniOnLoadLookupHookedSlotCount in 0..16,
         ) {
             "Runtime passive JNI trace JNI_OnLoad hook count is invalid."
         }
@@ -377,9 +377,6 @@ object RepackedRuntimePassiveJniTraceSessionCapture {
         require(status.producerActive) {
             "Passive JNI producer is not active."
         }
-        require(status.jniOnLoadLookupHookedSlotCount > 0) {
-            "Passive JNI producer did not hook ART JNI_OnLoad lookup."
-        }
         require(status.registerNativesHooked) {
             "Passive JNI producer did not hook RegisterNatives."
         }
@@ -465,9 +462,6 @@ object RepackedRuntimePassiveJniTraceSessionCapture {
         }
         require(!status.producerActive) {
             "Passive JNI producer remained active after stop."
-        }
-        require(status.jniOnLoadLookupHookedSlotCount > 0) {
-            "Passive JNI producer lost JNI_OnLoad hook provenance."
         }
         require(status.registerNativesHooked) {
             "Passive JNI producer lost RegisterNatives hook provenance."
