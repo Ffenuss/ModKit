@@ -25,7 +25,6 @@ import kotlinx.coroutines.withContext
 
 object AnalysisManager {
     private const val WATCHDOG_INTERVAL_MS = 5_000L
-    private const val STALLED_AFTER_MS = 20_000L
 
     private data class PreparedInput(
         val files: List<File>,
@@ -416,7 +415,11 @@ object AnalysisManager {
                             val heartbeat = current.progress?.lastHeartbeatEpochMs
                                 ?: current.startedAtEpochMs
                             val age = now - heartbeat
-                            if (age >= STALLED_AFTER_MS) {
+                            val stalledAfterMs =
+                                AnalysisWatchdogPolicy.stalledAfterMs(
+                                    current.progress?.scheduleClass,
+                                )
+                            if (age >= stalledAfterMs) {
                                 val stalled = AnalysisRunState.Stalled(
                                     runId = runId,
                                     target = target,
