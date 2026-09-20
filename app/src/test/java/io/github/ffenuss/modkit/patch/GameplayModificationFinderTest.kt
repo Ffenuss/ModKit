@@ -706,6 +706,38 @@ class GameplayModificationFinderTest {
     }
 
     @Test
+    fun sensitiveLibrarySurfaceRemainsVisibleInProjectOnlyMode() {
+        val target =
+            target(
+                token = 0x06000018,
+                name = "ValidatePurchaseReceipt",
+                offset = 0x830,
+                imageName = "Store.Billing.dll",
+                declaringType =
+                    "Store.Billing.ReceiptValidator",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.BOOLEAN,
+            )
+
+        val opportunity =
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+                projectCodeOnly = true,
+            ).single()
+
+        assertEquals(
+            GameplayModificationCategory.SENSITIVE_SURFACE,
+            opportunity.category,
+        )
+        assertFalse(opportunity.selectable)
+    }
+
+    @Test
     fun antiCheatAndAuthenticationSurfacesAreReportedAsSensitive() {
         val first =
             target(
