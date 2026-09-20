@@ -14,6 +14,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +32,7 @@ import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.GameplayModificationFinder
+import io.github.ffenuss.modkit.patch.GameplayModificationOpportunity
 import io.github.ffenuss.modkit.patch.Il2CppNativeMutationDraftBuilder
 import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
 import io.github.ffenuss.modkit.analysis.Il2CppNativeReturnKind
@@ -43,7 +45,9 @@ import io.github.ffenuss.modkit.patch.NativePatchPresetCatalog
 import io.github.ffenuss.modkit.patch.PatchPreparationPlan
 import io.github.ffenuss.modkit.patch.PreparationTargetStatus
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun ManualNativePatchSection(
@@ -79,6 +83,15 @@ fun ManualNativePatchSection(
     var cancellation by remember(key) {
         mutableStateOf<AtomicCancellationSignal?>(null)
     }
+    var opportunities by remember(key) {
+        mutableStateOf<List<GameplayModificationOpportunity>>(emptyList())
+    }
+    var findingOpportunities by remember(key) {
+        mutableStateOf(false)
+    }
+    var findingOpportunitiesError by remember(key) {
+        mutableStateOf<String?>(null)
+    }
 
     val eligibleCount = remember(key) {
         preparation.targets.count(::isManualNativeEligible)
@@ -93,19 +106,38 @@ fun ManualNativePatchSection(
     }
     val effectiveProjectCodeOnly =
         projectCodeOnly && assemblyCSharpCount > 0
-    val opportunities = remember(
+
+    LaunchedEffect(
         key,
         effectiveProjectCodeOnly,
     ) {
-        GameplayModificationFinder.find(
-            result = analysis,
-            preparation = preparation,
-            projectCodeOnly = effectiveProjectCodeOnly,
-            limit = MAX_SUGGESTED_MODIFICATIONS,
-            perCategoryLimit =
-                MAX_SUGGESTED_PER_CATEGORY,
-        )
+        findingOpportunities = true
+        findingOpportunitiesError = null
+        selectedOpportunityIds = emptySet()
+        try {
+            opportunities =
+                withContext(Dispatchers.Default) {
+                    GameplayModificationFinder.find(
+                        result = analysis,
+                        preparation = preparation,
+                        projectCodeOnly =
+                            effectiveProjectCodeOnly,
+                        limit =
+                            MAX_SUGGESTED_MODIFICATIONS,
+                        perCategoryLimit =
+                            MAX_SUGGESTED_PER_CATEGORY,
+                    )
+                }
+        } catch (failure: Throwable) {
+            opportunities = emptyList()
+            findingOpportunitiesError =
+                failure.message
+                    ?: failure.javaClass.simpleName
+        } finally {
+            findingOpportunities = false
+        }
     }
+
     val actionableOpportunities =
         opportunities.filter { it.selectable }
     val deferredOpportunities =
@@ -220,7 +252,15 @@ fun ManualNativePatchSection(
                     "показываются отдельно как подсказки и не патчатся вслепую.",
                 style = MaterialTheme.typography.bodySmall,
             )
-            if (actionableOpportunities.isEmpty()) {
+            if (findingOpportunities) {
+                LinearProgressIndicator(
+                    Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Поиск модификаций выполняется в фоне…",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else if (actionableOpportunities.isEmpty()) {
                 Text(
                     "Пока нет модификаций, которые ModKit может безопасно предложить галочкой. " +
                         "Это лучше, чем показывать ложные «бессмертие/скорость» по случайному совпадению текста.",
@@ -385,6 +425,14 @@ fun ManualNativePatchSection(
                             ")",
                     )
                 }
+            }
+
+            findingOpportunitiesError?.let { message ->
+                Text(
+                    "Поиск модификаций: " + message,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
 
             if (deferredOpportunities.isNotEmpty()) {
