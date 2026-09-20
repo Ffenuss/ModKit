@@ -73,11 +73,12 @@ object Il2CppMetadataReader {
 
     data class Limits(
         val maxFileBytes: Long = 1L * 1024L * 1024L * 1024L,
-        val maxTypes: Int = 30_000,
-        val maxMethods: Int = 100_000,
-        val maxFields: Int = 100_000,
-        val maxImages: Int = 4_096,
+        val maxTypes: Int = 75_000,
+        val maxMethods: Int = 300_000,
+        val maxFields: Int = 300_000,
+        val maxImages: Int = 8_192,
         val maxStringBytes: Int = 16 * 1024,
+        val maxCachedStrings: Int = 75_000,
     )
 
     fun read(
@@ -171,10 +172,17 @@ object Il2CppMetadataReader {
                 fieldCount < declaredFields || imageCount < declaredImages
             ) {
                 truncated = true
-                warnings += "FAST metadata reconstruction hit bounded record limits."
+                warnings +=
+                    "FAST metadata reconstruction hit bounded record limits: " +
+                        "types $typeCount/$declaredTypes, " +
+                        "methods $methodCount/$declaredMethods, " +
+                        "fields $fieldCount/$declaredFields, " +
+                        "images $imageCount/$declaredImages."
             }
 
-            val stringCache = HashMap<Long, String>()
+            val stringCache = HashMap<Long, String>(
+                minOf(limits.maxCachedStrings, 16_384),
+            )
             fun metadataString(relativeOffset: Long): String? {
                 if (relativeOffset !in 0 until strings.sizeBytes) return null
                 val cached = stringCache[relativeOffset]
@@ -182,9 +190,14 @@ object Il2CppMetadataReader {
                 val value = cString(
                     raf,
                     strings.offset + relativeOffset,
-                    minOf(limits.maxStringBytes.toLong(), strings.sizeBytes - relativeOffset),
+                    minOf(
+                        limits.maxStringBytes.toLong(),
+                        strings.sizeBytes - relativeOffset,
+                    ),
                 ).orEmpty()
-                stringCache[relativeOffset] = value
+                if (stringCache.size < limits.maxCachedStrings) {
+                    stringCache[relativeOffset] = value
+                }
                 return value.takeIf { it.isNotEmpty() }
             }
 
