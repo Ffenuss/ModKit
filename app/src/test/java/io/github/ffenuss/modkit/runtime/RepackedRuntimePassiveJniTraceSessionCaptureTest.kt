@@ -12,7 +12,7 @@ import org.junit.Test
 
 class RepackedRuntimePassiveJniTraceSessionCaptureTest {
     @Test
-    fun signedPidBoundSessionExportsLookupAndRegistrationEvents() {
+    fun signedPidBoundSessionExportsLookupInvocationAndRegistrationEvents() {
         val transport = FakeTransport(
             installed = installedProbe(),
             query = query(),
@@ -44,15 +44,19 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
         assertFalse(result.capture.truncated)
         val parsed = RuntimeNativeTraceParser.parse(result.capture)
         assertTrue(parsed.blockers.isEmpty())
-        assertEquals(2, parsed.events.size)
+        assertEquals(3, parsed.events.size)
         assertEquals(
             RuntimeNativeLookupKind.DLSYM,
             parsed.events[0].kind,
         )
         assertEquals("JNI_OnLoad", parsed.events[0].symbolName)
         assertEquals(
-            RuntimeNativeLookupKind.JNI_REGISTER_NATIVE,
+            RuntimeNativeLookupKind.JNI_ON_LOAD,
             parsed.events[1].kind,
+        )
+        assertEquals(
+            RuntimeNativeLookupKind.JNI_REGISTER_NATIVE,
+            parsed.events[2].kind,
         )
     }
 
@@ -93,17 +97,25 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
             startStatus =
                 startStatus().copy(
                     jniOnLoadLookupHookedSlotCount = 0,
+                    jniOnLoadInvocationReady = false,
                     producerIncomplete = true,
                 ),
             stopStatus =
-                stopStatus().copy(
+                stopStatus(
+                    eventCount = 1,
+                    traceBytes = REGISTRATION_ONLY_TRACE_BYTES,
+                ).copy(
                     jniOnLoadLookupHookedSlotCount = 0,
+                    jniOnLoadInvocationReady = false,
                     producerIncomplete = true,
                 ),
             traceBytes =
                 exportBytes(
+                    trace = REGISTRATION_ONLY_TRACE,
+                    eventCount = 1,
                     producerIncomplete = true,
                     jniOnLoadLookupHookedSlotCount = 0,
+                    jniOnLoadInvocationReady = false,
                 ),
         )
 
@@ -122,7 +134,54 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
             )
 
         assertEquals(0, result.status.jniOnLoadLookupHookedSlotCount)
+        assertFalse(result.status.jniOnLoadInvocationReady)
         assertTrue(result.status.producerIncomplete)
+    }
+
+    @Test
+    fun invocationEventWithoutInvocationReadyProvenanceFailsClosed() {
+        val transport = FakeTransport(
+            installed = installedProbe(),
+            query = query(),
+            startStatus =
+                startStatus().copy(
+                    jniOnLoadInvocationReady = false,
+                    producerIncomplete = true,
+                ),
+            stopStatus =
+                stopStatus().copy(
+                    jniOnLoadInvocationReady = false,
+                    producerIncomplete = true,
+                ),
+            traceBytes =
+                exportBytes(
+                    jniOnLoadInvocationReady = false,
+                    producerIncomplete = true,
+                ),
+        )
+        val session =
+            RepackedRuntimePassiveJniTraceSessionCapture.start(
+                build = buildResult(),
+                transport = transport,
+                cancellation = AtomicCancellationSignal(),
+            )
+
+        val failure = runCatching {
+            RepackedRuntimePassiveJniTraceSessionCapture.stopAndRead(
+                build = buildResult(),
+                session = session,
+                transport = transport,
+                cancellation = AtomicCancellationSignal(),
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertTrue(
+            failure?.message.orEmpty().contains(
+                "invocation-ready",
+                ignoreCase = true,
+            ),
+        )
     }
 
     @Test
@@ -278,16 +337,20 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
             startedAtEpochMs = STARTED,
             stoppedAtEpochMs = 0,
             traceBytes = 0,
-            producerKind = "ART_JNI_ONLOAD_LOOKUP_JNI_TABLE",
+            producerKind = "ART_JNI_ONLOAD_WRAPPER_JNI_TABLE",
             producerReady = true,
             producerActive = true,
             jniOnLoadLookupHookedSlotCount = 1,
+            jniOnLoadInvocationReady = true,
             registerNativesHooked = true,
             producerIncomplete = false,
             producerRestoreFailed = false,
         )
 
-    private fun stopStatus() =
+    private fun stopStatus(
+        eventCount: Int = 3,
+        traceBytes: Int = TRACE_BYTES,
+    ) =
         RepackedRuntimePassiveJniTraceStatus(
             schemaVersion =
                 RuntimeEvidenceProviderContract.SCHEMA_VERSION,
@@ -296,24 +359,28 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
             sessionId = SESSION_ID,
             active = false,
             truncated = false,
-            eventCount = 2,
+            eventCount = eventCount,
             startedAtEpochMs = STARTED,
             stoppedAtEpochMs = STOPPED,
-            traceBytes = TRACE_BYTES,
-            producerKind = "ART_JNI_ONLOAD_LOOKUP_JNI_TABLE",
+            traceBytes = traceBytes,
+            producerKind = "ART_JNI_ONLOAD_WRAPPER_JNI_TABLE",
             producerReady = true,
             producerActive = false,
             jniOnLoadLookupHookedSlotCount = 1,
+            jniOnLoadInvocationReady = true,
             registerNativesHooked = true,
             producerIncomplete = false,
             producerRestoreFailed = false,
         )
 
     private fun exportBytes(
+        trace: String = TRACE,
+        eventCount: Int = 3,
         producerIncomplete: Boolean = false,
         jniOnLoadLookupHookedSlotCount: Int = 1,
+        jniOnLoadInvocationReady: Boolean = true,
     ): ByteArray {
-        val traceBytes = TRACE.toByteArray(Charsets.UTF_8)
+        val traceBytes = trace.toByteArray(Charsets.UTF_8)
         val header = buildString {
             appendLine(
                 RepackedRuntimePassiveJniTraceExportProtocol
@@ -325,16 +392,20 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
             appendLine("sessionId=$SESSION_ID")
             appendLine("startedAtEpochMs=$STARTED")
             appendLine("stoppedAtEpochMs=$STOPPED")
-            appendLine("eventCount=2")
+            appendLine("eventCount=$eventCount")
             appendLine(
                 "traceSha256=" + sha256(traceBytes),
             )
             appendLine("traceBytes=" + traceBytes.size)
             appendLine("truncated=false")
-            appendLine("producerKind=ART_JNI_ONLOAD_LOOKUP_JNI_TABLE")
+            appendLine("producerKind=ART_JNI_ONLOAD_WRAPPER_JNI_TABLE")
             appendLine(
                 "jniOnLoadLookupHookedSlotCount=" +
                     jniOnLoadLookupHookedSlotCount,
+            )
+            appendLine(
+                "jniOnLoadInvocationReady=" +
+                    jniOnLoadInvocationReady,
             )
             appendLine("registerNativesHooked=true")
             appendLine(
@@ -403,11 +474,16 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
         private const val SESSION_ID = "jni-session-1"
         private const val STARTED = 1000L
         private const val STOPPED = 2000L
+        private const val REGISTRATION_ONLY_TRACE =
+            "JNI_REGISTER_NATIVE\tlibsample.so\tcom/example/Foo\tbar\t(I)V\t0x70020300\n"
         private const val TRACE =
             "DLSYM\tlibsample.so\tJNI_OnLoad\t0x70020200\n" +
-                "JNI_REGISTER_NATIVE\tlibsample.so\tcom/example/Foo\tbar\t(I)V\t0x70020300\n"
+                "JNI_ON_LOAD\tlibsample.so\tJNI_OnLoad\t0x70020200\n" +
+                REGISTRATION_ONLY_TRACE
         private val TRACE_BYTES =
             TRACE.toByteArray(Charsets.UTF_8).size
+        private val REGISTRATION_ONLY_TRACE_BYTES =
+            REGISTRATION_ONLY_TRACE.toByteArray(Charsets.UTF_8).size
         private const val ARTIFACT_SHA =
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         private const val SIGNER =
