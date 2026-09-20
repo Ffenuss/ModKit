@@ -337,6 +337,12 @@ class RepackedRuntimePassiveTraceSessionCaptureTest {
             startedAtEpochMs = STARTED,
             stoppedAtEpochMs = 0,
             traceBytes = 0,
+            producerKind = "PLT_DLSYM_GOT",
+            producerReady = true,
+            producerActive = true,
+            hookedSlotCount = 0,
+            producerIncomplete = false,
+            producerRestoreFailed = false,
         )
 
     private fun stopStatus(
@@ -344,6 +350,9 @@ class RepackedRuntimePassiveTraceSessionCaptureTest {
         eventCount: Int = 1,
         traceBytes: Int = TRACE_BYTES,
         truncated: Boolean = false,
+        producerReady: Boolean = true,
+        producerIncomplete: Boolean = false,
+        producerRestoreFailed: Boolean = false,
     ) = RepackedRuntimeNativeTraceStatus(
         schemaVersion =
             RuntimeEvidenceProviderContract.SCHEMA_VERSION,
