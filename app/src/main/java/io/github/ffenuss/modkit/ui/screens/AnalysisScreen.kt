@@ -446,6 +446,20 @@ fun AnalysisScreen(
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                     binary.evidence
+                                        .flatMap { it.blockers }
+                                        .distinct()
+                                        .take(3)
+                                        .forEach { blocker ->
+                                            Text(
+                                                "• " +
+                                                    il2CppBindingBlockerLabel(
+                                                        blocker,
+                                                    ),
+                                                style =
+                                                    MaterialTheme.typography.bodySmall,
+                                            )
+                                        }
+                                    binary.evidence
                                         .flatMap { it.bindings }
                                         .take(5)
                                         .forEach { binding ->
@@ -518,6 +532,26 @@ fun AnalysisScreen(
         }
     }
 }
+
+private fun il2CppBindingBlockerLabel(
+    blocker: String,
+): String =
+    when (blocker) {
+        "METADATA_IMAGE_MAP_UNAVAILABLE" ->
+            "В metadata нет подтверждённой карты IL2CPP images."
+        "CODE_REGISTRATION_SYMBOL_UNRESOLVED" ->
+            "Экспорт CodeRegistration не найден; используется статический fallback."
+        "CODEGEN_MODULE_ARRAY_UNRESOLVED",
+        "STRIPPED_CODEGEN_MODULE_ARRAY_UNRESOLVED" ->
+            "Не удалось однозначно восстановить таблицу CodeGenModule из ELF."
+        "AMBIGUOUS_CODEGEN_MODULE_ARRAY" ->
+            "Найдено несколько несовместимых кандидатов CodeGenModule; автоматический выбор запрещён."
+        "CODEGEN_FALLBACK_SCAN_LIMIT_REACHED" ->
+            "Достигнут безопасный лимит статического поиска CodeGenModule."
+        "NO_METHOD_TOKEN_SLOT_BINDINGS" ->
+            "CodeGenModule найден, но точное token → executable pointer сопоставление не доказано."
+        else -> "Статическая IL2CPP-привязка: " + blocker
+    }
 
 private fun detectionStatusLabel(status: DetectionStatus): String = when (status) {
     DetectionStatus.CONFIRMED -> "Подтверждено"
