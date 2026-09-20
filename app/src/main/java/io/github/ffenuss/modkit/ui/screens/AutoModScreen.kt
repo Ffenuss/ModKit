@@ -404,6 +404,10 @@ fun AutoModScreen(
                             stagingOutcome = outcome
                             buildResult = null
                         },
+                        onStagingInvalidated = {
+                            stagingOutcome = null
+                            buildResult = null
+                        },
                     )
                 }
             }
