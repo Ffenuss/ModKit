@@ -46,6 +46,8 @@ import io.github.ffenuss.modkit.patch.GameplayModificationCategory
 import io.github.ffenuss.modkit.patch.GameplayModificationFinder
 import io.github.ffenuss.modkit.patch.GameplayModificationOpportunity
 import io.github.ffenuss.modkit.patch.Il2CppArm64CallResolver
+import io.github.ffenuss.modkit.patch.Il2CppArm64CallerScanResult
+import io.github.ffenuss.modkit.patch.Il2CppArm64CallerScanner
 import io.github.ffenuss.modkit.patch.Il2CppNativeMutationDraftBuilder
 import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
 import io.github.ffenuss.modkit.analysis.Il2CppNativeReturnKind
@@ -84,6 +86,18 @@ fun ManualNativePatchSection(
     }
     var codeWindowBusy by remember(key) {
         mutableStateOf(false)
+    }
+    var callerScanBusy by remember(key) {
+        mutableStateOf(false)
+    }
+    var callerScan by remember(key) {
+        mutableStateOf<Il2CppArm64CallerScanResult?>(null)
+    }
+    var callerScanError by remember(key) {
+        mutableStateOf<String?>(null)
+    }
+    var callerScanCancellation by remember(key) {
+        mutableStateOf<AtomicCancellationSignal?>(null)
     }
     var showRawHex by remember(key) {
         mutableStateOf(false)
@@ -147,6 +161,11 @@ fun ManualNativePatchSection(
         if (busy || codeWindowBusy) return
         selectedTargetId = targetId
         replacementHex = ""
+        callerScanCancellation?.cancel()
+        callerScanCancellation = null
+        callerScanBusy = false
+        callerScan = null
+        callerScanError = null
         codeWindow = null
         showRawHex = false
         customReturnValue = ""
@@ -179,6 +198,81 @@ fun ManualNativePatchSection(
                         ?: failure.javaClass.simpleName
             } finally {
                 codeWindowBusy = false
+            }
+        }
+    }
+
+    fun scanIncomingCallers() {
+        val selectedId =
+            selectedTargetId
+                ?: return
+        val selected =
+            preparation.targets
+                .firstOrNull {
+                    it.target.id ==
+                        selectedId &&
+                        isManualNativeEligible(it)
+                }
+                ?.target
+                ?: return
+        if (
+            callerScanBusy ||
+            !selected.abi
+                .orEmpty()
+                .equals(
+                    "arm64-v8a",
+                    ignoreCase = true,
+                )
+        ) {
+            return
+        }
+
+        val signal =
+            AtomicCancellationSignal()
+        callerScanCancellation
+            ?.cancel()
+        callerScanCancellation =
+            signal
+        callerScanBusy = true
+        callerScan = null
+        callerScanError = null
+
+        scope.launch {
+            try {
+                callerScan =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        Il2CppArm64CallerScanner
+                            .scan(
+                                result = analysis,
+                                target = selected,
+                                analysisResultsRoot =
+                                    File(
+                                        context.filesDir,
+                                        "analysis-results",
+                                    ),
+                                cancellation =
+                                    signal,
+                            )
+                    }
+            } catch (_: AnalysisCancelledException) {
+                callerScanError =
+                    "Поиск входящих вызовов отменён."
+            } catch (failure: Throwable) {
+                callerScanError =
+                    failure.message
+                        ?: failure.javaClass
+                            .simpleName
+            } finally {
+                callerScanBusy = false
+                if (
+                    callerScanCancellation ===
+                    signal
+                ) {
+                    callerScanCancellation =
+                        null
+                }
             }
         }
     }
@@ -667,6 +761,156 @@ fun ManualNativePatchSection(
                             }
                         }
 
+                        if (
+                            evidenceTarget != null &&
+                            window.abi.equals(
+                                "arm64-v8a",
+                                ignoreCase = true,
+                            )
+                        ) {
+                            Card(
+                                Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    Modifier.padding(14.dp),
+                                    verticalArrangement =
+                                        Arrangement.spacedBy(
+                                            7.dp,
+                                        ),
+                                ) {
+                                    Text(
+                                        "Граф вызовов",
+                                        fontWeight =
+                                            FontWeight.SemiBold,
+                                    )
+                                    Text(
+                                        "Исходящие прямые BL-вызовы уже показаны выше. " +
+                                            "Обратный проход по доказанным границам методов найдёт, " +
+                                            "кто напрямую вызывает выбранную IL2CPP-функцию.",
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                    )
+                                    if (
+                                        callerScanBusy
+                                    ) {
+                                        LinearProgressIndicator(
+                                            Modifier
+                                                .fillMaxWidth(),
+                                        )
+                                        OutlinedButton(
+                                            onClick = {
+                                                callerScanCancellation
+                                                    ?.cancel()
+                                            },
+                                            modifier =
+                                                Modifier
+                                                    .fillMaxWidth(),
+                                        ) {
+                                            Text(
+                                                "Отменить поиск callers",
+                                            )
+                                        }
+                                    } else {
+                                        OutlinedButton(
+                                            onClick =
+                                                ::scanIncomingCallers,
+                                            modifier =
+                                                Modifier
+                                                    .fillMaxWidth(),
+                                        ) {
+                                            Text(
+                                                "Найти кто вызывает этот метод",
+                                            )
+                                        }
+                                    }
+
+                                    callerScanError
+                                        ?.let {
+                                            message ->
+                                            Text(
+                                                message,
+                                                color =
+                                                    MaterialTheme
+                                                        .colorScheme
+                                                        .error,
+                                                style =
+                                                    MaterialTheme
+                                                        .typography
+                                                        .bodySmall,
+                                            )
+                                        }
+                                    callerScan
+                                        ?.let {
+                                            scan ->
+                                            Text(
+                                                "Callers: " +
+                                                    scan.callers
+                                                        .size +
+                                                    " · проверено тел: " +
+                                                    scan.scannedBodies +
+                                                    " · байт: " +
+                                                    scan.scannedBytes,
+                                                style =
+                                                    MaterialTheme
+                                                        .typography
+                                                        .bodySmall,
+                                            )
+                                            if (
+                                                scan.truncatedByMethodLimit ||
+                                                scan.truncatedByResultLimit
+                                            ) {
+                                                Text(
+                                                    "Результат ограничен внутренним лимитом; " +
+                                                        "это не считается доказательством отсутствия других callers.",
+                                                    style =
+                                                        MaterialTheme
+                                                            .typography
+                                                            .bodySmall,
+                                                )
+                                            }
+                                            if (
+                                                scan.callers
+                                                    .isEmpty()
+                                            ) {
+                                                Text(
+                                                    "Прямых BL-callers в просканированных доказанных телах не найдено.",
+                                                    style =
+                                                        MaterialTheme
+                                                            .typography
+                                                            .bodySmall,
+                                                )
+                                            } else {
+                                                scan.callers
+                                                    .take(24)
+                                                    .forEach {
+                                                        caller ->
+                                                        Text(
+                                                            "• " +
+                                                                caller
+                                                                    .callerDisplayNames
+                                                                    .take(3)
+                                                                    .joinToString(
+                                                                        " / ",
+                                                                    ) +
+                                                                " · callsite 0x" +
+                                                                caller
+                                                                    .callSiteBinaryVirtualAddress
+                                                                    .toString(
+                                                                        16,
+                                                                    ),
+                                                            style =
+                                                                MaterialTheme
+                                                                    .typography
+                                                                    .bodySmall,
+                                                        )
+                                                    }
+                                            }
+                                        }
+                                }
+                            }
+                        }
+
                         arm64Disassembly?.let {
                             disassembly ->
                             Card(
@@ -1123,6 +1367,11 @@ fun ManualNativePatchSection(
 
                         OutlinedButton(
                             onClick = {
+                                callerScanCancellation?.cancel()
+                                callerScanCancellation = null
+                                callerScanBusy = false
+                                callerScan = null
+                                callerScanError = null
                                 codeWindow = null
                                 showRawHex = false
                                 customReturnValue = ""

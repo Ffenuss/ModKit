@@ -350,4 +350,176 @@ class RootRuntimeValueScannerTest {
             .order(ByteOrder.LITTLE_ENDIAN)
             .putFloat(offset, value)
     }
+
+    @Test
+    fun refinementBatchesNearbyHitsIntoFewReads() {
+        val base = 0x7000L
+        val memory =
+            ByteArray(400)
+        val hits =
+            (0 until 100)
+                .map {
+                    index ->
+                    putInt(
+                        memory,
+                        index * 4,
+                        index,
+                    )
+                    RuntimeValueHit(
+                        address =
+                            base +
+                                index * 4L,
+                        bits =
+                            index.toLong(),
+                        regionStart =
+                            base,
+                        regionEndExclusive =
+                            base +
+                                memory.size,
+                        regionFileOffset =
+                            0,
+                        regionPath =
+                            "[heap]",
+                    )
+                }
+        val reader =
+            CountingArrayMemoryReader(
+                base = base,
+                bytes = memory,
+            )
+        val snapshot =
+            RuntimeValueScanSnapshot(
+                valueType =
+                    RuntimeValueType.INT32,
+                hits = hits,
+                scannedBytes =
+                    memory.size.toLong(),
+                scannedRegions = 1,
+                truncatedByHitLimit =
+                    false,
+                truncatedByByteLimit =
+                    false,
+            )
+
+        val refreshed =
+            RuntimeValueScanner.refresh(
+                previous = snapshot,
+                reader = reader,
+                cancellation =
+                    AtomicCancellationSignal(),
+            )
+
+        assertEquals(100, refreshed.hits.size)
+        assertTrue(
+            reader.readCalls <= 2,
+        )
+    }
+
+    private class CountingArrayMemoryReader(
+        private val base: Long,
+        private val bytes: ByteArray,
+    ) : RuntimeMemoryReader {
+        var readCalls: Int = 0
+
+        override fun read(
+            address: Long,
+            size: Int,
+            cancellation:
+                CancellationSignal,
+        ): ByteArray? {
+            readCalls++
+            val offset =
+                (address - base)
+                    .toInt()
+            if (
+                offset < 0 ||
+                size < 0 ||
+                offset + size >
+                bytes.size
+            ) {
+                return null
+            }
+            return bytes.copyOfRange(
+                offset,
+                offset + size,
+            )
+        }
+    }
+
+
+    @Test
+    fun byteAlignmentFindsUnalignedValue() {
+        val base = 0x8100L
+        val memory =
+            ByteArray(32)
+        putInt(
+            memory,
+            1,
+            0x12345678,
+        )
+        val reader =
+            ArrayMemoryReader(
+                base = base,
+                bytes = memory,
+            )
+
+        val natural =
+            RuntimeValueScanner.scanExact(
+                ranges =
+                    listOf(
+                        region(
+                            start = base,
+                            size = memory.size,
+                        ),
+                    ),
+                reader = reader,
+                valueType =
+                    RuntimeValueType.INT32,
+                query =
+                    0x12345678
+                        .toString(),
+                cancellation =
+                    AtomicCancellationSignal(),
+                alignment =
+                    RuntimeScanAlignment.NATURAL,
+                maxHits = 16,
+                maxScanBytes = 1024,
+                chunkBytes = 16,
+            )
+        val byteAligned =
+            RuntimeValueScanner.scanExact(
+                ranges =
+                    listOf(
+                        region(
+                            start = base,
+                            size = memory.size,
+                        ),
+                    ),
+                reader = reader,
+                valueType =
+                    RuntimeValueType.INT32,
+                query =
+                    0x12345678
+                        .toString(),
+                cancellation =
+                    AtomicCancellationSignal(),
+                alignment =
+                    RuntimeScanAlignment.BYTE,
+                maxHits = 16,
+                maxScanBytes = 1024,
+                chunkBytes = 16,
+            )
+
+        assertTrue(
+            natural.hits.none {
+                it.address == base + 1
+            },
+        )
+        assertTrue(
+            byteAligned.hits.any {
+                it.address == base + 1
+            },
+        )
+    }
+
 }

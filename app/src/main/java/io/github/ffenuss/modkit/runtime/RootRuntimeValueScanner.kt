@@ -152,6 +152,31 @@ enum class RuntimeValueType(
         }
 }
 
+enum class RuntimeScanAlignment(
+    val title: String,
+) {
+    NATURAL("По размеру типа"),
+    BYTE("По каждому байту");
+
+    fun next(): RuntimeScanAlignment {
+        val values = entries
+        return values[
+            (ordinal + 1) %
+                values.size
+        ]
+    }
+
+    fun step(
+        valueType:
+            RuntimeValueType,
+    ): Int =
+        if (this == BYTE) {
+            1
+        } else {
+            valueType.byteWidth
+        }
+}
+
 enum class RuntimeValueRefinement(
     val title: String,
 ) {
@@ -186,6 +211,8 @@ data class RuntimeValueHit(
 data class RuntimeValueScanSnapshot(
     val valueType: RuntimeValueType,
     val hits: List<RuntimeValueHit>,
+    val alignment: RuntimeScanAlignment =
+        RuntimeScanAlignment.NATURAL,
     val scannedBytes: Long,
     val scannedRegions: Int,
     val truncatedByHitLimit: Boolean,
@@ -216,7 +243,9 @@ data class RootRuntimePointerScanResult(
  * root process connection.
  */
 object RuntimeValueScanner {
-    const val DEFAULT_MAX_HITS = 2048
+    const val DEFAULT_MAX_HITS = 50_000
+    private const val REFINE_WINDOW_BYTES =
+        256 * 1024
     const val DEFAULT_MAX_SCAN_BYTES =
         128L * 1024L * 1024L
     const val DEFAULT_CHUNK_BYTES =
@@ -228,6 +257,8 @@ object RuntimeValueScanner {
         valueType: RuntimeValueType,
         query: String,
         cancellation: CancellationSignal,
+        alignment: RuntimeScanAlignment =
+            RuntimeScanAlignment.NATURAL,
         maxHits: Int = DEFAULT_MAX_HITS,
         maxScanBytes: Long =
             DEFAULT_MAX_SCAN_BYTES,
@@ -251,6 +282,10 @@ object RuntimeValueScanner {
 
         val queryBits =
             valueType.parseQuery(query)
+        val step =
+            alignment.step(
+                valueType,
+            )
         val hits =
             ArrayList<RuntimeValueHit>()
         var scannedBytes = 0L
@@ -276,10 +311,18 @@ object RuntimeValueScanner {
             }
 
             var address =
-                alignUp(
-                    region.start,
-                    valueType.byteWidth,
-                )
+                if (
+                    alignment ==
+                    RuntimeScanAlignment
+                        .NATURAL
+                ) {
+                    alignUp(
+                        region.start,
+                        valueType.byteWidth,
+                    )
+                } else {
+                    region.start
+                }
             var regionScanned = false
 
             while (
@@ -299,17 +342,33 @@ object RuntimeValueScanner {
                     break@loop
                 }
 
+                val overlap =
+                    if (
+                        alignment ==
+                        RuntimeScanAlignment.BYTE
+                    ) {
+                        valueType.byteWidth - 1
+                    } else {
+                        0
+                    }
                 var requestBytes =
                     min(
+                        remainingRegion,
                         min(
-                            remainingRegion,
-                            remainingBudget,
+                            chunkBytes.toLong(),
+                            remainingBudget +
+                                overlap,
                         ),
-                        chunkBytes.toLong(),
                     ).toInt()
-                requestBytes -=
-                    requestBytes %
-                        valueType.byteWidth
+                if (
+                    alignment ==
+                    RuntimeScanAlignment
+                        .NATURAL
+                ) {
+                    requestBytes -=
+                        requestBytes %
+                            valueType.byteWidth
+                }
                 if (
                     requestBytes <
                     valueType.byteWidth
@@ -334,11 +393,19 @@ object RuntimeValueScanner {
 
                 regionScanned = true
                 val usable =
-                    bytes.size -
-                        (
-                            bytes.size %
-                                valueType.byteWidth
-                            )
+                    if (
+                        alignment ==
+                        RuntimeScanAlignment
+                            .NATURAL
+                    ) {
+                        bytes.size -
+                            (
+                                bytes.size %
+                                    valueType.byteWidth
+                                )
+                    } else {
+                        bytes.size
+                    }
                 var offset = 0
                 while (
                     offset +
@@ -380,12 +447,29 @@ object RuntimeValueScanner {
                         }
                     }
                     offset +=
-                        valueType.byteWidth
+                        step
                 }
 
-                scannedBytes += usable
-                address += usable
-                if (usable == 0) {
+                val advance =
+                    if (
+                        alignment ==
+                            RuntimeScanAlignment.BYTE &&
+                        usable >
+                            valueType.byteWidth - 1
+                    ) {
+                        usable -
+                            (
+                                valueType.byteWidth -
+                                    1
+                                )
+                    } else {
+                        usable
+                    }
+                scannedBytes +=
+                    advance
+                address +=
+                    advance
+                if (advance <= 0) {
                     break
                 }
             }
@@ -398,6 +482,7 @@ object RuntimeValueScanner {
         return RuntimeValueScanSnapshot(
             valueType = valueType,
             hits = hits,
+            alignment = alignment,
             scannedBytes = scannedBytes,
             scannedRegions =
                 scannedRegions,
@@ -495,41 +580,129 @@ object RuntimeValueScanner {
                 previous.hits.size,
             )
 
-        previous.hits.forEachIndexed {
-                index,
-                hit,
-            ->
-            if (index % 128 == 0) {
-                checkCancelled(cancellation)
-            }
-            val bytes =
-                reader.read(
-                    address = hit.address,
-                    size = type.byteWidth,
-                    cancellation =
-                        cancellation,
-                ) ?: return@forEachIndexed
-            if (
-                bytes.size <
-                type.byteWidth
-            ) {
-                return@forEachIndexed
-            }
-            val now =
-                type.readBits(
-                    bytes,
-                    0,
-                )
-            if (
-                keep(
-                    hit.bits,
-                    now,
-                )
-            ) {
-                retained +=
-                    hit.copy(
-                        bits = now,
+        /*
+         * Refinement must not issue one root command per address. Hits are
+         * sorted and coalesced into bounded windows inside their original map,
+         * so tens of thousands of candidates can be refreshed with a small
+         * number of /proc/<pid>/mem reads.
+         */
+        val groups =
+            previous.hits
+                .groupBy {
+                    Triple(
+                        it.regionStart,
+                        it.regionEndExclusive,
+                        it.regionPath,
                     )
+                }
+        var processed = 0
+        groups.values.forEach {
+                rawGroup,
+            ->
+            val group =
+                rawGroup.sortedBy {
+                    it.address
+                }
+            var index = 0
+            while (index < group.size) {
+                checkCancelled(
+                    cancellation,
+                )
+                val first =
+                    group[index]
+                val windowStart =
+                    first.address
+                var endIndex =
+                    index
+                while (
+                    endIndex + 1 <
+                    group.size
+                ) {
+                    val next =
+                        group[endIndex + 1]
+                    val span =
+                        next.address +
+                            type.byteWidth -
+                            windowStart
+                    if (
+                        span >
+                        REFINE_WINDOW_BYTES
+                    ) {
+                        break
+                    }
+                    endIndex++
+                }
+
+                val last =
+                    group[endIndex]
+                val readSize =
+                    (
+                        last.address +
+                            type.byteWidth -
+                            windowStart
+                        ).toInt()
+                val bytes =
+                    reader.read(
+                        address =
+                            windowStart,
+                        size =
+                            readSize,
+                        cancellation =
+                            cancellation,
+                    )
+                if (
+                    bytes != null &&
+                    bytes.size >=
+                    type.byteWidth
+                ) {
+                    for (
+                        hitIndex in
+                            index..endIndex
+                    ) {
+                        if (
+                            processed % 256 ==
+                            0
+                        ) {
+                            checkCancelled(
+                                cancellation,
+                            )
+                        }
+                        processed++
+                        val hit =
+                            group[hitIndex]
+                        val offset =
+                            (
+                                hit.address -
+                                    windowStart
+                                ).toInt()
+                        if (
+                            offset < 0 ||
+                            offset +
+                                type.byteWidth >
+                            bytes.size
+                        ) {
+                            continue
+                        }
+                        val now =
+                            type.readBits(
+                                bytes,
+                                offset,
+                            )
+                        if (
+                            keep(
+                                hit.bits,
+                                now,
+                            )
+                        ) {
+                            retained +=
+                                hit.copy(
+                                    bits = now,
+                                )
+                        }
+                    }
+                }
+                index =
+                    endIndex + 1
             }
         }
 
@@ -587,6 +760,8 @@ object RootRuntimeValueScanCoordinator {
         valueType: RuntimeValueType,
         query: String,
         cancellation: CancellationSignal,
+        alignment: RuntimeScanAlignment =
+            RuntimeScanAlignment.NATURAL,
         runner: RootCommandRunner =
             AndroidRootCommandRunner(),
     ): RootRuntimeValueScanResult {
@@ -620,6 +795,7 @@ object RootRuntimeValueScanCoordinator {
                 valueType = valueType,
                 query = query,
                 cancellation = cancellation,
+                alignment = alignment,
             )
         return RootRuntimeValueScanResult(
             packageName =

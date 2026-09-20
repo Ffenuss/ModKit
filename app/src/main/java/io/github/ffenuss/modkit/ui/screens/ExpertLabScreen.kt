@@ -57,9 +57,12 @@ import io.github.ffenuss.modkit.runtime.RuntimeEscalationPlanner
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationStage
 import io.github.ffenuss.modkit.runtime.RootRuntimeDecisionEngine
 import io.github.ffenuss.modkit.runtime.RootRuntimePointerScanResult
+import io.github.ffenuss.modkit.runtime.RootRuntimeUnknownBaseline
+import io.github.ffenuss.modkit.runtime.RootRuntimeUnknownValueCoordinator
 import io.github.ffenuss.modkit.runtime.RootRuntimeValueScanCoordinator
 import io.github.ffenuss.modkit.runtime.RootRuntimeValueScanResult
 import io.github.ffenuss.modkit.runtime.RootRuntimeValueWriteCoordinator
+import io.github.ffenuss.modkit.runtime.RuntimeScanAlignment
 import io.github.ffenuss.modkit.runtime.RuntimeValueRefinement
 import io.github.ffenuss.modkit.runtime.RuntimeValueType
 import java.io.File
@@ -91,6 +94,11 @@ fun ExpertLabScreen(onBack: () -> Unit) {
     var runtimeValueType by remember {
         mutableStateOf(RuntimeValueType.INT32)
     }
+    var runtimeScanAlignment by remember {
+        mutableStateOf(
+            RuntimeScanAlignment.NATURAL,
+        )
+    }
     var runtimeValueQuery by remember {
         mutableStateOf("")
     }
@@ -99,6 +107,9 @@ fun ExpertLabScreen(onBack: () -> Unit) {
     }
     var runtimeValueScan by remember {
         mutableStateOf<RootRuntimeValueScanResult?>(null)
+    }
+    var runtimeUnknownBaseline by remember {
+        mutableStateOf<RootRuntimeUnknownBaseline?>(null)
     }
     var runtimePointerScan by remember {
         mutableStateOf<RootRuntimePointerScanResult?>(null)
@@ -131,10 +142,16 @@ fun ExpertLabScreen(onBack: () -> Unit) {
     val latestSession by rememberUpdatedState(session)
     val latestFreezeJob by
         rememberUpdatedState(runtimeFreezeJob)
+    val latestUnknownBaseline by
+        rememberUpdatedState(runtimeUnknownBaseline)
     DisposableEffect(Unit) {
         onDispose {
             cancellation?.cancel()
             latestFreezeJob?.cancel()
+            RootRuntimeUnknownValueCoordinator
+                .deleteBaseline(
+                    latestUnknownBaseline,
+                )
             latestSession?.close()
         }
     }
@@ -182,6 +199,11 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 runtimeFreezeJob?.cancel()
                 runtimeFreezeJob = null
                 runtimeFreezeAddress = null
+                RootRuntimeUnknownValueCoordinator
+                    .deleteBaseline(
+                        runtimeUnknownBaseline,
+                    )
+                runtimeUnknownBaseline = null
                 session?.close()
                 session = opened
                 runtimeValueScan = null
@@ -216,6 +238,11 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 runtimeFreezeJob?.cancel()
                 runtimeFreezeJob = null
                 runtimeFreezeAddress = null
+                RootRuntimeUnknownValueCoordinator
+                    .deleteBaseline(
+                        runtimeUnknownBaseline,
+                    )
+                runtimeUnknownBaseline = null
                 session?.close()
                 session = opened
                 runtimeValueScan = null
@@ -328,6 +355,122 @@ fun ExpertLabScreen(onBack: () -> Unit) {
         }
     }
 
+    fun captureUnknownRuntimeBaseline() {
+        val current = session ?: return
+        val packageName =
+            current.packageName
+                ?: run {
+                    error =
+                        "Unknown-value scan доступен только для установленного приложения."
+                    return
+                }
+        val signal =
+            beginOperation(
+                "runtime.root-unknown-baseline",
+            ) ?: return
+
+        scope.launch {
+            try {
+                RootRuntimeUnknownValueCoordinator
+                    .deleteBaseline(
+                        runtimeUnknownBaseline,
+                    )
+                val snapshotFile =
+                    File(
+                        appContext.cacheDir,
+                        "runtime-unknown/" +
+                            packageName
+                                .replace(
+                                    Regex(
+                                        "[^A-Za-z0-9._-]",
+                                    ),
+                                    "_",
+                                ) +
+                            "-" +
+                            System.currentTimeMillis() +
+                            ".bin",
+                    )
+                runtimeUnknownBaseline =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootRuntimeUnknownValueCoordinator
+                            .captureBaseline(
+                                packageName =
+                                    packageName,
+                                valueType =
+                                    runtimeValueType,
+                                alignment =
+                                    runtimeScanAlignment,
+                                snapshotFile =
+                                    snapshotFile,
+                                cancellation =
+                                    signal,
+                            )
+                    }
+                runtimeValueScan = null
+                runtimePointerScan = null
+            } catch (_: AnalysisCancelledException) {
+                error =
+                    "Создание unknown-value baseline отменено."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun compareUnknownRuntimeBaseline(
+        refinement:
+            RuntimeValueRefinement,
+    ) {
+        val baseline =
+            runtimeUnknownBaseline
+                ?: return
+        val signal =
+            beginOperation(
+                "runtime.root-unknown-compare",
+            ) ?: return
+
+        scope.launch {
+            try {
+                runtimePointerScan = null
+                runtimeValueScan =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootRuntimeUnknownValueCoordinator
+                            .compareBaseline(
+                                baseline =
+                                    baseline,
+                                refinement =
+                                    refinement,
+                                cancellation =
+                                    signal,
+                            )
+                    }
+                RootRuntimeUnknownValueCoordinator
+                    .deleteBaseline(
+                        baseline,
+                    )
+                runtimeUnknownBaseline =
+                    null
+            } catch (_: AnalysisCancelledException) {
+                error =
+                    "Unknown-value сравнение отменено."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
     fun scanRootRuntimeValue() {
         val current = session ?: return
         val packageName =
@@ -359,6 +502,8 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                     runtimeValueQuery,
                                 cancellation =
                                     signal,
+                                alignment =
+                                    runtimeScanAlignment,
                             )
                     }
             } catch (_: AnalysisCancelledException) {
@@ -1788,6 +1933,12 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                 )
                                 OutlinedButton(
                                     onClick = {
+                                        RootRuntimeUnknownValueCoordinator
+                                            .deleteBaseline(
+                                                runtimeUnknownBaseline,
+                                            )
+                                        runtimeUnknownBaseline =
+                                            null
                                         runtimeValueType =
                                             runtimeValueType.next()
                                         runtimeValueScan = null
@@ -1803,6 +1954,137 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                             " · нажмите для смены",
                                     )
                                 }
+                                OutlinedButton(
+                                    onClick = {
+                                        RootRuntimeUnknownValueCoordinator
+                                            .deleteBaseline(
+                                                runtimeUnknownBaseline,
+                                            )
+                                        runtimeUnknownBaseline =
+                                            null
+                                        runtimeScanAlignment =
+                                            runtimeScanAlignment
+                                                .next()
+                                        runtimeValueScan =
+                                            null
+                                        runtimePointerScan =
+                                            null
+                                    },
+                                    enabled = !busy,
+                                    modifier =
+                                        Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        "Выравнивание: " +
+                                            runtimeScanAlignment
+                                                .title +
+                                            " · нажмите для смены",
+                                    )
+                                }
+                                Text(
+                                    "Неизвестное начальное значение",
+                                    fontWeight =
+                                        FontWeight.SemiBold,
+                                )
+                                Text(
+                                    "Если число заранее неизвестно, ModKit сохраняет bounded baseline " +
+                                        "в приватный cache-файл. После изменения значения в игре " +
+                                        "выберите, как оно изменилось; в память UI попадут только совпавшие адреса.",
+                                    style =
+                                        MaterialTheme.typography.bodySmall,
+                                )
+                                if (
+                                    runtimeUnknownBaseline ==
+                                    null
+                                ) {
+                                    OutlinedButton(
+                                        onClick =
+                                            ::captureUnknownRuntimeBaseline,
+                                        enabled = !busy,
+                                        modifier =
+                                            Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(
+                                            "Создать baseline неизвестного значения",
+                                        )
+                                    }
+                                } else {
+                                    val unknown =
+                                        requireNotNull(
+                                            runtimeUnknownBaseline,
+                                        )
+                                    Text(
+                                        "Baseline: PID " +
+                                            unknown.pid +
+                                            " · " +
+                                            (
+                                                unknown
+                                                    .capturedBytes /
+                                                    (1024L * 1024L)
+                                                ) +
+                                            " MiB · сегментов " +
+                                            unknown.segments
+                                                .size +
+                                            (
+                                                if (
+                                                    unknown
+                                                        .truncatedByByteLimit
+                                                ) {
+                                                    " · достигнут лимит"
+                                                } else {
+                                                    ""
+                                                }
+                                                ),
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                    )
+                                    RuntimeValueRefinement
+                                        .entries
+                                        .forEach {
+                                            refinement ->
+                                            OutlinedButton(
+                                                onClick = {
+                                                    compareUnknownRuntimeBaseline(
+                                                        refinement,
+                                                    )
+                                                },
+                                                enabled = !busy,
+                                                modifier =
+                                                    Modifier
+                                                        .fillMaxWidth(),
+                                            ) {
+                                                Text(
+                                                    "После изменения: " +
+                                                        refinement
+                                                            .title,
+                                                )
+                                            }
+                                        }
+                                    OutlinedButton(
+                                        onClick = {
+                                            RootRuntimeUnknownValueCoordinator
+                                                .deleteBaseline(
+                                                    runtimeUnknownBaseline,
+                                                )
+                                            runtimeUnknownBaseline =
+                                                null
+                                        },
+                                        enabled = !busy,
+                                        modifier =
+                                            Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(
+                                            "Удалить baseline",
+                                        )
+                                    }
+                                }
+
+                                Text(
+                                    "Известное точное значение",
+                                    fontWeight =
+                                        FontWeight.SemiBold,
+                                )
                                 OutlinedTextField(
                                     value =
                                         runtimeValueQuery,
