@@ -164,7 +164,8 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
                 }
                 return jniTraceStatusBundle(
                         RuntimeNativeTraceBuffer.snapshot(),
-                        producerReady
+                        producerReady,
+                        JniProducerSnapshot.current()
                 );
             }
         }
@@ -175,14 +176,21 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
                             "The active trace session is not a passive JNI session."
                     );
                 }
+                JniProducerSnapshot beforeStop =
+                        JniProducerSnapshot.current();
                 boolean restored =
                         RuntimeNativeBridge.stopPassiveJniTrace();
                 RuntimeNativeTraceBuffer.Snapshot snapshot =
                         RuntimeNativeTraceBuffer.stop();
-                stoppedJniProducer = JniProducerSnapshot.capture(restored);
+                stoppedJniProducer =
+                        JniProducerSnapshot.afterStop(
+                                restored,
+                                beforeStop
+                        );
                 return jniTraceStatusBundle(
                         snapshot,
-                        restored
+                        restored,
+                        stoppedJniProducer
                 );
             }
         }
@@ -195,9 +203,17 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
                 }
                 boolean ready = RuntimeNativeBridge.ensureLoaded() &&
                         !RuntimeNativeBridge.passiveJniRestoreFailed();
+                RuntimeNativeTraceBuffer.Snapshot snapshot =
+                        RuntimeNativeTraceBuffer.snapshot();
+                JniProducerSnapshot producer =
+                        !snapshot.active &&
+                                stoppedJniProducer != null
+                            ? stoppedJniProducer
+                            : JniProducerSnapshot.current();
                 return jniTraceStatusBundle(
-                        RuntimeNativeTraceBuffer.snapshot(),
-                        ready
+                        snapshot,
+                        ready,
+                        producer
                 );
             }
         }
@@ -254,7 +270,8 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
 
     private Bundle jniTraceStatusBundle(
             RuntimeNativeTraceBuffer.Snapshot snapshot,
-            boolean producerReady
+            boolean producerReady,
+            JniProducerSnapshot producer
     ) {
         Bundle result = baseReply();
         result.putString("sessionId", snapshot.sessionId);
@@ -264,7 +281,7 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         result.putLong("startedAtEpochMs", snapshot.startedAtEpochMs);
         result.putLong("stoppedAtEpochMs", snapshot.stoppedAtEpochMs);
         result.putInt("traceBytes", snapshot.bytes.length);
-        result.putString("producerKind", "ART_JNI_ONLOAD_LOOKUP_JNI_TABLE");
+        result.putString("producerKind", "ART_JNI_ONLOAD_WRAPPER_JNI_TABLE");
         result.putBoolean("producerReady", producerReady);
         result.putBoolean(
                 "producerActive",
@@ -272,19 +289,23 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         );
         result.putInt(
                 "jniOnLoadLookupHookedSlotCount",
-                RuntimeNativeBridge.passiveJniOnLoadLookupHookedSlotCount()
+                producer.jniOnLoadLookupHookedSlotCount
+        );
+        result.putBoolean(
+                "jniOnLoadInvocationReady",
+                producer.jniOnLoadInvocationReady
         );
         result.putBoolean(
                 "registerNativesHooked",
-                RuntimeNativeBridge.passiveRegisterNativesHooked()
+                producer.registerNativesHooked
         );
         result.putBoolean(
                 "producerIncomplete",
-                RuntimeNativeBridge.passiveJniIncomplete()
+                producer.incomplete
         );
         result.putBoolean(
                 "producerRestoreFailed",
-                RuntimeNativeBridge.passiveJniRestoreFailed()
+                producer.restoreFailed
         );
         return result;
     }
@@ -523,9 +544,11 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
                     "traceSha256=" + sha256(trace) + "\n" +
                     "traceBytes=" + trace.length + "\n" +
                     "truncated=" + snapshot.truncated + "\n" +
-                    "producerKind=ART_JNI_ONLOAD_LOOKUP_JNI_TABLE\n" +
+                    "producerKind=ART_JNI_ONLOAD_WRAPPER_JNI_TABLE\n" +
                     "jniOnLoadLookupHookedSlotCount=" +
                     producer.jniOnLoadLookupHookedSlotCount + "\n" +
+                    "jniOnLoadInvocationReady=" +
+                    producer.jniOnLoadInvocationReady + "\n" +
                     "registerNativesHooked=" +
                     producer.registerNativesHooked + "\n" +
                     "producerIncomplete=" +
@@ -543,30 +566,50 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
 
     private static final class JniProducerSnapshot {
         final int jniOnLoadLookupHookedSlotCount;
+        final boolean jniOnLoadInvocationReady;
         final boolean registerNativesHooked;
         final boolean incomplete;
         final boolean restoreFailed;
 
         JniProducerSnapshot(
                 int jniOnLoadLookupHookedSlotCount,
+                boolean jniOnLoadInvocationReady,
                 boolean registerNativesHooked,
                 boolean incomplete,
                 boolean restoreFailed
         ) {
-            this.jniOnLoadLookupHookedSlotCount = jniOnLoadLookupHookedSlotCount;
+            this.jniOnLoadLookupHookedSlotCount =
+                    jniOnLoadLookupHookedSlotCount;
+            this.jniOnLoadInvocationReady =
+                    jniOnLoadInvocationReady;
             this.registerNativesHooked = registerNativesHooked;
             this.incomplete = incomplete;
             this.restoreFailed = restoreFailed;
         }
 
-        static JniProducerSnapshot capture(boolean restored) {
-            boolean restoreFailed =
-                    RuntimeNativeBridge.passiveJniRestoreFailed() || !restored;
+        static JniProducerSnapshot current() {
             return new JniProducerSnapshot(
                     RuntimeNativeBridge.passiveJniOnLoadLookupHookedSlotCount(),
+                    RuntimeNativeBridge.passiveJniOnLoadInvocationReady(),
                     RuntimeNativeBridge.passiveRegisterNativesHooked(),
                     RuntimeNativeBridge.passiveJniIncomplete(),
-                    restoreFailed
+                    RuntimeNativeBridge.passiveJniRestoreFailed()
+            );
+        }
+
+        static JniProducerSnapshot afterStop(
+                boolean restored,
+                JniProducerSnapshot beforeStop
+        ) {
+            return new JniProducerSnapshot(
+                    beforeStop.jniOnLoadLookupHookedSlotCount,
+                    beforeStop.jniOnLoadInvocationReady,
+                    beforeStop.registerNativesHooked,
+                    beforeStop.incomplete ||
+                            RuntimeNativeBridge.passiveJniIncomplete(),
+                    beforeStop.restoreFailed ||
+                            RuntimeNativeBridge.passiveJniRestoreFailed() ||
+                            !restored
             );
         }
     }
