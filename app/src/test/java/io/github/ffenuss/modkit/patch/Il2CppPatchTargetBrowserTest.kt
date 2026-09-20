@@ -94,7 +94,7 @@ class Il2CppPatchTargetBrowserTest {
                 id =
                     "il2cpp:method:Assembly-CSharp.dll:" +
                         "6000001:Assembly-CSharp.dll",
-                memberName = memberName,
+                memberName = "Update",
             )
         val predicate =
             target(
@@ -146,7 +146,7 @@ class Il2CppPatchTargetBrowserTest {
                 "base.apk:lib/arm64-v8a/libil2cpp.so",
             abi = "arm64-v8a",
             declaringType = "Game.Player",
-            memberName = "Update",
+            memberName = memberName,
             metadataToken = 0x06000001,
             rva = null,
             binaryVirtualAddress = 0x1000,
