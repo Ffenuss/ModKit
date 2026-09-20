@@ -50,9 +50,11 @@ class Il2CppCodeGenScannerTest {
         )
 
         assertNull(result.codeRegistrationVirtualAddress)
-        assertTrue(result.moduleArrayDiscovery.orEmpty().startsWith(
-            "BOUNDED_IMAGE_SET_SCAN@",
-        ))
+        assertTrue(
+            result.moduleArrayDiscovery.orEmpty().startsWith(
+                "RELATIVE_RELOCATION_PAIR@",
+            ),
+        )
         assertBinding(result)
     }
 
@@ -66,7 +68,7 @@ class Il2CppCodeGenScannerTest {
         assertNull(result.codeRegistrationVirtualAddress)
         assertTrue(
             result.moduleArrayDiscovery.orEmpty().startsWith(
-                "BOUNDED_IMAGE_SET_SCAN@",
+                "RELATIVE_RELOCATION_PAIR@",
             ),
         )
         assertBinding(result)
