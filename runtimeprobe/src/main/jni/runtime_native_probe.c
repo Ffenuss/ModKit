@@ -45,6 +45,7 @@ static jmethodID g_append_dlsym = NULL;
 static jmethodID g_append_register_native_class = NULL;
 
 static pthread_mutex_t g_hook_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_code_patch_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t g_scan_thread;
 static atomic_int g_trace_active = 0;
 static atomic_int g_scan_thread_started = 0;
@@ -174,6 +175,102 @@ static int change_page_protection(void* address, int prot) {
     uintptr_t page = (uintptr_t)address &
             ~((uintptr_t)page_size - 1u);
     return mprotect((void*)page, (size_t)page_size, prot) == 0;
+}
+
+typedef struct {
+    const char* module_name;
+    uintptr_t binary_virtual_address;
+    size_t length;
+    void* address;
+    int found;
+} code_patch_lookup;
+
+static int locate_code_patch_target(
+        struct dl_phdr_info* info,
+        size_t size,
+        void* data) {
+    (void)size;
+    code_patch_lookup* lookup = (code_patch_lookup*)data;
+    if (lookup == NULL || info == NULL) return 0;
+
+    const char* actual = base_name(info->dlpi_name);
+    if (actual == NULL ||
+            strcmp(actual, lookup->module_name) != 0) {
+        return 0;
+    }
+
+    const uintptr_t base = (uintptr_t)info->dlpi_addr;
+    if (lookup->binary_virtual_address > UINTPTR_MAX - base) {
+        return 1;
+    }
+    const uintptr_t target =
+            base + lookup->binary_virtual_address;
+    if (lookup->length == 0 ||
+            lookup->length - 1 > UINTPTR_MAX - target) {
+        return 1;
+    }
+    const uintptr_t last =
+            target + lookup->length - 1;
+
+    for (ElfW(Half) index = 0;
+            index < info->dlpi_phnum;
+            index++) {
+        const ElfW(Phdr)* phdr =
+                &info->dlpi_phdr[index];
+        if (phdr->p_type != PT_LOAD ||
+                (phdr->p_flags & PF_X) == 0) {
+            continue;
+        }
+        if ((uintptr_t)phdr->p_vaddr > UINTPTR_MAX - base) {
+            continue;
+        }
+        const uintptr_t start =
+                base + (uintptr_t)phdr->p_vaddr;
+        if ((uintptr_t)phdr->p_memsz > UINTPTR_MAX - start) {
+            continue;
+        }
+        const uintptr_t end =
+                start + (uintptr_t)phdr->p_memsz;
+        if (target >= start &&
+                target < end &&
+                last >= target &&
+                last < end) {
+            lookup->address = (void*)target;
+            lookup->found = 1;
+            return 1;
+        }
+    }
+    return 1;
+}
+
+static int change_code_range_protection(
+        void* address,
+        size_t length,
+        int prot) {
+    if (address == NULL || length == 0) return 0;
+    const long raw_page_size = sysconf(_SC_PAGESIZE);
+    if (raw_page_size <= 0) return 0;
+    const uintptr_t page_size =
+            (uintptr_t)raw_page_size;
+    const uintptr_t mask = page_size - 1u;
+    const uintptr_t start =
+            (uintptr_t)address & ~mask;
+    const uintptr_t last_byte =
+            (uintptr_t)address + length - 1u;
+    if (last_byte < (uintptr_t)address) return 0;
+    const uintptr_t end = last_byte & ~mask;
+
+    for (uintptr_t page = start; ; page += page_size) {
+        if (mprotect(
+                (void*)page,
+                (size_t)page_size,
+                prot) != 0) {
+            return 0;
+        }
+        if (page == end) break;
+        if (page > UINTPTR_MAX - page_size) return 0;
+    }
+    return 1;
 }
 
 static int slot_already_patched(void** slot) {
@@ -1774,6 +1871,148 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveJniR
     return atomic_load(&g_jni_restore_failed)
             ? JNI_TRUE
             : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePatchCode(
+        JNIEnv* env,
+        jclass clazz,
+        jstring module_name,
+        jlong binary_virtual_address,
+        jbyteArray expected_bytes,
+        jbyteArray replacement_bytes) {
+    (void)clazz;
+    if (module_name == NULL ||
+            expected_bytes == NULL ||
+            replacement_bytes == NULL ||
+            binary_virtual_address <= 0) {
+        return JNI_FALSE;
+    }
+
+    const jsize expected_length =
+            (*env)->GetArrayLength(env, expected_bytes);
+    const jsize replacement_length =
+            (*env)->GetArrayLength(env, replacement_bytes);
+    if (expected_length <= 0 ||
+            expected_length != replacement_length ||
+            expected_length > 64 ||
+            expected_length % 4 != 0) {
+        return JNI_FALSE;
+    }
+
+    const char* module =
+            (*env)->GetStringUTFChars(
+                    env,
+                    module_name,
+                    NULL);
+    if (module == NULL) return JNI_FALSE;
+    if (!valid_module(module)) {
+        (*env)->ReleaseStringUTFChars(
+                env,
+                module_name,
+                module);
+        return JNI_FALSE;
+    }
+
+    uint8_t expected[64];
+    uint8_t replacement[64];
+    (*env)->GetByteArrayRegion(
+            env,
+            expected_bytes,
+            0,
+            expected_length,
+            (jbyte*)expected);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        (*env)->ReleaseStringUTFChars(
+                env,
+                module_name,
+                module);
+        return JNI_FALSE;
+    }
+    (*env)->GetByteArrayRegion(
+            env,
+            replacement_bytes,
+            0,
+            replacement_length,
+            (jbyte*)replacement);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        (*env)->ReleaseStringUTFChars(
+                env,
+                module_name,
+                module);
+        return JNI_FALSE;
+    }
+
+    code_patch_lookup lookup;
+    memset(&lookup, 0, sizeof(lookup));
+    lookup.module_name = module;
+    lookup.binary_virtual_address =
+            (uintptr_t)binary_virtual_address;
+    lookup.length = (size_t)expected_length;
+
+    pthread_mutex_lock(&g_code_patch_lock);
+    dl_iterate_phdr(
+            locate_code_patch_target,
+            &lookup);
+
+    int success = 0;
+    if (lookup.found && lookup.address != NULL) {
+        uint8_t* target =
+                (uint8_t*)lookup.address;
+        uint8_t* last =
+                target + expected_length - 1;
+        const int start_prot =
+                query_protection(target);
+        const int end_prot =
+                query_protection(last);
+
+        if (
+            start_prot != 0 &&
+            start_prot == end_prot &&
+            (start_prot & PROT_READ) != 0 &&
+            (start_prot & PROT_EXEC) != 0 &&
+            memcmp(
+                target,
+                expected,
+                (size_t)expected_length) == 0
+        ) {
+            const int writable =
+                    start_prot | PROT_WRITE;
+            if (change_code_range_protection(
+                    target,
+                    (size_t)expected_length,
+                    writable)) {
+                memcpy(
+                    target,
+                    replacement,
+                    (size_t)replacement_length);
+                __builtin___clear_cache(
+                    (char*)target,
+                    (char*)target +
+                        replacement_length);
+                const int restored =
+                        change_code_range_protection(
+                            target,
+                            (size_t)expected_length,
+                            start_prot);
+                success =
+                        restored &&
+                        memcmp(
+                            target,
+                            replacement,
+                            (size_t)replacement_length) == 0;
+            }
+        }
+    }
+
+    pthread_mutex_unlock(&g_code_patch_lock);
+    (*env)->ReleaseStringUTFChars(
+            env,
+            module_name,
+            module);
+    return success ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jlong JNICALL
