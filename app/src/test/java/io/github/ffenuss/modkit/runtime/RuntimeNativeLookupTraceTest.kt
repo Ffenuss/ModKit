@@ -185,6 +185,17 @@ class RuntimeNativeLookupTraceTest {
                 RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME,
             ),
         )
+        assertTrue(
+            RuntimeNativeTraceCapability
+                .REPACKED_PASSIVE_JNI_REGISTRATION_CAPTURE in
+                RuntimeNativeTraceCapabilityRegistry.registered,
+        )
+        assertTrue(
+            RuntimeNativeTraceCapabilityRegistry
+                .passiveJniRegistrationCaptureAvailable(
+                    RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME,
+                ),
+        )
         assertFalse(
             RuntimeNativeTraceCapabilityRegistry.captureAvailable(
                 RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME,
