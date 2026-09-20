@@ -66,6 +66,10 @@ class ElfImage private constructor(
         }
     }
 
+    internal fun relativeRelocationValueAt(
+        virtualAddress: Long,
+    ): Long? = relativeRelocations[virtualAddress]
+
     internal fun readFileWindowAtVa(
         virtualAddress: Long,
         maxBytes: Int,
