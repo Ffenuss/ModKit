@@ -44,6 +44,7 @@ enum class GameplayMutationAction(
 enum class GameplayModificationConfidence {
     EXACT_ACTION,
     STRONG_NUMERIC_CANDIDATE,
+    SEMANTIC_METHOD_SIGNAL,
     SEMANTIC_MODEL_SIGNAL,
     SENSITIVE_SURFACE_SIGNAL,
 }
@@ -78,10 +79,10 @@ object GameplayModificationFinder {
         limit: Int = 64,
         perCategoryLimit: Int = 4,
     ): List<GameplayModificationOpportunity> {
-        require(limit in 1..256) {
+        require(limit in 1..512) {
             "Gameplay modification result limit is out of bounds."
         }
-        require(perCategoryLimit in 1..32) {
+        require(perCategoryLimit in 1..64) {
             "Gameplay category result limit is out of bounds."
         }
 
@@ -306,12 +307,9 @@ object GameplayModificationFinder {
                                 category = category,
                                 returnKind = returnKind,
                             )
-                    if (
+                    val semanticOnlyCandidate =
                         action == GameplayMutationAction.DISCOVERY_ONLY &&
-                        !numericCandidate
-                    ) {
-                        return@mapNotNull null
-                    }
+                            !numericCandidate
 
                     val preset =
                         presetForAction(
@@ -340,6 +338,12 @@ object GameplayModificationFinder {
                                     category = category,
                                     returnKind = returnKind,
                                 )
+                            semanticOnlyCandidate ->
+                                "Метод относится к категории «" +
+                                    category.title +
+                                    "» по имени и контексту класса. " +
+                                    "Готового безопасного автопатча нет; " +
+                                    "откройте код метода для ручного изменения."
                             preset == null ->
                                 "Для ABI/return type пока нет безопасного готового preset."
                             else -> null
@@ -356,11 +360,18 @@ object GameplayModificationFinder {
                                 action.name.lowercase(),
                         category = category,
                         title =
-                            actionTitle(
-                                category = category,
-                                action = action,
-                                methodName = memberName,
-                            ),
+                            if (semanticOnlyCandidate) {
+                                category.title +
+                                    ": кандидат " +
+                                    readableMethod(memberName) +
+                                    "()"
+                            } else {
+                                actionTitle(
+                                    category = category,
+                                    action = action,
+                                    methodName = memberName,
+                                )
+                            },
                         targetId = target.id,
                         targetDisplayName = target.displayName,
                         action = action,
@@ -368,16 +379,29 @@ object GameplayModificationFinder {
                         selectable = selectable,
                         blocker = blocker,
                         evidenceSummary =
-                            "Точная binary-привязка · unique body · " +
+                            "Точная binary-привязка · " +
+                                (
+                                    if (sharedCount == 1) {
+                                        "unique body"
+                                    } else {
+                                        "shared body: " +
+                                            sharedCount
+                                    }
+                                    ) +
+                                " · " +
                                 Il2CppPatchTargetBrowser
                                     .returnKindLabel(returnKind),
                         confidence =
-                            if (numericCandidate) {
-                                GameplayModificationConfidence
-                                    .STRONG_NUMERIC_CANDIDATE
-                            } else {
-                                GameplayModificationConfidence
-                                    .EXACT_ACTION
+                            when {
+                                numericCandidate ->
+                                    GameplayModificationConfidence
+                                        .STRONG_NUMERIC_CANDIDATE
+                                semanticOnlyCandidate ->
+                                    GameplayModificationConfidence
+                                        .SEMANTIC_METHOD_SIGNAL
+                                else ->
+                                    GameplayModificationConfidence
+                                        .EXACT_ACTION
                             },
                     )
                 }

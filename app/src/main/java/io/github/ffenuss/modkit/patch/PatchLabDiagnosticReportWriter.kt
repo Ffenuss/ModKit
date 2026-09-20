@@ -12,13 +12,14 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.zip.Deflater
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 object PatchLabDiagnosticReportWriter {
     private const val SCHEMA_VERSION = 1
     private const val ENGINE_VERSION =
-        "patch-lab-diagnostic/1"
+        "patch-lab-diagnostic/2"
     private const val COPY_BUFFER_BYTES =
         128 * 1024
 
@@ -36,18 +37,61 @@ object PatchLabDiagnosticReportWriter {
                     result.index.artifactSha256.take(12) +
                     ".zip",
             )
+        val fingerprint =
+            buildString {
+                append(ENGINE_VERSION)
+                append('|')
+                append(result.index.artifactSha256)
+                append('|')
+                append(
+                    preparation
+                        ?.preparedAtEpochMs
+                        ?: -1L,
+                )
+                append('|')
+                append(
+                    result.il2cppBinaryBinding
+                        ?.exactBindingCount
+                        ?: 0,
+                )
+                append('|')
+                append(
+                    result.il2cppFastDump
+                        ?.dumpFilePath
+                        .orEmpty(),
+                )
+            }
+        val fingerprintFile =
+            File(
+                outputDir,
+                output.name + ".fingerprint",
+            )
+        if (
+            output.isFile &&
+            output.length() > 0L &&
+            fingerprintFile.isFile &&
+            fingerprintFile.readText(
+                StandardCharsets.UTF_8,
+            ) == fingerprint
+        ) {
+            return output
+        }
+
         if (output.exists()) {
             require(output.delete()) {
                 "Не удалось заменить предыдущий diagnostic report."
             }
         }
+        fingerprintFile.delete()
 
         ZipOutputStream(
             BufferedOutputStream(
                 FileOutputStream(output),
                 COPY_BUFFER_BYTES,
             ),
-        ).use { zip ->
+        ).apply {
+            setLevel(Deflater.BEST_SPEED)
+        }.use { zip ->
             writeSummary(
                 zip = zip,
                 label = label,
@@ -74,6 +118,10 @@ object PatchLabDiagnosticReportWriter {
         require(output.isFile && output.length() > 0L) {
             "Diagnostic report was not created."
         }
+        fingerprintFile.writeText(
+            fingerprint,
+            StandardCharsets.UTF_8,
+        )
         return output
     }
 

@@ -704,6 +704,49 @@ class GameplayModificationFinderTest {
     }
 
     @Test
+    fun semanticExactMethodRemainsVisibleForManualEditor() {
+        val target =
+            target(
+                token = 0x06000329,
+                name = "set_MoveSpeed",
+                offset = 0x3290,
+                declaringType =
+                    "Game.PlayerMovement",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.VOID,
+            )
+
+        val opportunity =
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).single()
+
+        assertEquals(
+            GameplayModificationCategory.MOVEMENT,
+            opportunity.category,
+        )
+        assertEquals(
+            GameplayMutationAction.DISCOVERY_ONLY,
+            opportunity.action,
+        )
+        assertEquals(
+            GameplayModificationConfidence
+                .SEMANTIC_METHOD_SIGNAL,
+            opportunity.confidence,
+        )
+        assertFalse(opportunity.selectable)
+        assertTrue(
+            opportunity.blocker.orEmpty()
+                .contains("ручного изменения"),
+        )
+    }
+
+    @Test
     fun localCurrencyGetterIsDiscoveredAsEconomySignal() {
         val target =
             target(

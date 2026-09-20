@@ -185,10 +185,9 @@ fun AutoModScreen(
         }
     }
 
-    fun buildApk() {
-        val staged = stagingOutcome
+    fun startBuild(staged: MutationApplyOutcome) {
         if (
-            staged?.applied != true ||
+            !staged.applied ||
             preparing ||
             building ||
             runtimeMenuBusy
@@ -220,6 +219,11 @@ fun AutoModScreen(
                 cancellation = null
             }
         }
+    }
+
+    fun buildApk() {
+        val staged = stagingOutcome ?: return
+        startBuild(staged)
     }
 
     fun buildRuntimeTestMenu() {
@@ -390,8 +394,8 @@ fun AutoModScreen(
                             result = analysisResult,
                             preparation = prepared,
                             projectCodeOnly = true,
-                            limit = 128,
-                            perCategoryLimit = 16,
+                            limit = 256,
+                            perCategoryLimit = 32,
                         )
                     }
             } catch (failure: Throwable) {
@@ -440,11 +444,23 @@ fun AutoModScreen(
                     )
                     if (summary != null) {
                         Text(
-                            "Подтверждено: " + summary.confirmed +
-                                " · готово: " + summary.ready +
-                                " · подтверждается: " + summary.confirming,
+                            "Точных методов: " + summary.confirmed +
+                                " · готовых автопатчей: " + summary.ready +
+                                " · на проверке: " + summary.confirming,
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        if (
+                            summary.confirmed > 0 &&
+                            summary.ready == 0
+                        ) {
+                            Text(
+                                "Точные методы уже найдены. Ноль готовых автопатчей " +
+                                    "означает только то, что конкретные байты изменения " +
+                                    "ещё не выбраны.",
+                                style =
+                                    MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         if (summary.runtimeRequired > 0) {
                             Text(
                                 "Требуется runtime: " + summary.runtimeRequired,
@@ -625,10 +641,10 @@ fun AutoModScreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text(
-                            "Найдено: " + summary.found +
-                                " · подтверждено: " + summary.confirmed +
-                                " · готово: " + summary.ready +
-                                " · требуют подтверждения: " + summary.requireConfirmation,
+                            "Целей: " + summary.found +
+                                " · точных binary-привязок: " + summary.confirmed +
+                                " · готовых автопатчей: " + summary.ready +
+                                " · нужен ещё proof: " + summary.requireConfirmation,
                             style = MaterialTheme.typography.bodySmall,
                         )
                         if (summary.runtimeRequired > 0 || summary.blocked > 0) {
@@ -745,6 +761,11 @@ fun AutoModScreen(
                         onStagingInvalidated = {
                             stagingOutcome = null
                             buildResult = null
+                        },
+                        onBuildRequested = { outcome ->
+                            stagingOutcome = outcome
+                            buildResult = null
+                            startBuild(outcome)
                         },
                     )
                 }

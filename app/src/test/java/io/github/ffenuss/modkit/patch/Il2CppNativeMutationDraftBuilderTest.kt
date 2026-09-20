@@ -63,6 +63,55 @@ class Il2CppNativeMutationDraftBuilderTest {
         }
     }
 
+    @Test
+    fun readsBoundedNativeCodeWindow() {
+        val root =
+            Files.createTempDirectory(
+                "modkit-native-window-",
+            ).toFile()
+        try {
+            val analysisRoot =
+                File(root, "analysis-results")
+            val nativeDir =
+                File(
+                    analysisRoot,
+                    SHA + "/il2cpp/native",
+                ).apply { mkdirs() }
+            val bytes =
+                ByteArray(32) { it.toByte() }
+            File(
+                nativeDir,
+                "arm64-v8a-libil2cpp.so",
+            ).writeBytes(bytes)
+
+            val window =
+                Il2CppNativeMutationDraftBuilder
+                    .readCodeWindow(
+                        result =
+                            analysisResult(
+                                proof =
+                                    ProofLevel.EXACT_BINARY,
+                                status =
+                                    UserFindingStatus.CONFIRMED,
+                            ),
+                        targetId = TARGET_ID,
+                        analysisResultsRoot =
+                            analysisRoot,
+                        maxBytes = 16,
+                    )
+
+            assertEquals(8L, window.fileOffset)
+            assertEquals(16, window.byteLength)
+            assertEquals(
+                "08 09 0A 0B 0C 0D 0E 0F " +
+                    "10 11 12 13 14 15 16 17",
+                window.originalHex,
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun refusesMetadataOnlyTarget() {
         val root = Files.createTempDirectory("modkit-native-draft-block-").toFile()

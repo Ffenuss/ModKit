@@ -16,6 +16,17 @@ data class NativeMutationDraft(
     val extractedLibraryPath: String,
 )
 
+data class NativeCodeWindow(
+    val targetId: String,
+    val targetDisplayName: String,
+    val abi: String,
+    val fileOffset: Long,
+    val nextMethodFileOffset: Long?,
+    val originalHex: String,
+    val byteLength: Int,
+    val extractedLibraryPath: String,
+)
+
 /**
  * Builds a concrete IL2CPP native in-place mutation draft from user-supplied
  * replacement bytes and the exact binary evidence already extracted by the
@@ -26,6 +37,127 @@ data class NativeMutationDraft(
  */
 object Il2CppNativeMutationDraftBuilder {
     private const val MAX_PATCH_BYTES = 4096
+    private const val DEFAULT_CODE_WINDOW_BYTES = 64
+    private const val MAX_CODE_WINDOW_BYTES = 1024
+
+    fun readCodeWindow(
+        result: FastAnalysisResult,
+        targetId: String,
+        analysisResultsRoot: File,
+        maxBytes: Int = DEFAULT_CODE_WINDOW_BYTES,
+    ): NativeCodeWindow {
+        require(maxBytes in 4..MAX_CODE_WINDOW_BYTES) {
+            "Размер окна кода вне допустимого диапазона."
+        }
+        val target =
+            result.evidenceGraph
+                ?.targets
+                ?.singleOrNull { it.id == targetId }
+                ?: error("Подтверждённая цель не найдена в Evidence Graph.")
+
+        require(target.runtimeId == "unity_il2cpp") {
+            "Окно native-кода доступно только для IL2CPP."
+        }
+        require(target.kind == EvidenceTargetKind.METHOD) {
+            "Окно native-кода требует method target."
+        }
+        require(
+            target.proofLevel == ProofLevel.EXACT_BINARY ||
+                target.proofLevel == ProofLevel.RUNTIME_CONFIRMED ||
+                target.proofLevel == ProofLevel.CHANGE_READY,
+        ) {
+            "Метод ещё не имеет достаточного executable proof."
+        }
+        require(
+            target.userStatus == UserFindingStatus.CONFIRMED ||
+                target.userStatus == UserFindingStatus.READY,
+        ) {
+            "Метод ещё не подтверждён для редактирования."
+        }
+
+        val offset = requireNotNull(target.fileOffset) {
+            "Для метода отсутствует подтверждённый file offset."
+        }
+        require(offset >= 0L) { "Некорректный file offset." }
+
+        val abi = requireNotNull(target.abi) {
+            "Для метода не определён ABI."
+        }
+        val artifact = requireNotNull(target.artifact) {
+            "Для метода не определён исходный native artifact."
+        }
+        val safeAbi =
+            abi.replace(
+                Regex("[^A-Za-z0-9._-]"),
+                "_",
+            )
+        val extracted =
+            File(
+                analysisResultsRoot,
+                result.index.artifactSha256 +
+                    "/il2cpp/native/" +
+                    safeAbi +
+                    "-libil2cpp.so",
+            )
+        require(extracted.isFile && extracted.canRead()) {
+            "Извлечённый libil2cpp.so для этого ABI не найден."
+        }
+        require(offset < extracted.length()) {
+            "File offset метода выходит за границы libil2cpp.so."
+        }
+
+        val nextMethodOffset =
+            result.evidenceGraph
+                ?.targets
+                .orEmpty()
+                .asSequence()
+                .filter {
+                    it.runtimeId == "unity_il2cpp" &&
+                        it.kind == EvidenceTargetKind.METHOD &&
+                        it.artifact == artifact &&
+                        it.abi == abi &&
+                        it.fileOffset != null &&
+                        requireNotNull(it.fileOffset) > offset
+                }
+                .mapNotNull { it.fileOffset }
+                .minOrNull()
+
+        val availableToNext =
+            nextMethodOffset
+                ?.minus(offset)
+                ?: maxBytes.toLong()
+        val availableInFile =
+            extracted.length() - offset
+        var length =
+            minOf(
+                maxBytes.toLong(),
+                availableToNext,
+                availableInFile,
+            ).toInt()
+        if (abi.equals("arm64-v8a", ignoreCase = true)) {
+            length -= length % 4
+        }
+        require(length > 0) {
+            "Не удалось выделить безопасное окно байтов этого метода."
+        }
+
+        val original = ByteArray(length)
+        RandomAccessFile(extracted, "r").use { raf ->
+            raf.seek(offset)
+            raf.readFully(original)
+        }
+
+        return NativeCodeWindow(
+            targetId = target.id,
+            targetDisplayName = target.displayName,
+            abi = abi,
+            fileOffset = offset,
+            nextMethodFileOffset = nextMethodOffset,
+            originalHex = original.toDisplayHex(),
+            byteLength = original.size,
+            extractedLibraryPath = extracted.absolutePath,
+        )
+    }
 
     fun build(
         result: FastAnalysisResult,
