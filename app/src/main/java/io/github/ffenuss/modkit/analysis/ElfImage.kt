@@ -27,7 +27,10 @@ class ElfImage private constructor(
     val machine: Int,
     val loadSegments: List<ElfLoadSegment>,
     val dynamicSymbols: List<ElfDynamicSymbol>,
+    private val relativeRelocations: Map<Long, Long>,
 ) : Closeable {
+    val relativeRelocationCount: Int
+        get() = relativeRelocations.size
     val pointerSize: Int get() = if (is64Bit) 8 else 4
 
     fun isExecutableVa(virtualAddress: Long): Boolean =
@@ -46,7 +49,12 @@ class ElfImage private constructor(
     }
 
     fun readPointerAtVa(virtualAddress: Long): Long? {
-        val offset = fileOffsetForVa(virtualAddress, pointerSize.toLong()) ?: return null
+        relativeRelocations[virtualAddress]?.let { return it }
+        val offset =
+            fileOffsetForVa(
+                virtualAddress,
+                pointerSize.toLong(),
+            ) ?: return null
         return if (is64Bit) u64(offset) else u32(offset)
     }
 
@@ -100,8 +108,11 @@ class ElfImage private constructor(
     companion object {
         private const val PT_LOAD = 1L
         private const val PF_X = 1L
+        private const val SHT_RELA = 4L
         private const val SHT_NOBITS = 8L
+        private const val SHT_REL = 9L
         private const val SHT_DYNSYM = 11L
+        private const val MAX_RELATIVE_RELOCATIONS = 1_000_000
         private const val SHN_UNDEF = 0
 
         private data class Header(
@@ -133,14 +144,35 @@ class ElfImage private constructor(
                 val header = readHeader(raf)
                 checkCancelled(cancellation)
                 val segments = readLoadSegments(raf, header, cancellation)
-                val sections = readSections(raf, header, cancellation)
-                val symbols = readDynamicSymbols(raf, header, sections, cancellation)
+                val sections =
+                    readSections(
+                        raf,
+                        header,
+                        cancellation,
+                    )
+                val symbols =
+                    readDynamicSymbols(
+                        raf,
+                        header,
+                        sections,
+                        cancellation,
+                    )
+                val relativeRelocations =
+                    readRelativeRelocations(
+                        raf = raf,
+                        h = header,
+                        sections = sections,
+                        loadSegments = segments,
+                        cancellation = cancellation,
+                    )
                 return ElfImage(
                     raf = raf,
                     is64Bit = header.is64,
                     machine = header.machine,
                     loadSegments = segments,
                     dynamicSymbols = symbols,
+                    relativeRelocations =
+                        relativeRelocations,
                 )
             } catch (failure: Throwable) {
                 raf.close()
@@ -240,6 +272,152 @@ class ElfImage private constructor(
                 out += Section(type, offset, size, link, entrySize)
             }
             return out
+        }
+
+        private fun readRelativeRelocations(
+            raf: RandomAccessFile,
+            h: Header,
+            sections: List<Section>,
+            loadSegments: List<ElfLoadSegment>,
+            cancellation: CancellationSignal,
+        ): Map<Long, Long> {
+            val out = HashMap<Long, Long>()
+            for (section in sections) {
+                if (
+                    section.type != SHT_RELA &&
+                    section.type != SHT_REL
+                ) {
+                    continue
+                }
+                if (section.size == 0L) continue
+
+                val minimumEntrySize =
+                    when {
+                        h.is64 && section.type == SHT_RELA -> 24L
+                        h.is64 && section.type == SHT_REL -> 16L
+                        !h.is64 && section.type == SHT_RELA -> 12L
+                        else -> 8L
+                    }
+                val entrySize =
+                    section.entrySize
+                        .takeIf { it >= minimumEntrySize }
+                        ?: minimumEntrySize
+                val count = section.size / entrySize
+                require(count <= MAX_RELATIVE_RELOCATIONS.toLong()) {
+                    "ELF relocation section exceeds bounded entry limit"
+                }
+
+                repeat(count.toInt()) { index ->
+                    if (index % 1024 == 0) {
+                        checkCancelled(cancellation)
+                    }
+                    val base =
+                        section.offset +
+                            index.toLong() * entrySize
+                    val relocationOffset =
+                        if (h.is64) {
+                            u64(raf, base)
+                        } else {
+                            u32(raf, base)
+                        }
+                    val info =
+                        if (h.is64) {
+                            u64(raf, base + 8)
+                        } else {
+                            u32(raf, base + 4)
+                        }
+                    val symbolIndex =
+                        if (h.is64) {
+                            info ushr 32
+                        } else {
+                            info ushr 8
+                        }
+                    val relocationType =
+                        if (h.is64) {
+                            (info and 0xffffffffL).toInt()
+                        } else {
+                            (info and 0xffL).toInt()
+                        }
+                    if (
+                        symbolIndex != 0L ||
+                        !isRelativeRelocation(
+                            machine = h.machine,
+                            type = relocationType,
+                        )
+                    ) {
+                        return@repeat
+                    }
+
+                    val value =
+                        if (section.type == SHT_RELA) {
+                            if (h.is64) {
+                                u64(raf, base + 16)
+                            } else {
+                                u32(raf, base + 8)
+                            }
+                        } else {
+                            rawPointerAtVa(
+                                raf = raf,
+                                h = h,
+                                loadSegments = loadSegments,
+                                virtualAddress = relocationOffset,
+                            ) ?: return@repeat
+                        }
+                    if (value <= 0L) return@repeat
+
+                    require(
+                        out.size < MAX_RELATIVE_RELOCATIONS ||
+                            relocationOffset in out,
+                    ) {
+                        "ELF relative relocation inventory exceeds bounded limit"
+                    }
+                    out[relocationOffset] = value
+                }
+            }
+            return out
+        }
+
+        private fun isRelativeRelocation(
+            machine: Int,
+            type: Int,
+        ): Boolean =
+            when (machine) {
+                183 -> type == 1027 // R_AARCH64_RELATIVE
+                40 -> type == 23 // R_ARM_RELATIVE
+                62 -> type == 8 // R_X86_64_RELATIVE
+                3 -> type == 8 // R_386_RELATIVE
+                else -> false
+            }
+
+        private fun rawPointerAtVa(
+            raf: RandomAccessFile,
+            h: Header,
+            loadSegments: List<ElfLoadSegment>,
+            virtualAddress: Long,
+        ): Long? {
+            val size = if (h.is64) 8L else 4L
+            val segment =
+                loadSegments.firstOrNull { candidate ->
+                    if (virtualAddress < candidate.virtualAddress) {
+                        false
+                    } else {
+                        val relative =
+                            virtualAddress -
+                                candidate.virtualAddress
+                        relative >= 0L &&
+                            relative <= candidate.fileSize &&
+                            size <= candidate.fileSize - relative
+                    }
+                } ?: return null
+            val fileOffset =
+                segment.fileOffset +
+                    (virtualAddress -
+                        segment.virtualAddress)
+            return if (h.is64) {
+                u64(raf, fileOffset)
+            } else {
+                u32(raf, fileOffset)
+            }
         }
 
         private fun readDynamicSymbols(
