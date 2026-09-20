@@ -149,7 +149,9 @@ class RepackedRuntimePassiveTraceSessionCaptureTest {
             stopStatus = stopStatus(
                 producerIncomplete = true,
             ),
-            traceBytes = exportBytes(),
+            traceBytes = exportBytes(
+                producerIncomplete = true,
+            ),
         )
         val session =
             RepackedRuntimePassiveTraceSessionCapture.start(
@@ -466,6 +468,7 @@ class RepackedRuntimePassiveTraceSessionCaptureTest {
         eventCount: Int = 1,
         trace: String = TRACE,
         truncated: Boolean = false,
+        producerIncomplete: Boolean = false,
     ): ByteArray {
         val traceBytes =
             trace.toByteArray(Charsets.UTF_8)
@@ -491,7 +494,9 @@ class RepackedRuntimePassiveTraceSessionCaptureTest {
             appendLine("truncated=$truncated")
             appendLine("producerKind=PLT_DLSYM_GOT")
             appendLine("hookedSlotCount=1")
-            appendLine("producerIncomplete=$truncated")
+            appendLine(
+                "producerIncomplete=$producerIncomplete",
+            )
             append("producerRestoreFailed=false")
         }.toByteArray(Charsets.UTF_8)
         return header +
