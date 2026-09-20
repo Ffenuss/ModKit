@@ -1410,7 +1410,7 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         modifier = Modifier.fillMaxWidth(),
                                     ) {
                                         Text(
-                                            "Начать passive JNI registration trace",
+                                            "Начать passive JNI trace",
                                         )
                                     }
                                 } else if (
@@ -1441,7 +1441,7 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                             current.repackedPassiveJniTraceSession,
                                         )
                                     Text(
-                                        "Passive JNI registration trace активен · PID " +
+                                        "Passive JNI trace активен · PID " +
                                             jniSession.pid +
                                             " · session " +
                                             jniSession.sessionId,
@@ -1449,7 +1449,7 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                             MaterialTheme.typography.bodySmall,
                                     )
                                     Text(
-                                        "JNI_OnLoad здесь фиксируется только как runtime lookup, не как вызов; " +
+                                        "JNI_OnLoad фиксируется только после фактического вызова исходной функции; " +
                                             "RegisterNatives — только после успешной регистрации.",
                                         style =
                                             MaterialTheme.typography.bodySmall,
@@ -1461,7 +1461,7 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         modifier = Modifier.fillMaxWidth(),
                                     ) {
                                         Text(
-                                            "Остановить и проверить JNI registration trace",
+                                            "Остановить и проверить JNI trace",
                                         )
                                     }
                                 }
