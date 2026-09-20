@@ -184,14 +184,20 @@ fun ManualNativePatchSection(
 
             selectedPrepared?.let { selected ->
                 val evidenceTarget = selected.target
+                val selectedAbi =
+                    requireNotNull(evidenceTarget.abi)
+                val selectedFileOffset =
+                    requireNotNull(
+                        evidenceTarget.fileOffset,
+                    )
                 Text(
                     "Выбрано: " + evidenceTarget.displayName,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    "ABI: " + evidenceTarget.abi +
+                    "ABI: " + selectedAbi +
                         " · file offset: 0x" +
-                        evidenceTarget.fileOffset
+                        selectedFileOffset
                             .toString(16) +
                         (
                             evidenceTarget.metadataToken
@@ -207,7 +213,7 @@ fun ManualNativePatchSection(
                 if (presets.isNotEmpty()) {
                     Text(
                         "Готовые шаблоны для " +
-                            evidenceTarget.abi,
+                            selectedAbi,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
