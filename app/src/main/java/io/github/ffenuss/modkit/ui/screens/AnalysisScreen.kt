@@ -560,8 +560,8 @@ private fun il2CppBindingBlockerLabel(
             "В metadata нет подтверждённой карты IL2CPP images."
         blocker == "CODE_REGISTRATION_SYMBOL_UNRESOLVED" ->
             "Экспорт CodeRegistration не найден; используется статический fallback."
-        "CODEGEN_MODULE_ARRAY_UNRESOLVED",
-        blocker == "STRIPPED_CODEGEN_MODULE_ARRAY_UNRESOLVED" ->
+        blocker == "CODEGEN_MODULE_ARRAY_UNRESOLVED" ||
+            blocker == "STRIPPED_CODEGEN_MODULE_ARRAY_UNRESOLVED" ->
             "Не удалось однозначно восстановить таблицу CodeGenModule из ELF."
         blocker == "AMBIGUOUS_CODEGEN_MODULE_ARRAY" ->
             "Найдено несколько несовместимых кандидатов CodeGenModule; автоматический выбор запрещён."
