@@ -35,6 +35,7 @@ enum class GameplayMutationAction(
     FORCE_FALSE("arm64-return-zero"),
     FORCE_TRUE("arm64-return-one"),
     FORCE_ZERO("arm64-return-zero"),
+    FORCE_TWO(null),
     DISCOVERY_ONLY(null),
 }
 
@@ -253,12 +254,11 @@ object GameplayModificationFinder {
                     }
 
                     val preset =
-                        action.presetId?.let { presetId ->
-                            NativePatchPresetCatalog.find(
-                                abi = abi,
-                                id = presetId,
-                            )
-                        }
+                        presetForAction(
+                            abi = abi,
+                            action = action,
+                            returnKind = returnKind,
+                        )
                     val sharedCount =
                         sharedBodyCounts[
                             bodyKey(artifact, offset)
@@ -709,6 +709,20 @@ object GameplayModificationFinder {
         }
 
         if (
+            isGetter(target.memberName.orEmpty()) &&
+            (
+                returnKind == Il2CppNativeReturnKind.FLOAT32 ||
+                    returnKind == Il2CppNativeReturnKind.FLOAT64
+                ) &&
+            category in doubleValueAutoCategories &&
+            doubleValuePhrases.any {
+                containsPhrase(semantic, it)
+            }
+        ) {
+            return GameplayMutationAction.FORCE_TWO
+        }
+
+        if (
             returnKind == Il2CppNativeReturnKind.INTEGER &&
             category == GameplayModificationCategory.COOLDOWN &&
             isGetter(target.memberName.orEmpty()) &&
@@ -722,6 +736,35 @@ object GameplayModificationFinder {
         return GameplayMutationAction.DISCOVERY_ONLY
     }
 
+    private fun presetForAction(
+        abi: String,
+        action: GameplayMutationAction,
+        returnKind: Il2CppNativeReturnKind,
+    ): NativePatchPreset? =
+        when (action) {
+            GameplayMutationAction.FORCE_TWO ->
+                when (returnKind) {
+                    Il2CppNativeReturnKind.FLOAT32 ->
+                        NativePatchPresetCatalog.find(
+                            abi = abi,
+                            id = "arm64-return-f32-two",
+                        )
+                    Il2CppNativeReturnKind.FLOAT64 ->
+                        NativePatchPresetCatalog.find(
+                            abi = abi,
+                            id = "arm64-return-f64-two",
+                        )
+                    else -> null
+                }
+            else ->
+                action.presetId?.let { presetId ->
+                    NativePatchPresetCatalog.find(
+                        abi = abi,
+                        id = presetId,
+                    )
+                }
+        }
+
     private fun isStrongNumericCandidate(
         memberName: String,
         category: GameplayModificationCategory,
@@ -730,6 +773,8 @@ object GameplayModificationFinder {
         if (!isGetter(memberName)) return false
         if (
             returnKind != Il2CppNativeReturnKind.INTEGER &&
+            returnKind != Il2CppNativeReturnKind.FLOAT32 &&
+            returnKind != Il2CppNativeReturnKind.FLOAT64 &&
             returnKind != Il2CppNativeReturnKind.FLOATING_POINT
         ) {
             return false
@@ -758,6 +803,10 @@ object GameplayModificationFinder {
                 category.title + ": " +
                     readableMethod(methodName) +
                     "() → 0"
+            GameplayMutationAction.FORCE_TWO ->
+                category.title + ": " +
+                    readableMethod(methodName) +
+                    "() → 2.0"
             GameplayMutationAction.DISCOVERY_ONLY ->
                 category.title + ": найден числовой параметр " +
                     readableMethod(methodName)
@@ -768,10 +817,15 @@ object GameplayModificationFinder {
         returnKind: Il2CppNativeReturnKind,
     ): String =
         when (returnKind) {
-            Il2CppNativeReturnKind.FLOATING_POINT ->
+            Il2CppNativeReturnKind.FLOAT32,
+            Il2CppNativeReturnKind.FLOAT64 ->
                 "Найден точный числовой параметр «" +
                     category.title +
-                    "», но безопасный float/double preset ещё не реализован."
+                    "». Ширина float/double доказана; выберите значение " +
+                    "0/0.5/1/2/3/5 в ручном Patch Lab."
+            Il2CppNativeReturnKind.FLOATING_POINT ->
+                "Найден старый float/double-кандидат без доказанной ширины. " +
+                    "Пересканируйте APK для безопасного ARM64 preset."
             Il2CppNativeReturnKind.INTEGER ->
                 "Найден точный числовой параметр «" +
                     category.title +
@@ -966,6 +1020,24 @@ object GameplayModificationFinder {
                     p("preferences"),
                     p("account data"),
                 ),
+        )
+
+    private val doubleValueAutoCategories =
+        setOf(
+            GameplayModificationCategory.MOVEMENT,
+            GameplayModificationCategory.ATTACK_SPEED,
+            GameplayModificationCategory.WORLD,
+        )
+
+    private val doubleValuePhrases =
+        listOf(
+            p("time scale"),
+            p("move speed"),
+            p("movement speed"),
+            p("run speed"),
+            p("sprint speed"),
+            p("speed multiplier"),
+            p("attack speed"),
         )
 
     private val forceTruePhrases =
