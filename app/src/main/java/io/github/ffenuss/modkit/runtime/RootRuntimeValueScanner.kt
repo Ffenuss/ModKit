@@ -98,6 +98,19 @@ enum class RuntimeValueType(
             }
         }
 
+    internal fun encodeQuery(
+        text: String,
+    ): ByteArray {
+        val bits =
+            parseQuery(text)
+        return ByteArray(byteWidth) {
+                index,
+            ->
+            (bits ushr (index * 8))
+                .toByte()
+        }
+    }
+
     fun display(
         bits: Long,
     ): String =
@@ -153,8 +166,17 @@ data class RuntimeValueHit(
     val bits: Long,
     val regionStart: Long,
     val regionEndExclusive: Long,
+    val regionFileOffset: Long,
     val regionPath: String?,
 ) {
+    val offsetInRegion: Long
+        get() =
+            address - regionStart
+
+    val mappedFileOffset: Long
+        get() =
+            regionFileOffset +
+                offsetInRegion
     fun displayValue(
         type: RuntimeValueType,
     ): String =
@@ -177,6 +199,15 @@ data class RootRuntimeValueScanResult(
     val snapshot: RuntimeValueScanSnapshot,
 )
 
+data class RootRuntimePointerScanResult(
+    val packageName: String,
+    val pid: Int,
+    val targetAddress: Long,
+    val depth: Int,
+    val capturedAtEpochMs: Long,
+    val snapshot: RuntimeValueScanSnapshot,
+)
+
 /**
  * Read-only exact-value scanner for bounded runtime ranges.
  *
@@ -189,7 +220,7 @@ object RuntimeValueScanner {
     const val DEFAULT_MAX_SCAN_BYTES =
         128L * 1024L * 1024L
     const val DEFAULT_CHUNK_BYTES =
-        256 * 1024
+        2 * 1024 * 1024
 
     fun scanExact(
         ranges: List<ProcMapRegion>,
@@ -330,6 +361,8 @@ object RuntimeValueScanner {
                                     region.start,
                                 regionEndExclusive =
                                     region.endExclusive,
+                                regionFileOffset =
+                                    region.fileOffset,
                                 regionPath =
                                     region.path,
                             )
@@ -375,15 +408,89 @@ object RuntimeValueScanner {
         )
     }
 
+    fun refineExact(
+        previous: RuntimeValueScanSnapshot,
+        reader: RuntimeMemoryReader,
+        query: String,
+        cancellation: CancellationSignal,
+    ): RuntimeValueScanSnapshot {
+        val type =
+            previous.valueType
+        val queryBits =
+            type.parseQuery(query)
+        return filterAndRefresh(
+            previous = previous,
+            reader = reader,
+            cancellation = cancellation,
+        ) {
+                _,
+                now,
+            ->
+            now == queryBits
+        }
+    }
+
+    fun refresh(
+        previous: RuntimeValueScanSnapshot,
+        reader: RuntimeMemoryReader,
+        cancellation: CancellationSignal,
+    ): RuntimeValueScanSnapshot =
+        filterAndRefresh(
+            previous = previous,
+            reader = reader,
+            cancellation = cancellation,
+        ) {
+                _,
+                _,
+            ->
+            true
+        }
+
     fun refine(
         previous: RuntimeValueScanSnapshot,
         reader: RuntimeMemoryReader,
         refinement: RuntimeValueRefinement,
         cancellation: CancellationSignal,
     ): RuntimeValueScanSnapshot {
+        return filterAndRefresh(
+            previous = previous,
+            reader = reader,
+            cancellation = cancellation,
+        ) {
+                old,
+                now,
+            ->
+            val comparison =
+                previous.valueType.compare(
+                    old,
+                    now,
+                )
+            when (refinement) {
+                RuntimeValueRefinement.CHANGED ->
+                    now != old
+                RuntimeValueRefinement.UNCHANGED ->
+                    now == old
+                RuntimeValueRefinement.INCREASED ->
+                    comparison < 0
+                RuntimeValueRefinement.DECREASED ->
+                    comparison > 0
+            }
+        }
+    }
+
+    private fun filterAndRefresh(
+        previous: RuntimeValueScanSnapshot,
+        reader: RuntimeMemoryReader,
+        cancellation: CancellationSignal,
+        keep:
+            (
+                oldBits: Long,
+                newBits: Long,
+            ) -> Boolean,
+    ): RuntimeValueScanSnapshot {
         val type =
             previous.valueType
-        val kept =
+        val retained =
             ArrayList<RuntimeValueHit>(
                 previous.hits.size,
             )
@@ -399,7 +506,8 @@ object RuntimeValueScanner {
                 reader.read(
                     address = hit.address,
                     size = type.byteWidth,
-                    cancellation = cancellation,
+                    cancellation =
+                        cancellation,
                 ) ?: return@forEachIndexed
             if (
                 bytes.size <
@@ -407,30 +515,18 @@ object RuntimeValueScanner {
             ) {
                 return@forEachIndexed
             }
-
             val now =
                 type.readBits(
                     bytes,
                     0,
                 )
-            val comparison =
-                type.compare(
+            if (
+                keep(
                     hit.bits,
                     now,
                 )
-            val keep =
-                when (refinement) {
-                    RuntimeValueRefinement.CHANGED ->
-                        now != hit.bits
-                    RuntimeValueRefinement.UNCHANGED ->
-                        now == hit.bits
-                    RuntimeValueRefinement.INCREASED ->
-                        comparison < 0
-                    RuntimeValueRefinement.DECREASED ->
-                        comparison > 0
-                }
-            if (keep) {
-                kept +=
+            ) {
+                retained +=
                     hit.copy(
                         bits = now,
                     )
@@ -438,12 +534,12 @@ object RuntimeValueScanner {
         }
 
         return previous.copy(
-            hits = kept,
+            hits = retained,
             scannedBytes =
-                kept.size.toLong() *
+                retained.size.toLong() *
                     type.byteWidth,
             scannedRegions =
-                kept
+                retained
                     .map {
                         it.regionStart to
                             it.regionEndExclusive
@@ -535,12 +631,87 @@ object RootRuntimeValueScanCoordinator {
         )
     }
 
+    fun refineExact(
+        previous: RootRuntimeValueScanResult,
+        query: String,
+        cancellation: CancellationSignal,
+        runner: RootCommandRunner =
+            AndroidRootCommandRunner(),
+    ): RootRuntimeValueScanResult =
+        withVerifiedProcess(
+            previous = previous,
+            cancellation = cancellation,
+            runner = runner,
+        ) {
+                reader,
+            ->
+            RuntimeValueScanner
+                .refineExact(
+                    previous =
+                        previous.snapshot,
+                    reader = reader,
+                    query = query,
+                    cancellation =
+                        cancellation,
+                )
+        }
+
+    fun refresh(
+        previous: RootRuntimeValueScanResult,
+        cancellation: CancellationSignal,
+        runner: RootCommandRunner =
+            AndroidRootCommandRunner(),
+    ): RootRuntimeValueScanResult =
+        withVerifiedProcess(
+            previous = previous,
+            cancellation = cancellation,
+            runner = runner,
+        ) {
+                reader,
+            ->
+            RuntimeValueScanner.refresh(
+                previous =
+                    previous.snapshot,
+                reader = reader,
+                cancellation =
+                    cancellation,
+            )
+        }
+
     fun refine(
         previous: RootRuntimeValueScanResult,
         refinement: RuntimeValueRefinement,
         cancellation: CancellationSignal,
         runner: RootCommandRunner =
             AndroidRootCommandRunner(),
+    ): RootRuntimeValueScanResult {
+        return withVerifiedProcess(
+            previous = previous,
+            cancellation = cancellation,
+            runner = runner,
+        ) {
+                reader,
+            ->
+            RuntimeValueScanner.refine(
+                previous =
+                    previous.snapshot,
+                reader = reader,
+                refinement =
+                    refinement,
+                cancellation =
+                    cancellation,
+            )
+        }
+    }
+
+    private fun withVerifiedProcess(
+        previous: RootRuntimeValueScanResult,
+        cancellation: CancellationSignal,
+        runner: RootCommandRunner,
+        operation:
+            (
+                reader: RuntimeMemoryReader,
+            ) -> RuntimeValueScanSnapshot,
     ): RootRuntimeValueScanResult {
         val capture =
             RootRuntimeCaptureCoordinator
@@ -557,25 +728,90 @@ object RootRuntimeValueScanCoordinator {
         ) {
             "PID процесса изменился. Начните новый поиск значений."
         }
+        val updated =
+            operation(
+                RootProcMemRuntimeMemoryReader(
+                    pid = capture.pid,
+                    runner = runner,
+                ),
+            )
+        return previous.copy(
+            capturedAtEpochMs =
+                System.currentTimeMillis(),
+            snapshot = updated,
+        )
+    }
 
-        val refined =
-            RuntimeValueScanner.refine(
-                previous =
-                    previous.snapshot,
+    fun findPointersTo(
+        packageName: String,
+        expectedPid: Int,
+        targetAddress: Long,
+        depth: Int = 1,
+        cancellation: CancellationSignal,
+        runner: RootCommandRunner =
+            AndroidRootCommandRunner(),
+    ): RootRuntimePointerScanResult {
+        require(targetAddress >= 0L) {
+            "Некорректный runtime-адрес."
+        }
+        require(depth in 1..16) {
+            "Некорректная глубина pointer scan."
+        }
+
+        val capture =
+            RootRuntimeCaptureCoordinator
+                .captureMaps(
+                    packageName =
+                        packageName,
+                    cancellation =
+                        cancellation,
+                    runner = runner,
+                )
+        require(
+            capture.pid ==
+                expectedPid,
+        ) {
+            "PID процесса изменился. Pointer scan остановлен."
+        }
+
+        val ranges =
+            candidateRanges(
+                ProcMapsParser.parse(
+                    capture.capture.text,
+                ),
+            )
+        val snapshot =
+            RuntimeValueScanner.scanExact(
+                ranges = ranges,
                 reader =
                     RootProcMemRuntimeMemoryReader(
                         pid = capture.pid,
                         runner = runner,
                     ),
-                refinement =
-                    refinement,
+                valueType =
+                    RuntimeValueType.INT64,
+                query =
+                    targetAddress.toString(),
                 cancellation =
                     cancellation,
+                maxHits = 2048,
+                maxScanBytes =
+                    RuntimeValueScanner
+                        .DEFAULT_MAX_SCAN_BYTES,
+                chunkBytes =
+                    RuntimeValueScanner
+                        .DEFAULT_CHUNK_BYTES,
             )
-        return previous.copy(
+
+        return RootRuntimePointerScanResult(
+            packageName = packageName,
+            pid = capture.pid,
+            targetAddress =
+                targetAddress,
+            depth = depth,
             capturedAtEpochMs =
                 System.currentTimeMillis(),
-            snapshot = refined,
+            snapshot = snapshot,
         )
     }
 

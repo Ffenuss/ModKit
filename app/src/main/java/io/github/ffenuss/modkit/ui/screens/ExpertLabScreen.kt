@@ -12,6 +12,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -54,8 +55,10 @@ import io.github.ffenuss.modkit.runtime.RuntimeEvidenceContract
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationPlanner
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationStage
 import io.github.ffenuss.modkit.runtime.RootRuntimeDecisionEngine
+import io.github.ffenuss.modkit.runtime.RootRuntimePointerScanResult
 import io.github.ffenuss.modkit.runtime.RootRuntimeValueScanCoordinator
 import io.github.ffenuss.modkit.runtime.RootRuntimeValueScanResult
+import io.github.ffenuss.modkit.runtime.RootRuntimeValueWriteCoordinator
 import io.github.ffenuss.modkit.runtime.RuntimeValueRefinement
 import io.github.ffenuss.modkit.runtime.RuntimeValueType
 import java.io.File
@@ -87,8 +90,23 @@ fun ExpertLabScreen(onBack: () -> Unit) {
     var runtimeValueQuery by remember {
         mutableStateOf("")
     }
+    var runtimeRefineQuery by remember {
+        mutableStateOf("")
+    }
     var runtimeValueScan by remember {
         mutableStateOf<RootRuntimeValueScanResult?>(null)
+    }
+    var runtimePointerScan by remember {
+        mutableStateOf<RootRuntimePointerScanResult?>(null)
+    }
+    var runtimeWritesEnabled by remember {
+        mutableStateOf(false)
+    }
+    var runtimeWriteValue by remember {
+        mutableStateOf("")
+    }
+    var runtimeWriteMessage by remember {
+        mutableStateOf<String?>(null)
     }
     var installReadiness by remember {
         mutableStateOf<RepackedRuntimeInstallReadiness?>(null)
@@ -151,7 +169,11 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 session?.close()
                 session = opened
                 runtimeValueScan = null
+                runtimePointerScan = null
                 runtimeValueQuery = ""
+                runtimeRefineQuery = ""
+                runtimeWriteValue = ""
+                runtimeWriteMessage = null
                 showInstalled = false
             } catch (_: AnalysisCancelledException) {
                 error = "Открытие цели отменено."
@@ -178,7 +200,11 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 session?.close()
                 session = opened
                 runtimeValueScan = null
+                runtimePointerScan = null
                 runtimeValueQuery = ""
+                runtimeRefineQuery = ""
+                runtimeWriteValue = ""
+                runtimeWriteMessage = null
                 showInstalled = false
             } catch (_: AnalysisCancelledException) {
                 error = "Открытие установленного приложения отменено."
@@ -299,6 +325,7 @@ fun ExpertLabScreen(onBack: () -> Unit) {
 
         scope.launch {
             try {
+                runtimePointerScan = null
                 runtimeValueScan =
                     withContext(
                         Dispatchers.IO,
@@ -318,6 +345,78 @@ fun ExpertLabScreen(onBack: () -> Unit) {
             } catch (_: AnalysisCancelledException) {
                 error =
                     "Root-поиск значений отменён."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun refineRootRuntimeValueExact() {
+        val previous =
+            runtimeValueScan ?: return
+        val signal =
+            beginOperation(
+                "runtime.root-value-refine-exact",
+            ) ?: return
+
+        scope.launch {
+            try {
+                runtimeValueScan =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootRuntimeValueScanCoordinator
+                            .refineExact(
+                                previous =
+                                    previous,
+                                query =
+                                    runtimeRefineQuery,
+                                cancellation =
+                                    signal,
+                            )
+                    }
+            } catch (_: AnalysisCancelledException) {
+                error =
+                    "Фильтрация по новому значению отменена."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun refreshRootRuntimeValues() {
+        val previous =
+            runtimeValueScan ?: return
+        val signal =
+            beginOperation(
+                "runtime.root-value-refresh",
+            ) ?: return
+
+        scope.launch {
+            try {
+                runtimeValueScan =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootRuntimeValueScanCoordinator
+                            .refresh(
+                                previous =
+                                    previous,
+                                cancellation =
+                                    signal,
+                            )
+                    }
+            } catch (_: AnalysisCancelledException) {
+                error =
+                    "Обновление runtime-значений отменено."
             } catch (failure: Throwable) {
                 error =
                     failure.message
@@ -357,6 +456,104 @@ fun ExpertLabScreen(onBack: () -> Unit) {
             } catch (_: AnalysisCancelledException) {
                 error =
                     "Фильтрация runtime-значений отменена."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun writeRootRuntimeHit(
+        address: Long,
+    ) {
+        val previous =
+            runtimeValueScan ?: return
+        if (!runtimeWritesEnabled) {
+            error =
+                "Сначала явно включите запись runtime-значений."
+            return
+        }
+        val signal =
+            beginOperation(
+                "runtime.root-value-write",
+            ) ?: return
+
+        scope.launch {
+            try {
+                val result =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootRuntimeValueWriteCoordinator
+                            .writeHit(
+                                previous =
+                                    previous,
+                                address = address,
+                                valueText =
+                                    runtimeWriteValue,
+                                cancellation =
+                                    signal,
+                            )
+                    }
+                runtimeValueScan =
+                    result.updatedScan
+                runtimeWriteMessage =
+                    "0x" +
+                        address.toString(16) +
+                        ": " +
+                        result.oldValue +
+                        " → " +
+                        result.newValue +
+                        " · read-back verified"
+            } catch (_: AnalysisCancelledException) {
+                error =
+                    "Root-запись значения отменена."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun findPointersToRuntimeAddress(
+        address: Long,
+        depth: Int = 1,
+    ) {
+        val valueScan =
+            runtimeValueScan ?: return
+        val signal =
+            beginOperation(
+                "runtime.root-pointer-scan",
+            ) ?: return
+
+        scope.launch {
+            try {
+                runtimePointerScan =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootRuntimeValueScanCoordinator
+                            .findPointersTo(
+                                packageName =
+                                    valueScan.packageName,
+                                expectedPid =
+                                    valueScan.pid,
+                                targetAddress =
+                                    address,
+                                depth = depth,
+                                cancellation =
+                                    signal,
+                            )
+                    }
+            } catch (_: AnalysisCancelledException) {
+                error =
+                    "Pointer scan отменён."
             } catch (failure: Throwable) {
                 error =
                     failure.message
@@ -1479,6 +1676,7 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         runtimeValueType =
                                             runtimeValueType.next()
                                         runtimeValueScan = null
+                                        runtimePointerScan = null
                                     },
                                     enabled = !busy,
                                     modifier =
@@ -1496,6 +1694,7 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                     onValueChange = {
                                         runtimeValueQuery = it
                                         runtimeValueScan = null
+                                        runtimePointerScan = null
                                     },
                                     label = {
                                         Text(
@@ -1572,6 +1771,60 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         )
                                     }
 
+                                    OutlinedButton(
+                                        onClick =
+                                            ::refreshRootRuntimeValues,
+                                        enabled =
+                                            !busy &&
+                                                scan.snapshot
+                                                    .hits
+                                                    .isNotEmpty(),
+                                        modifier =
+                                            Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(
+                                            "Обновить текущие значения",
+                                        )
+                                    }
+
+                                    OutlinedTextField(
+                                        value =
+                                            runtimeRefineQuery,
+                                        onValueChange = {
+                                            runtimeRefineQuery = it
+                                        },
+                                        label = {
+                                            Text(
+                                                "Новое точное значение",
+                                            )
+                                        },
+                                        supportingText = {
+                                            Text(
+                                                "После изменения значения в игре можно оставить только адреса, равные этому числу.",
+                                            )
+                                        },
+                                        singleLine = true,
+                                        modifier =
+                                            Modifier.fillMaxWidth(),
+                                    )
+                                    OutlinedButton(
+                                        onClick =
+                                            ::refineRootRuntimeValueExact,
+                                        enabled =
+                                            !busy &&
+                                                runtimeRefineQuery
+                                                    .isNotBlank() &&
+                                                scan.snapshot
+                                                    .hits
+                                                    .isNotEmpty(),
+                                        modifier =
+                                            Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(
+                                            "Фильтр: равно новому значению",
+                                        )
+                                    }
+
                                     RuntimeValueRefinement
                                         .entries
                                         .forEach {
@@ -1599,37 +1852,156 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                             }
                                         }
 
+                                    Row(
+                                        modifier =
+                                            Modifier.fillMaxWidth(),
+                                    ) {
+                                        Checkbox(
+                                            checked =
+                                                runtimeWritesEnabled,
+                                            onCheckedChange = {
+                                                enabled ->
+                                                runtimeWritesEnabled =
+                                                    enabled
+                                                runtimeWriteMessage =
+                                                    null
+                                                if (!enabled) {
+                                                    runtimeWriteValue =
+                                                        ""
+                                                }
+                                            },
+                                        )
+                                        Column {
+                                            Text(
+                                                "Разрешить ручную запись найденного runtime-значения",
+                                            )
+                                            Text(
+                                                "Запись выполняется только по явному нажатию, " +
+                                                    "после повторной проверки PID, writable mapping и read-back.",
+                                                style =
+                                                    MaterialTheme.typography
+                                                        .bodySmall,
+                                            )
+                                        }
+                                    }
+                                    if (
+                                        runtimeWritesEnabled
+                                    ) {
+                                        OutlinedTextField(
+                                            value =
+                                                runtimeWriteValue,
+                                            onValueChange = {
+                                                runtimeWriteValue =
+                                                    it
+                                                runtimeWriteMessage =
+                                                    null
+                                            },
+                                            label = {
+                                                Text(
+                                                    "Новое значение",
+                                                )
+                                            },
+                                            singleLine = true,
+                                            modifier =
+                                                Modifier.fillMaxWidth(),
+                                        )
+                                    }
+                                    runtimeWriteMessage
+                                        ?.let {
+                                            message ->
+                                            Text(
+                                                message,
+                                                style =
+                                                    MaterialTheme
+                                                        .typography
+                                                        .bodySmall,
+                                            )
+                                        }
+
                                     scan.snapshot.hits
                                         .take(24)
                                         .forEachIndexed {
                                                 index,
                                                 hit,
                                             ->
-                                            Text(
-                                                (
-                                                    index + 1
-                                                    ).toString() +
-                                                    ". 0x" +
-                                                    hit.address
-                                                        .toString(16) +
-                                                    " = " +
-                                                    hit.displayValue(
-                                                        scan.snapshot
-                                                            .valueType,
-                                                    ) +
-                                                    (
-                                                        hit.regionPath
-                                                            ?.let {
-                                                                " · " +
-                                                                    it
-                                                            }
-                                                            .orEmpty()
+                                            Column(
+                                                modifier =
+                                                    Modifier
+                                                        .fillMaxWidth(),
+                                                verticalArrangement =
+                                                    Arrangement
+                                                        .spacedBy(
+                                                            2.dp,
                                                         ),
-                                                style =
-                                                    MaterialTheme
-                                                        .typography
-                                                        .bodySmall,
-                                            )
+                                            ) {
+                                                Text(
+                                                    (
+                                                        index + 1
+                                                        ).toString() +
+                                                        ". 0x" +
+                                                        hit.address
+                                                            .toString(16) +
+                                                        " = " +
+                                                        hit.displayValue(
+                                                            scan.snapshot
+                                                                .valueType,
+                                                        ) +
+                                                        " · map+0x" +
+                                                        hit.offsetInRegion
+                                                            .toString(16) +
+                                                        " · file+0x" +
+                                                        hit.mappedFileOffset
+                                                            .toString(16) +
+                                                        (
+                                                            hit.regionPath
+                                                                ?.let {
+                                                                    " · " +
+                                                                        it
+                                                                }
+                                                                .orEmpty()
+                                                            ),
+                                                    style =
+                                                        MaterialTheme
+                                                            .typography
+                                                            .bodySmall,
+                                                )
+                                                if (
+                                                    runtimeWritesEnabled &&
+                                                    runtimeWriteValue
+                                                        .isNotBlank() &&
+                                                    index < 8
+                                                ) {
+                                                    Button(
+                                                        onClick = {
+                                                            writeRootRuntimeHit(
+                                                                hit.address,
+                                                            )
+                                                        },
+                                                        enabled =
+                                                            !busy,
+                                                    ) {
+                                                        Text(
+                                                            "Записать новое значение",
+                                                        )
+                                                    }
+                                                }
+                                                if (index < 8) {
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            findPointersToRuntimeAddress(
+                                                                hit.address,
+                                                                1,
+                                                            )
+                                                        },
+                                                        enabled =
+                                                            !busy,
+                                                    ) {
+                                                        Text(
+                                                            "Найти указатели на этот адрес",
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
                                     if (
                                         scan.snapshot.hits
@@ -1646,6 +2018,102 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                                     .bodySmall,
                                         )
                                     }
+
+                                    runtimePointerScan
+                                        ?.let {
+                                            pointer ->
+                                            Text(
+                                                "Pointer scan · уровень " +
+                                                    pointer.depth +
+                                                    " · target 0x" +
+                                                    pointer
+                                                        .targetAddress
+                                                        .toString(16) +
+                                                    " · найдено " +
+                                                    pointer.snapshot
+                                                        .hits.size,
+                                                fontWeight =
+                                                    FontWeight.SemiBold,
+                                            )
+                                            pointer.snapshot.hits
+                                                .take(12)
+                                                .forEachIndexed {
+                                                        pointerIndex,
+                                                        pointerHit,
+                                                    ->
+                                                    Column(
+                                                        modifier =
+                                                            Modifier
+                                                                .fillMaxWidth(),
+                                                        verticalArrangement =
+                                                            Arrangement
+                                                                .spacedBy(
+                                                                    2.dp,
+                                                                ),
+                                                    ) {
+                                                        Text(
+                                                            (
+                                                                pointerIndex +
+                                                                    1
+                                                                ).toString() +
+                                                                ". ptr 0x" +
+                                                                pointerHit
+                                                                    .address
+                                                                    .toString(
+                                                                        16,
+                                                                    ) +
+                                                                " → 0x" +
+                                                                pointer
+                                                                    .targetAddress
+                                                                    .toString(
+                                                                        16,
+                                                                    ) +
+                                                                (
+                                                                    pointerHit
+                                                                        .regionPath
+                                                                        ?.let {
+                                                                            " · " +
+                                                                                it
+                                                                        }
+                                                                        .orEmpty()
+                                                                    ),
+                                                            style =
+                                                                MaterialTheme
+                                                                    .typography
+                                                                    .bodySmall,
+                                                        )
+                                                        if (
+                                                            pointer.depth <
+                                                                4 &&
+                                                            pointerIndex <
+                                                                6
+                                                        ) {
+                                                            OutlinedButton(
+                                                                onClick = {
+                                                                    findPointersToRuntimeAddress(
+                                                                        pointerHit
+                                                                            .address,
+                                                                        pointer
+                                                                            .depth +
+                                                                            1,
+                                                                    )
+                                                                },
+                                                                enabled =
+                                                                    !busy,
+                                                            ) {
+                                                                Text(
+                                                                    "Искать уровень " +
+                                                                        (
+                                                                            pointer
+                                                                                .depth +
+                                                                                1
+                                                                            ),
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                        }
                                 }
                             }
                             val rootDecision =

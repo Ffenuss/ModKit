@@ -168,6 +168,79 @@ class RootRuntimeValueScannerTest {
     }
 
     @Test
+    fun exactRefineAndRefreshKeepLiveValues() {
+        val base = 0x3800L
+        val initial = ByteArray(32)
+        putInt(initial, 0, 25)
+        putInt(initial, 4, 25)
+
+        val first =
+            RuntimeValueScanner.scanExact(
+                ranges =
+                    listOf(
+                        region(
+                            start = base,
+                            size = initial.size,
+                            fileOffset = 0x4000,
+                        ),
+                    ),
+                reader =
+                    ArrayMemoryReader(
+                        base = base,
+                        bytes = initial,
+                    ),
+                valueType =
+                    RuntimeValueType.INT32,
+                query = "25",
+                cancellation =
+                    AtomicCancellationSignal(),
+                maxHits = 16,
+                maxScanBytes = 1024,
+                chunkBytes = 32,
+            )
+
+        val changed =
+            initial.copyOf()
+        putInt(changed, 0, 30)
+        putInt(changed, 4, 40)
+        val reader =
+            ArrayMemoryReader(
+                base = base,
+                bytes = changed,
+            )
+
+        val exact =
+            RuntimeValueScanner.refineExact(
+                previous = first,
+                reader = reader,
+                query = "40",
+                cancellation =
+                    AtomicCancellationSignal(),
+            )
+        assertEquals(1, exact.hits.size)
+        assertEquals(base + 4, exact.hits.single().address)
+        assertEquals(
+            0x4004L,
+            exact.hits.single().mappedFileOffset,
+        )
+
+        val refreshed =
+            RuntimeValueScanner.refresh(
+                previous = exact,
+                reader = reader,
+                cancellation =
+                    AtomicCancellationSignal(),
+            )
+        assertEquals(
+            "40",
+            refreshed.hits.single()
+                .displayValue(
+                    RuntimeValueType.INT32,
+                ),
+        )
+    }
+
+    @Test
     fun rootCandidateRangesExcludeExecutableAndSystemMappings() {
         val ranges =
             RootRuntimeValueScanCoordinator
@@ -244,6 +317,7 @@ class RootRuntimeValueScannerTest {
         size: Int,
         permissions: String = "rw-p",
         path: String? = "[heap]",
+        fileOffset: Long = 0,
     ) =
         ProcMapRegion(
             start = start,
@@ -251,7 +325,7 @@ class RootRuntimeValueScannerTest {
                 start + size,
             permissions =
                 permissions,
-            fileOffset = 0,
+            fileOffset = fileOffset,
             device = "00:00",
             inode = 0,
             path = path,

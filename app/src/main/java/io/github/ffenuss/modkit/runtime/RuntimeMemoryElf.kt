@@ -75,7 +75,9 @@ class ProcMemRuntimeMemoryReader(
     }
 
     companion object {
-        const val MAX_READ_BYTES = 256 * 1024
+        // Large enough for efficient root live-memory scans while still
+        // keeping every individual read bounded.
+        const val MAX_READ_BYTES = 2 * 1024 * 1024
     }
 }
 
