@@ -11,6 +11,9 @@ import io.github.ffenuss.modkit.runtime.RepackedRuntimeBuildResult
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeEvidenceCapture
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstrumentationCoordinator
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeNativeLookupCoordinator
+import io.github.ffenuss.modkit.runtime.RepackedRuntimePassiveTraceCoordinator
+import io.github.ffenuss.modkit.runtime.RepackedRuntimePassiveTraceSession
+import io.github.ffenuss.modkit.runtime.RepackedRuntimePassiveTraceSessionCapture
 import io.github.ffenuss.modkit.runtime.RuntimeNativeLookupGraphAnnotator
 import io.github.ffenuss.modkit.runtime.ProcMemRuntimeMemoryReader
 import io.github.ffenuss.modkit.runtime.RuntimeMemoryElfValidator
@@ -44,6 +47,8 @@ data class ExpertLabSession(
     val packageName: String? = null,
     val repackedRuntimeBuild: RepackedRuntimeBuildResult? = null,
     val repackedNativeRuntimeBuild: RepackedRuntimeBuildResult? = null,
+    val repackedPassiveTraceSession:
+        RepackedRuntimePassiveTraceSession? = null,
 ) : AutoCloseable {
     override fun close() {
         temporaryFiles.forEach(File::delete)
@@ -467,6 +472,82 @@ object ExpertLabSessionController {
         }
         return session.copy(
             repackedNativeRuntimeBuild = build,
+        )
+    }
+
+    suspend fun startRepackedPassiveDlsymTrace(
+        context: Context,
+        session: ExpertLabSession,
+        cancellation: CancellationSignal,
+    ): ExpertLabSession {
+        val build =
+            requireNotNull(session.repackedNativeRuntimeBuild) {
+                "Build the native lookup test APK before passive dlsym tracing."
+            }
+        require(session.repackedPassiveTraceSession == null) {
+            "A passive dlsym trace session is already active."
+        }
+        val traceSession = withContext(Dispatchers.IO) {
+            RepackedRuntimePassiveTraceSessionCapture.start(
+                build = build,
+                transport =
+                    AndroidRepackedRuntimeProbeTransport(context),
+                cancellation = cancellation,
+            )
+        }
+        return session.copy(
+            repackedPassiveTraceSession = traceSession,
+        )
+    }
+
+    suspend fun stopRepackedPassiveDlsymTrace(
+        context: Context,
+        session: ExpertLabSession,
+        cancellation: CancellationSignal,
+    ): ExpertLabSession {
+        val build =
+            requireNotNull(session.repackedNativeRuntimeBuild) {
+                "Native passive trace build is unavailable."
+            }
+        val traceSession =
+            requireNotNull(session.repackedPassiveTraceSession) {
+                "No passive dlsym trace session is active."
+            }
+
+        val execution = withContext(Dispatchers.IO) {
+            RepackedRuntimePassiveTraceCoordinator.stopAndValidate(
+                build = build,
+                session = traceSession,
+                workspace = session.workspace,
+                transport =
+                    AndroidRepackedRuntimeProbeTransport(context),
+                tempRoot = File(
+                    context.cacheDir,
+                    "expert-lab-passive-trace",
+                ),
+                cancellation = cancellation,
+            )
+        }
+        val integrated = RuntimeEvidenceIntegrator.integrate(
+            result = session.result,
+            evidence = execution.attachedEvidence,
+            procMapsText = execution.mapsCapture.maps.text,
+        )
+        val annotated =
+            RuntimeNativeLookupGraphAnnotator.annotateAll(
+                result = integrated,
+                validation = execution.validation,
+            )
+        val persisted = persistRuntimeEvidence(
+            context = context,
+            session = session,
+            integrated = annotated,
+            fallbackEvidence =
+                execution.attachedEvidence,
+        )
+        return persisted.copy(
+            repackedNativeRuntimeBuild = build,
+            repackedPassiveTraceSession = null,
         )
     }
 
