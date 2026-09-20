@@ -78,7 +78,7 @@ static uintptr_t runtime_address(uintptr_t base, uintptr_t value) {
 }
 
 static int query_protection(void* address) {
-    FILE* maps = fopen("/proc/self/maps", "re");
+    FILE* maps = fopen("/proc/self/maps", "r");
     if (maps == NULL) return 0;
 
     const uintptr_t target = (uintptr_t)address;
@@ -470,10 +470,13 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeStartPassiv
         pthread_mutex_unlock(&g_hook_lock);
         return JNI_TRUE;
     }
+    if (atomic_load(&g_restore_failed)) {
+        pthread_mutex_unlock(&g_hook_lock);
+        return JNI_FALSE;
+    }
     g_slot_count = 0;
     g_real_dlsym = NULL;
     atomic_store(&g_incomplete, 0);
-    atomic_store(&g_restore_failed, 0);
     atomic_store(&g_trace_active, 1);
     pthread_mutex_unlock(&g_hook_lock);
 
