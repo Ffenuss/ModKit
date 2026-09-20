@@ -222,6 +222,11 @@ class PatchLabDiagnosticReportWriterTest {
                     ) != null,
                 )
                 assertTrue(
+                    zip.getEntry(
+                        "automod/semantic-neighborhoods.tsv",
+                    ) != null,
+                )
+                assertTrue(
                     read(
                         zip,
                         "il2cpp/dump.cs",
