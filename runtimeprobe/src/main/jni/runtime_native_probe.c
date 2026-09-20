@@ -1243,8 +1243,7 @@ static void* modkit_trace_art_dlsym(
 
     g_in_art_dlsym_wrapper = 1;
     void* result = real(handle, symbol);
-    if (atomic_load(&g_jni_trace_active) &&
-            result != NULL && symbol != NULL &&
+    if (result != NULL && symbol != NULL &&
             strcmp(symbol, "JNI_OnLoad") == 0) {
         Dl_info info;
         memset(&info, 0, sizeof(info));
@@ -1252,13 +1251,25 @@ static void* modkit_trace_art_dlsym(
                 app_owned_path(info.dli_fname)) {
             const char* module = base_name(info.dli_fname);
             if (valid_module(module)) {
-                emit_dlsym_event(module, symbol, result);
-                void* wrapper =
-                        allocate_jni_onload_wrapper(
-                                module,
-                                result);
-                if (wrapper != NULL) {
-                    result = wrapper;
+                int admitted = 0;
+                void* wrapper = NULL;
+                pthread_mutex_lock(&g_jni_hook_lock);
+                if (atomic_load(&g_jni_trace_active)) {
+                    atomic_fetch_add(&g_jni_inflight, 1);
+                    admitted = 1;
+                    wrapper =
+                            allocate_jni_onload_wrapper(
+                                    module,
+                                    result);
+                }
+                pthread_mutex_unlock(&g_jni_hook_lock);
+
+                if (admitted) {
+                    emit_dlsym_event(module, symbol, result);
+                    if (wrapper != NULL) {
+                        result = wrapper;
+                    }
+                    atomic_fetch_sub(&g_jni_inflight, 1);
                 }
             }
         }
@@ -1639,7 +1650,8 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeStartPassiv
     const int register_hooked =
             patch_register_natives_slot(env);
     dl_iterate_phdr(patch_art_runtime_module, NULL);
-    if (g_jni_onload_slot_count == 0) {
+    if (g_jni_onload_slot_count == 0 ||
+            !jni_onload_wrapper_capacity_available()) {
         atomic_store(&g_jni_incomplete, 1);
     }
     if (!register_hooked ||
@@ -1662,6 +1674,8 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeStopPassive
     (void)clazz;
 
     pthread_mutex_lock(&g_jni_hook_lock);
+    const int had_inflight =
+            atomic_load(&g_jni_inflight) > 0;
     atomic_store(&g_jni_trace_active, 0);
     const unsigned long stopping_generation =
             atomic_load(&g_jni_generation);
@@ -1669,8 +1683,9 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeStopPassive
     atomic_fetch_add(&g_jni_generation, 1);
     pthread_mutex_unlock(&g_jni_hook_lock);
 
-    if (pending_jni_onload_for_generation(
-            stopping_generation) > 0) {
+    if (had_inflight ||
+            pending_jni_onload_for_generation(
+                    stopping_generation) > 0) {
         atomic_store(&g_jni_incomplete, 1);
     }
 
@@ -1732,7 +1747,9 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveJniO
     pthread_mutex_lock(&g_jni_hook_lock);
     const int hooked = g_jni_onload_slot_count > 0;
     pthread_mutex_unlock(&g_jni_hook_lock);
-    return hooked && jni_onload_wrapper_capacity_available()
+    return atomic_load(&g_jni_trace_active) &&
+            hooked &&
+            jni_onload_wrapper_capacity_available()
             ? JNI_TRUE
             : JNI_FALSE;
 }
