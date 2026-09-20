@@ -20,7 +20,7 @@ data class RepackedRuntimePassiveJniTraceStatus(
     val producerKind: String,
     val producerReady: Boolean,
     val producerActive: Boolean,
-    val jniOnLoadHookedSlotCount: Int,
+    val jniOnLoadLookupHookedSlotCount: Int,
     val registerNativesHooked: Boolean,
     val producerIncomplete: Boolean,
     val producerRestoreFailed: Boolean,
@@ -46,7 +46,7 @@ data class RepackedRuntimePassiveJniTraceExport(
     val traceBytes: Int,
     val truncated: Boolean,
     val producerKind: String,
-    val jniOnLoadHookedSlotCount: Int,
+    val jniOnLoadLookupHookedSlotCount: Int,
     val registerNativesHooked: Boolean,
     val producerIncomplete: Boolean,
     val producerRestoreFailed: Boolean,
@@ -148,7 +148,7 @@ object RepackedRuntimePassiveJniTraceExportProtocol {
             "traceBytes",
             "truncated",
             "producerKind",
-            "jniOnLoadHookedSlotCount",
+            "jniOnLoadLookupHookedSlotCount",
             "registerNativesHooked",
             "producerIncomplete",
             "producerRestoreFailed",
@@ -172,8 +172,8 @@ object RepackedRuntimePassiveJniTraceExportProtocol {
         val truncated =
             fields.getValue("truncated").toBooleanStrictOrNull()
         val producerKind = fields.getValue("producerKind")
-        val jniOnLoadHookedSlotCount =
-            fields.getValue("jniOnLoadHookedSlotCount")
+        val jniOnLoadLookupHookedSlotCount =
+            fields.getValue("jniOnLoadLookupHookedSlotCount")
                 .toIntOrNull()
         val registerNativesHooked =
             fields.getValue("registerNativesHooked")
@@ -228,12 +228,12 @@ object RepackedRuntimePassiveJniTraceExportProtocol {
         require(truncated != null) {
             "Runtime passive JNI trace truncation flag is invalid."
         }
-        require(producerKind == "ART_DLSYM_JNI_TABLE") {
+        require(producerKind == "ART_JNI_ONLOAD_LOOKUP_JNI_TABLE") {
             "Runtime passive JNI trace producer kind is unsupported."
         }
         require(
-            jniOnLoadHookedSlotCount != null &&
-                jniOnLoadHookedSlotCount in 1..16,
+            jniOnLoadLookupHookedSlotCount != null &&
+                jniOnLoadLookupHookedSlotCount in 1..16,
         ) {
             "Runtime passive JNI trace JNI_OnLoad hook count is invalid."
         }
@@ -283,8 +283,8 @@ object RepackedRuntimePassiveJniTraceExportProtocol {
             traceBytes = declaredBytes,
             truncated = truncated,
             producerKind = producerKind,
-            jniOnLoadHookedSlotCount =
-                jniOnLoadHookedSlotCount,
+            jniOnLoadLookupHookedSlotCount =
+                jniOnLoadLookupHookedSlotCount,
             registerNativesHooked = registerNativesHooked,
             producerIncomplete = producerIncomplete,
             producerRestoreFailed = producerRestoreFailed,
@@ -368,7 +368,7 @@ object RepackedRuntimePassiveJniTraceSessionCapture {
         checkCancelled(cancellation)
         val status = transport.startPassiveJniTrace(authority)
         requireStatusIdentity(build, query.pid, status)
-        require(status.producerKind == "ART_DLSYM_JNI_TABLE") {
+        require(status.producerKind == "ART_JNI_ONLOAD_LOOKUP_JNI_TABLE") {
             "Passive JNI producer kind is unsupported."
         }
         require(status.producerReady) {
@@ -377,7 +377,7 @@ object RepackedRuntimePassiveJniTraceSessionCapture {
         require(status.producerActive) {
             "Passive JNI producer is not active."
         }
-        require(status.jniOnLoadHookedSlotCount > 0) {
+        require(status.jniOnLoadLookupHookedSlotCount > 0) {
             "Passive JNI producer did not hook ART JNI_OnLoad lookup."
         }
         require(status.registerNativesHooked) {
@@ -457,7 +457,7 @@ object RepackedRuntimePassiveJniTraceSessionCapture {
         val status =
             transport.stopPassiveJniTrace(expectedAuthority)
         requireStatusIdentity(build, session.pid, status)
-        require(status.producerKind == "ART_DLSYM_JNI_TABLE") {
+        require(status.producerKind == "ART_JNI_ONLOAD_LOOKUP_JNI_TABLE") {
             "Passive JNI producer kind changed before export."
         }
         require(status.producerReady) {
@@ -466,7 +466,7 @@ object RepackedRuntimePassiveJniTraceSessionCapture {
         require(!status.producerActive) {
             "Passive JNI producer remained active after stop."
         }
-        require(status.jniOnLoadHookedSlotCount > 0) {
+        require(status.jniOnLoadLookupHookedSlotCount > 0) {
             "Passive JNI producer lost JNI_OnLoad hook provenance."
         }
         require(status.registerNativesHooked) {
@@ -535,8 +535,8 @@ object RepackedRuntimePassiveJniTraceSessionCapture {
         }
         require(
             export.producerKind == status.producerKind &&
-                export.jniOnLoadHookedSlotCount ==
-                status.jniOnLoadHookedSlotCount &&
+                export.jniOnLoadLookupHookedSlotCount ==
+                status.jniOnLoadLookupHookedSlotCount &&
                 export.registerNativesHooked ==
                 status.registerNativesHooked &&
                 export.producerIncomplete ==
