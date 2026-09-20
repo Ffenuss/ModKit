@@ -35,6 +35,42 @@ class EngineResultCacheTest {
     }
 
     @Test
+    fun reusesDexInventoryForSameArtifact() {
+        val root = Files.createTempDirectory("modkit-dex-cache").toFile()
+        try {
+            val inventory = DexInventoryResult(
+                records = listOf(
+                    DexInventoryRecord(
+                        container = "base.apk",
+                        entryPath = "classes.dex",
+                        size = 160,
+                        version = "039",
+                        declaredFileSize = 160,
+                        headerSize = 112,
+                        standardEndian = true,
+                        stringIdsCount = 2,
+                        typeIdsCount = 1,
+                        protoIdsCount = 1,
+                        fieldIdsCount = 1,
+                        methodIdsCount = 1,
+                        classDefsCount = 0,
+                        dataSize = 8,
+                        warnings = emptyList(),
+                    ),
+                ),
+                warnings = emptyList(),
+            )
+            val cache = EngineResultCache(File(root, "cache"))
+
+            assertTrue(cache.saveDexInventory("dex-sha", inventory))
+            assertEquals(inventory, cache.loadDexInventory("dex-sha"))
+            assertNull(cache.loadDexInventory("other-sha"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun reusesBinaryBindingWithExactEvidence() {
         val root = Files.createTempDirectory("modkit-binding-cache").toFile()
         try {
