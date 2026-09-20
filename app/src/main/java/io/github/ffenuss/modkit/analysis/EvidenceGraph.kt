@@ -114,20 +114,35 @@ object EvidenceGraphBuilder {
             requestedChangeReady = false,
         )
         val binary = result.il2cppBinaryBinding
-        val bindings = binary?.evidence.orEmpty().flatMap { it.bindings }
+        val binaryItems = binary?.evidence.orEmpty()
+        val exactBindingCount =
+            binaryItems.sumOf { it.bindings.size }
 
-        if (bindings.isNotEmpty()) {
-            val targets = bindings.map { binding ->
-                methodTarget(
-                    result = result,
-                    binding = binding,
-                    evidence = evidence,
+        if (exactBindingCount > 0) {
+            val targets =
+                ArrayList<EvidenceTarget>(
+                    genericTargets.size +
+                        exactBindingCount,
                 )
+            targets.addAll(genericTargets)
+            binaryItems.forEach { binaryItem ->
+                binaryItem.bindings.forEach { binding ->
+                    targets += methodTarget(
+                        binding = binding,
+                        libraryEntry =
+                            binaryItem.libraryEntry,
+                        evidence = evidence,
+                    )
+                }
             }
             return EvidenceBuildResult(
                 graph = EvidenceGraph(
-                    artifactSha256 = result.index.artifactSha256,
-                    targets = (genericTargets + targets).distinctBy { it.id },
+                    artifactSha256 =
+                        result.index.artifactSha256,
+                    targets =
+                        targets.distinctBy {
+                            it.id
+                        },
                 ),
                 confirmationQueue = emptyList(),
             )
@@ -259,8 +274,8 @@ object EvidenceGraphBuilder {
             .toList()
 
     private fun methodTarget(
-        result: FastAnalysisResult,
         binding: Il2CppMethodBinaryBinding,
+        libraryEntry: String,
         evidence: ExecutableBindingEvidence,
     ): EvidenceTarget {
         val status = when (evidence.proofLevel) {
@@ -278,16 +293,13 @@ object EvidenceGraphBuilder {
             append(':')
             append(binding.moduleName)
         }
-        val binaryEvidence = result.il2cppBinaryBinding
-            ?.evidence
-            ?.firstOrNull { binding in it.bindings }
         return EvidenceTarget(
             id = id,
             runtimeId = IL2CPP_RUNTIME,
             kind = EvidenceTargetKind.METHOD,
             displayName = binding.managedIdentity,
-            artifact = binaryEvidence?.libraryEntry,
-            abi = binaryEvidence?.libraryEntry?.let(::abiFromPath),
+            artifact = libraryEntry,
+            abi = abiFromPath(libraryEntry),
             declaringType = binding.managedIdentity.substringBeforeLast('.', ""),
             memberName = binding.managedIdentity.substringAfterLast('.'),
             metadataToken = binding.metadataToken,
