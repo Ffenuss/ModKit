@@ -882,8 +882,44 @@ object Il2CppCodeGenScanner {
         progress: ProgressSink,
         libraryEntry: String,
     ): List<Il2CppMethodBinaryBinding> {
-        val modulesByName = modules.groupBy { it.moduleName.lowercase() }
-        val out = mutableListOf<Il2CppMethodBinaryBinding>()
+        val modulesByName =
+            modules.groupBy {
+                it.moduleName.lowercase()
+            }
+        val imageByTypeIndex =
+            HashMap<Int, Il2CppImageDefinition>(
+                metadata.types.size * 2,
+            )
+        metadata.images.forEach { imageDef ->
+            if (
+                imageDef.typeStart >= 0 &&
+                imageDef.typeCount > 0
+            ) {
+                val endExclusive =
+                    (
+                        imageDef.typeStart.toLong() +
+                            imageDef.typeCount.toLong()
+                        )
+                        .coerceAtMost(
+                            Int.MAX_VALUE.toLong(),
+                        )
+                        .toInt()
+                for (
+                    typeIndex in
+                    imageDef.typeStart until endExclusive
+                ) {
+                    imageByTypeIndex.putIfAbsent(
+                        typeIndex,
+                        imageDef,
+                    )
+                }
+            }
+        }
+
+        val out =
+            ArrayList<Il2CppMethodBinaryBinding>(
+                metadata.methods.size,
+            )
         var lastHeartbeat = 0L
 
         metadata.methods.forEachIndexed { index, method ->
@@ -907,10 +943,10 @@ object Il2CppCodeGenScanner {
                 }
             }
 
-            val imageDef = metadata.images.singleOrNull { candidate ->
-                method.declaringTypeIndex >= candidate.typeStart &&
-                    method.declaringTypeIndex < candidate.typeStart + candidate.typeCount
-            } ?: return@forEachIndexed
+            val imageDef =
+                imageByTypeIndex[
+                    method.declaringTypeIndex
+                ] ?: return@forEachIndexed
 
             val module = modulesByName[imageDef.name.lowercase()]?.singleOrNull()
                 ?: return@forEachIndexed
