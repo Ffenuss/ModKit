@@ -11,7 +11,7 @@ class NativePatchPresetCatalogTest {
         val presets =
             NativePatchPresetCatalog.forAbi("arm64-v8a")
 
-        assertEquals(3, presets.size)
+        assertEquals(15, presets.size)
         presets.forEach { preset ->
             val bytes =
                 Il2CppNativeMutationDraftBuilder.parseHex(
@@ -41,6 +41,16 @@ class NativePatchPresetCatalogTest {
         assertEquals(
             "20 00 80 D2 C0 03 5F D6",
             byId.getValue("arm64-return-one")
+                .replacementHex,
+        )
+        assertEquals(
+            "00 10 20 1E C0 03 5F D6",
+            byId.getValue("arm64-return-f32-two")
+                .replacementHex,
+        )
+        assertEquals(
+            "00 10 60 1E C0 03 5F D6",
+            byId.getValue("arm64-return-f64-two")
                 .replacementHex,
         )
     }
@@ -73,6 +83,46 @@ class NativePatchPresetCatalogTest {
                     Il2CppNativeReturnKind.POINTER_OR_REFERENCE,
                 )
                 .map { it.id },
+        )
+        assertEquals(
+            listOf(
+                "arm64-return-f32-half",
+                "arm64-return-f32-zero",
+                "arm64-return-f32-one",
+                "arm64-return-f32-two",
+                "arm64-return-f32-three",
+                "arm64-return-f32-five",
+            ),
+            NativePatchPresetCatalog
+                .forProvenReturnKind(
+                    "arm64-v8a",
+                    Il2CppNativeReturnKind.FLOAT32,
+                )
+                .map { it.id },
+        )
+        assertEquals(
+            listOf(
+                "arm64-return-f64-half",
+                "arm64-return-f64-zero",
+                "arm64-return-f64-one",
+                "arm64-return-f64-two",
+                "arm64-return-f64-three",
+                "arm64-return-f64-five",
+            ),
+            NativePatchPresetCatalog
+                .forProvenReturnKind(
+                    "arm64-v8a",
+                    Il2CppNativeReturnKind.FLOAT64,
+                )
+                .map { it.id },
+        )
+        assertTrue(
+            NativePatchPresetCatalog
+                .forProvenReturnKind(
+                    "arm64-v8a",
+                    Il2CppNativeReturnKind.FLOATING_POINT,
+                )
+                .isEmpty(),
         )
         assertTrue(
             NativePatchPresetCatalog
