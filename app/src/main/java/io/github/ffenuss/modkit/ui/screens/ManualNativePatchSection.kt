@@ -46,6 +46,7 @@ fun ManualNativePatchSection(
     analysis: FastAnalysisResult,
     preparation: PatchPreparationPlan,
     onStagingReady: (MutationApplyOutcome) -> Unit = { },
+    onStagingInvalidated: () -> Unit = { },
 ) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
@@ -509,6 +510,7 @@ fun ManualNativePatchSection(
                             )
                         if (combined.readyForApply) {
                             queuedDrafts = candidate
+                            onStagingInvalidated()
                             draft = null
                             preflight = null
                             replacementHex = ""
@@ -582,6 +584,7 @@ fun ManualNativePatchSection(
                                             it.request.id ==
                                                 queued.request.id
                                         }
+                                    onStagingInvalidated()
                                     applyOutcome = null
                                 },
                                 modifier =
