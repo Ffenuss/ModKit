@@ -105,9 +105,13 @@ object GameplayModificationFinder {
                 .filter { prepared ->
                     !projectCodeOnly ||
                         Il2CppPatchTargetBrowser
-                            .isAssemblyCSharp(prepared.target)
+                            .isAssemblyCSharp(prepared.target) ||
+                        isSensitiveTarget(prepared.target)
                 }
-                .filterNot { isInfrastructureOrGenerated(it.target) }
+                .filterNot { prepared ->
+                    isInfrastructureOrGenerated(prepared.target) &&
+                        !isSensitiveTarget(prepared.target)
+                }
                 .toList()
 
         val sharedBodyCounts =
@@ -190,9 +194,9 @@ object GameplayModificationFinder {
                             replacementHex = null,
                             selectable = false,
                             blocker =
-                                "Поверхность доступна для анализа и сопоставления, " +
-                                    "но ModKit не генерирует пресет для обхода оплаты, " +
-                                    "авторизации, integrity/anti-cheat или entitlement-проверок.",
+                                "Поверхность доступна для анализа и ручного сопоставления. " +
+                                    "Автоматический bypass/preset не формируется; при точной " +
+                                    "binary-привязке цель остаётся доступна в ручном Patch Lab.",
                             evidenceSummary =
                                 "Точная IL2CPP binary-привязка · " +
                                     Il2CppPatchTargetBrowser
@@ -594,6 +598,17 @@ object GameplayModificationFinder {
             it in type
         }
     }
+
+    private fun isSensitiveTarget(
+        target: EvidenceTarget,
+    ): Boolean =
+        sensitiveSurfaceKind(
+            target = target,
+            methodTokens =
+                semanticMethodTokens(
+                    target.memberName.orEmpty(),
+                ),
+        ) != null
 
     private fun sensitiveSurfaceKind(
         target: EvidenceTarget,
