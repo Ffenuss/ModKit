@@ -156,6 +156,15 @@ object GameplayModificationFinder {
                     val category =
                         classify(methodTokens)
                             ?: return@mapNotNull null
+                    if (
+                        !isSemanticallyPlausible(
+                            target = target,
+                            category = category,
+                            methodTokens = methodTokens,
+                        )
+                    ) {
+                        return@mapNotNull null
+                    }
                     val binding =
                         bindingByArtifactImageToken[
                             bindingKey(
@@ -322,6 +331,13 @@ object GameplayModificationFinder {
                 .orEmpty()
                 .lowercase()
         if (
+            type.endsWith("wrap") ||
+            type.contains("luabinder") ||
+            type.contains("objecttranslator")
+        ) {
+            return true
+        }
+        if (
             infrastructureTypePrefixes.any {
                 type.startsWith(it)
             }
@@ -336,6 +352,48 @@ object GameplayModificationFinder {
             return true
         }
         return false
+    }
+
+    private fun isSemanticallyPlausible(
+        target: EvidenceTarget,
+        category: GameplayModificationCategory,
+        methodTokens: List<String>,
+    ): Boolean {
+        val typeTokens =
+            tokenizeIdentifier(
+                target.declaringType.orEmpty(),
+            )
+        val semantic =
+            stripAccessor(methodTokens)
+
+        val rejectedTypePhrases =
+            categoryRejectedTypePhrases[category].orEmpty()
+        if (
+            rejectedTypePhrases.any {
+                containsPhrase(typeTokens, it)
+            }
+        ) {
+            return false
+        }
+
+        val contextPhrases =
+            categoryContextPhrases[category].orEmpty()
+        if (contextPhrases.isEmpty()) {
+            return true
+        }
+        if (
+            contextPhrases.any {
+                containsPhrase(typeTokens, it)
+            }
+        ) {
+            return true
+        }
+
+        return strongStandaloneMethodPhrases[category]
+            .orEmpty()
+            .any {
+                containsPhrase(semantic, it)
+            }
     }
 
     private fun containsForbiddenSurface(
@@ -941,6 +999,287 @@ object GameplayModificationFinder {
                     p("camera fov"),
                     p("fov"),
                     p("zoom"),
+                ),
+        )
+
+    private val categoryContextPhrases =
+        mapOf(
+            GameplayModificationCategory.SURVIVABILITY to
+                listOf(
+                    p("player"),
+                    p("hero"),
+                    p("character"),
+                    p("actor"),
+                    p("battle"),
+                    p("combat"),
+                    p("health"),
+                    p("life"),
+                ),
+            GameplayModificationCategory.DAMAGE to
+                listOf(
+                    p("player"),
+                    p("hero"),
+                    p("character"),
+                    p("actor"),
+                    p("battle"),
+                    p("combat"),
+                    p("skill"),
+                    p("weapon"),
+                    p("damage"),
+                ),
+            GameplayModificationCategory.MOVEMENT to
+                listOf(
+                    p("player"),
+                    p("hero"),
+                    p("character"),
+                    p("actor"),
+                    p("locomotion"),
+                    p("movement"),
+                    p("motor"),
+                    p("controller"),
+                ),
+            GameplayModificationCategory.COLLISION to
+                listOf(
+                    p("player"),
+                    p("hero"),
+                    p("character"),
+                    p("actor"),
+                    p("movement"),
+                    p("motor"),
+                    p("controller"),
+                ),
+            GameplayModificationCategory.STAMINA to
+                listOf(
+                    p("player"),
+                    p("hero"),
+                    p("character"),
+                    p("actor"),
+                    p("battle"),
+                    p("combat"),
+                    p("skill"),
+                ),
+            GameplayModificationCategory.COOLDOWN to
+                listOf(
+                    p("player"),
+                    p("hero"),
+                    p("character"),
+                    p("battle"),
+                    p("combat"),
+                    p("skill"),
+                    p("ability"),
+                    p("weapon"),
+                ),
+            GameplayModificationCategory.CONTROL to
+                listOf(
+                    p("player"),
+                    p("hero"),
+                    p("character"),
+                    p("actor"),
+                    p("battle"),
+                    p("combat"),
+                ),
+            GameplayModificationCategory.ATTACK_SPEED to
+                listOf(
+                    p("player"),
+                    p("hero"),
+                    p("character"),
+                    p("battle"),
+                    p("combat"),
+                    p("attack"),
+                    p("weapon"),
+                ),
+            GameplayModificationCategory.REGENERATION to
+                listOf(
+                    p("player"),
+                    p("hero"),
+                    p("character"),
+                    p("actor"),
+                    p("battle"),
+                    p("combat"),
+                    p("health"),
+                ),
+            GameplayModificationCategory.PROGRESSION to
+                listOf(
+                    p("player"),
+                    p("hero"),
+                    p("role"),
+                    p("profile"),
+                    p("progress"),
+                    p("progression"),
+                    p("skill"),
+                    p("talent"),
+                ),
+            GameplayModificationCategory.INVENTORY to
+                listOf(
+                    p("inventory"),
+                    p("bag"),
+                    p("backpack"),
+                    p("item"),
+                    p("ammo"),
+                    p("equipment"),
+                    p("equip"),
+                    p("weapon"),
+                    p("player"),
+                    p("hero"),
+                ),
+            GameplayModificationCategory.DROPS to
+                listOf(
+                    p("drop"),
+                    p("loot"),
+                    p("reward"),
+                    p("enemy"),
+                    p("monster"),
+                    p("battle"),
+                ),
+            GameplayModificationCategory.DIFFICULTY to
+                listOf(
+                    p("difficulty"),
+                    p("enemy"),
+                    p("monster"),
+                    p("battle"),
+                    p("combat"),
+                ),
+            GameplayModificationCategory.WORLD to
+                listOf(
+                    p("game time"),
+                    p("world"),
+                    p("battle"),
+                    p("simulation"),
+                    p("player"),
+                    p("character"),
+                ),
+        )
+
+    private val categoryRejectedTypePhrases =
+        mapOf(
+            GameplayModificationCategory.MOVEMENT to
+                listOf(
+                    p("virtual texture"),
+                    p("line renderer"),
+                    p("camera"),
+                    p("pathfinding"),
+                    p("timeline"),
+                    p("dialogue"),
+                    p("profiler"),
+                    p("joystick"),
+                    p("input"),
+                    p("drag"),
+                ),
+            GameplayModificationCategory.INVENTORY to
+                listOf(
+                    p("quad tree"),
+                    p("quadtree"),
+                    p("scroll view"),
+                    p("collection"),
+                    p("list view"),
+                    p("tree node"),
+                    p("ui elements"),
+                ),
+            GameplayModificationCategory.PROGRESSION to
+                listOf(
+                    p("quality"),
+                    p("render"),
+                    p("renderer"),
+                    p("lod"),
+                    p("mipmap"),
+                    p("texture"),
+                    p("light"),
+                    p("device"),
+                    p("performance"),
+                    p("battery"),
+                    p("shader"),
+                    p("clipping"),
+                    p("system info"),
+                    p("memory"),
+                ),
+            GameplayModificationCategory.COOLDOWN to
+                listOf(
+                    p("flow canvas"),
+                    p("behaviour tree"),
+                    p("behavior tree"),
+                    p("fmod"),
+                ),
+            GameplayModificationCategory.WORLD to
+                listOf(
+                    p("tween"),
+                    p("spine"),
+                    p("timeline"),
+                    p("text animator"),
+                    p("animation"),
+                    p("particle"),
+                ),
+            GameplayModificationCategory.CAMERA to
+                listOf(
+                    p("image cropper"),
+                    p("ui camera"),
+                    p("graph"),
+                ),
+        )
+
+    private val strongStandaloneMethodPhrases =
+        mapOf(
+            GameplayModificationCategory.SURVIVABILITY to
+                listOf(
+                    p("is invincible"),
+                    p("is invulnerable"),
+                    p("is immortal"),
+                    p("god mode"),
+                    p("max health"),
+                    p("player hp"),
+                ),
+            GameplayModificationCategory.DAMAGE to
+                listOf(
+                    p("take damage"),
+                    p("receive damage"),
+                    p("apply damage"),
+                    p("attack damage"),
+                    p("damage multiplier"),
+                ),
+            GameplayModificationCategory.COLLISION to
+                listOf(
+                    p("no clip"),
+                    p("ignore collision"),
+                    p("can pass through"),
+                ),
+            GameplayModificationCategory.STAMINA to
+                listOf(
+                    p("stamina"),
+                    p("consume stamina"),
+                    p("spend stamina"),
+                ),
+            GameplayModificationCategory.ATTACK_SPEED to
+                listOf(
+                    p("attack speed"),
+                    p("fire rate"),
+                ),
+            GameplayModificationCategory.REGENERATION to
+                listOf(
+                    p("health regen"),
+                    p("health regeneration"),
+                ),
+            GameplayModificationCategory.PROGRESSION to
+                listOf(
+                    p("experience points"),
+                    p("xp gain"),
+                    p("player xp"),
+                    p("player level"),
+                    p("hero level"),
+                    p("skill point"),
+                    p("talent point"),
+                    p("level up"),
+                ),
+            GameplayModificationCategory.DROPS to
+                listOf(
+                    p("drop rate"),
+                    p("drop chance"),
+                    p("loot chance"),
+                    p("reward multiplier"),
+                ),
+            GameplayModificationCategory.DIFFICULTY to
+                listOf(
+                    p("enemy health"),
+                    p("enemy damage"),
+                    p("enemy speed"),
                 ),
         )
 
