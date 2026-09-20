@@ -107,6 +107,21 @@ object Il2CppCodeGenScanner {
                 )
             }
 
+            if (
+                candidate == null &&
+                metadata.images.isNotEmpty() &&
+                image.relativeRelocationCount > 0
+            ) {
+                candidate = recoverByRelocatedModuleStructs(
+                    image = image,
+                    metadata = metadata,
+                    cancellation = cancellation,
+                    progress = progress,
+                    libraryEntry = libraryEntry,
+                    blockers = blockers,
+                )
+            }
+
             if (candidate == null && metadata.images.isNotEmpty()) {
                 candidate = recoverByImageSetScan(
                     image = image,
@@ -327,6 +342,234 @@ object Il2CppCodeGenScanner {
         return uniqueCandidate(
             candidates = candidates,
             blockers = blockers,
+        )
+    }
+
+    /**
+     * Some stripped Android IL2CPP binaries preserve no recoverable
+     * CodeRegistration count/pointer pair. In those binaries the linker still
+     * has to relocate the Il2CppCodeGenModule fields themselves.
+     *
+     * Treat an individual module as a positive exact candidate only when:
+     * - the first field is a relative relocation to an exact metadata image name;
+     * - the method-pointer table field is itself relocation-backed;
+     * - the table is file-backed; and
+     * - sampled method pointers resolve into executable PT_LOAD segments.
+     *
+     * A complete module set is not required for positive bindings. Ambiguous
+     * module names are dropped rather than guessed.
+     */
+    private fun recoverByRelocatedModuleStructs(
+        image: ElfImage,
+        metadata: Il2CppMetadataModel,
+        cancellation: CancellationSignal,
+        progress: ProgressSink,
+        libraryEntry: String,
+        blockers: MutableList<String>,
+    ): ModuleArrayCandidate? {
+        val expectedNames =
+            metadata.images
+                .map { it.name.lowercase() }
+                .toSet()
+        if (
+            expectedNames.isEmpty() ||
+            expectedNames.size > MAX_MODULES
+        ) {
+            return null
+        }
+
+        val pointerSize = image.pointerSize
+        val methodPointerOffset =
+            if (pointerSize == 8) 16L else 8L
+        val candidatesByName =
+            LinkedHashMap<
+                String,
+                MutableList<Il2CppCodeGenModuleEvidence>,
+            >()
+        var inspected = 0L
+        var lastHeartbeat = 0L
+
+        image.forEachRelativeRelocation { moduleVa, nameVa ->
+            inspected++
+            if (inspected % 1024L == 0L) {
+                if (cancellation.isCancelled()) {
+                    throw AnalysisCancelledException()
+                }
+                val now = System.currentTimeMillis()
+                if (now - lastHeartbeat >= HEARTBEAT_MS) {
+                    lastHeartbeat = now
+                    progress.publish(
+                        EngineProgress(
+                            engineId = "il2cpp.codegen-bind",
+                            scheduleClass =
+                                EngineScheduleClass.CONFIRMATION,
+                            state = RunState.RUNNING,
+                            currentTask =
+                                "IL2CPP: relocated CodeGenModule signatures",
+                            currentArtifact = libraryEntry,
+                            processed = inspected,
+                            total =
+                                image.relativeRelocationCount
+                                    .toLong(),
+                            lastHeartbeatEpochMs = now,
+                        ),
+                    )
+                }
+            }
+
+            if (
+                moduleVa <= 0L ||
+                nameVa <= 0L ||
+                !image.isFileBackedVa(
+                    moduleVa,
+                    methodPointerOffset + pointerSize,
+                ) ||
+                !image.isFileBackedVa(nameVa, 1L)
+            ) {
+                return@forEachRelativeRelocation true
+            }
+
+            val tableVa =
+                image.relativeRelocationValueAt(
+                    moduleVa + methodPointerOffset,
+                ) ?: return@forEachRelativeRelocation true
+            if (tableVa <= 0L) {
+                return@forEachRelativeRelocation true
+            }
+
+            val methodCount =
+                image.readU32AtVa(
+                    moduleVa + pointerSize,
+                )?.toInt()
+                    ?: return@forEachRelativeRelocation true
+            if (methodCount !in 1..MAX_METHOD_POINTERS) {
+                return@forEachRelativeRelocation true
+            }
+
+            val sampleCount =
+                minOf(
+                    methodCount,
+                    MAX_SAMPLED_POINTERS,
+                )
+            if (
+                !image.isFileBackedVa(
+                    tableVa,
+                    sampleCount.toLong() * pointerSize,
+                )
+            ) {
+                return@forEachRelativeRelocation true
+            }
+
+            var sampled = 0
+            var executable = 0
+            repeat(sampleCount) { slot ->
+                val functionVa =
+                    image.readPointerAtVa(
+                        tableVa +
+                            slot.toLong() * pointerSize,
+                    )
+                if (
+                    functionVa != null &&
+                    functionVa > 0L
+                ) {
+                    sampled++
+                    if (image.isExecutableVa(functionVa)) {
+                        executable++
+                    }
+                }
+            }
+            if (sampled == 0) {
+                return@forEachRelativeRelocation true
+            }
+            val ratio =
+                executable.toDouble() /
+                    sampled.toDouble()
+            val required =
+                if (sampled < 4) 1.0 else 0.75
+            if (ratio < required) {
+                return@forEachRelativeRelocation true
+            }
+
+            val moduleName =
+                image.readCStringAtVa(
+                    nameVa,
+                    512,
+                ) ?: return@forEachRelativeRelocation true
+            val normalizedName = moduleName.lowercase()
+            if (normalizedName !in expectedNames) {
+                return@forEachRelativeRelocation true
+            }
+
+            val evidence =
+                Il2CppCodeGenModuleEvidence(
+                    moduleName = moduleName,
+                    moduleVirtualAddress = moduleVa,
+                    methodPointerCount = methodCount,
+                    methodPointersVirtualAddress = tableVa,
+                    sampledPointers = sampled,
+                    executablePointers = executable,
+                )
+            val bucket =
+                candidatesByName.getOrPut(
+                    normalizedName,
+                ) {
+                    mutableListOf()
+                }
+            if (
+                bucket.none {
+                    it.moduleVirtualAddress ==
+                        moduleVa
+                }
+            ) {
+                bucket += evidence
+            }
+            true
+        }
+
+        val ambiguousCount =
+            candidatesByName.count {
+                it.value.size > 1
+            }
+        if (ambiguousCount > 0) {
+            blockers +=
+                "AMBIGUOUS_RELOCATED_CODEGEN_MODULES:" +
+                    ambiguousCount
+        }
+
+        val uniqueByName =
+            candidatesByName
+                .filterValues { it.size == 1 }
+                .mapValues { it.value.single() }
+        if (uniqueByName.isEmpty()) {
+            return null
+        }
+
+        val modules =
+            metadata.images
+                .mapNotNull {
+                    uniqueByName[
+                        it.name.lowercase()
+                    ]
+                }
+        if (modules.isEmpty()) {
+            return null
+        }
+
+        if (modules.size < expectedNames.size) {
+            blockers +=
+                "PARTIAL_RELOCATED_CODEGEN_MODULE_SET:" +
+                    modules.size +
+                    "/" +
+                    expectedNames.size
+        }
+
+        return ModuleArrayCandidate(
+            modules = modules,
+            discovery =
+                "RELOCATED_MODULE_SIGNATURES_" +
+                    modules.size +
+                    "_OF_" +
+                    expectedNames.size,
         )
     }
 
