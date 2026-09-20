@@ -174,9 +174,21 @@ fun ManualNativePatchSection(
                 modifier = Modifier.fillMaxWidth(),
             )
             if (assemblyCSharpCount > 0) {
+                Text(
+                    if (effectiveProjectCodeOnly) {
+                        "Сейчас показан код проекта: Assembly-CSharp (" +
+                            assemblyCSharpCount +
+                            "). Это обычно скрипты самой игры/приложения; " +
+                            "системные и библиотечные методы скрыты."
+                    } else {
+                        "Показаны все подтверждённые IL2CPP-методы, " +
+                            "включая Unity/.NET/плагины."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 OutlinedButton(
                     onClick = {
-                        targetFilter = "Assembly-CSharp"
+                        projectCodeOnly = !projectCodeOnly
                         selectedTargetId = null
                         replacementHex = ""
                         draft = null
@@ -187,9 +199,13 @@ fun ManualNativePatchSection(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        "Показать Assembly-CSharp (" +
-                            assemblyCSharpCount +
-                            ")",
+                        if (effectiveProjectCodeOnly) {
+                            "Показать библиотеки и системные методы"
+                        } else {
+                            "Только код игры/приложения (" +
+                                assemblyCSharpCount +
+                                ")"
+                        },
                     )
                 }
             }
@@ -224,8 +240,12 @@ fun ManualNativePatchSection(
                 ) {
                     Text(
                         (if (selected) "✓ " else "") +
-                            prepared.target.displayName,
-                        maxLines = 2,
+                            prepared.target.displayName +
+                            "\n" +
+                            Il2CppPatchTargetBrowser.originLabel(
+                                prepared.target,
+                            ),
+                        maxLines = 3,
                     )
                 }
             }
@@ -282,6 +302,20 @@ fun ManualNativePatchSection(
                                 MaterialTheme.typography.bodySmall,
                         )
                     }
+                Text(
+                    "Источник: " +
+                        Il2CppPatchTargetBrowser.originLabel(
+                            evidenceTarget,
+                        ),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Text(
+                    "Что делает по структуре: " +
+                        Il2CppPatchTargetBrowser.methodHint(
+                            evidenceTarget,
+                        ),
+                    style = MaterialTheme.typography.bodySmall,
+                )
 
                 if (selectedSharedBodyCount > 1) {
                     Text(
