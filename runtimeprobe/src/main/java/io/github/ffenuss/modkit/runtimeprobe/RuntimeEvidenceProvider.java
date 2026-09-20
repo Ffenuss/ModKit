@@ -25,8 +25,14 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
     public static final String CALLER_PACKAGE = "io.github.ffenuss.modkit";
     public static final String PATH_EVIDENCE = "evidence";
     public static final String PATH_NATIVE_TRACE = "native-trace";
+    public static final String PATH_NATIVE_JNI_TRACE = "native-jni-trace";
     private static final int MAX_MAPS_BYTES = 8 * 1024 * 1024;
     private static final int MAX_CMDLINE_BYTES = 4096;
+    private static final Object TRACE_LOCK = new Object();
+    private static final String TRACE_MODE_DLSYM = "DLSYM";
+    private static final String TRACE_MODE_JNI = "JNI";
+    private static String traceMode = "";
+    private static JniProducerSnapshot stoppedJniProducer;
 
     @Override
     public boolean onCreate() {
@@ -37,6 +43,9 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
     public String getType(Uri uri) {
         if (("/" + PATH_NATIVE_TRACE).equals(uri.getPath())) {
             return "application/vnd.io.github.ffenuss.modkit.native-trace-v1";
+        }
+        if (("/" + PATH_NATIVE_JNI_TRACE).equals(uri.getPath())) {
+            return "application/vnd.io.github.ffenuss.modkit.native-jni-trace-v1";
         }
         return "application/vnd.io.github.ffenuss.modkit.runtime-evidence-v1";
     }
@@ -84,32 +93,101 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         }
 
         if ("nativeTraceStart".equals(method)) {
-            RuntimeNativeTraceBuffer.start();
-            boolean producerReady =
-                    RuntimeNativeBridge.startPassiveDlsymTrace();
-            if (!producerReady) {
-                RuntimeNativeTraceBuffer.stop();
+            synchronized (TRACE_LOCK) {
+                RuntimeNativeTraceBuffer.Snapshot before =
+                        RuntimeNativeTraceBuffer.snapshot();
+                if (before.active) {
+                    throw new IllegalStateException(
+                            "Another native trace session is already active."
+                    );
+                }
+                traceMode = TRACE_MODE_DLSYM;
+                stoppedJniProducer = null;
+                RuntimeNativeTraceBuffer.start();
+                boolean producerReady =
+                        RuntimeNativeBridge.startPassiveDlsymTrace();
+                if (!producerReady) {
+                    RuntimeNativeTraceBuffer.stop();
+                }
+                return traceStatusBundle(
+                        RuntimeNativeTraceBuffer.snapshot(),
+                        producerReady
+                );
             }
-            return traceStatusBundle(
-                    RuntimeNativeTraceBuffer.snapshot(),
-                    producerReady
-            );
         }
         if ("nativeTraceStop".equals(method)) {
-            boolean restored =
-                    RuntimeNativeBridge.stopPassiveDlsymTrace();
-            RuntimeNativeTraceBuffer.Snapshot snapshot =
-                    RuntimeNativeTraceBuffer.stop();
-            return traceStatusBundle(
-                    snapshot,
-                    restored
-            );
+            synchronized (TRACE_LOCK) {
+                if (!TRACE_MODE_DLSYM.equals(traceMode)) {
+                    throw new IllegalStateException(
+                            "The active trace session is not a passive dlsym session."
+                    );
+                }
+                boolean restored =
+                        RuntimeNativeBridge.stopPassiveDlsymTrace();
+                RuntimeNativeTraceBuffer.Snapshot snapshot =
+                        RuntimeNativeTraceBuffer.stop();
+                return traceStatusBundle(
+                        snapshot,
+                        restored
+                );
+            }
         }
         if ("nativeTraceStatus".equals(method)) {
             return traceStatusBundle(
                     RuntimeNativeTraceBuffer.snapshot(),
                     RuntimeNativeBridge.ensureLoaded()
             );
+        }
+        if ("nativeJniTraceStart".equals(method)) {
+            synchronized (TRACE_LOCK) {
+                RuntimeNativeTraceBuffer.Snapshot before =
+                        RuntimeNativeTraceBuffer.snapshot();
+                if (before.active) {
+                    throw new IllegalStateException(
+                            "Another native trace session is already active."
+                    );
+                }
+                traceMode = TRACE_MODE_JNI;
+                stoppedJniProducer = null;
+                RuntimeNativeTraceBuffer.start();
+                boolean producerReady =
+                        RuntimeNativeBridge.startPassiveJniTrace();
+                if (!producerReady) {
+                    RuntimeNativeTraceBuffer.stop();
+                }
+                return jniTraceStatusBundle(
+                        RuntimeNativeTraceBuffer.snapshot(),
+                        producerReady
+                );
+            }
+        }
+        if ("nativeJniTraceStop".equals(method)) {
+            synchronized (TRACE_LOCK) {
+                if (!TRACE_MODE_JNI.equals(traceMode)) {
+                    throw new IllegalStateException(
+                            "The active trace session is not a passive JNI session."
+                    );
+                }
+                boolean restored =
+                        RuntimeNativeBridge.stopPassiveJniTrace();
+                RuntimeNativeTraceBuffer.Snapshot snapshot =
+                        RuntimeNativeTraceBuffer.stop();
+                stoppedJniProducer = JniProducerSnapshot.capture(restored);
+                return jniTraceStatusBundle(
+                        snapshot,
+                        restored
+                );
+            }
+        }
+        if ("nativeJniTraceStatus".equals(method)) {
+            synchronized (TRACE_LOCK) {
+                boolean ready = RuntimeNativeBridge.ensureLoaded() &&
+                        !RuntimeNativeBridge.passiveJniRestoreFailed();
+                return jniTraceStatusBundle(
+                        RuntimeNativeTraceBuffer.snapshot(),
+                        ready
+                );
+            }
         }
 
         throw new IllegalArgumentException("Unsupported runtime probe call.");
@@ -162,6 +240,43 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         return result;
     }
 
+    private Bundle jniTraceStatusBundle(
+            RuntimeNativeTraceBuffer.Snapshot snapshot,
+            boolean producerReady
+    ) {
+        Bundle result = baseReply();
+        result.putString("sessionId", snapshot.sessionId);
+        result.putBoolean("active", snapshot.active);
+        result.putBoolean("truncated", snapshot.truncated);
+        result.putInt("eventCount", snapshot.eventCount);
+        result.putLong("startedAtEpochMs", snapshot.startedAtEpochMs);
+        result.putLong("stoppedAtEpochMs", snapshot.stoppedAtEpochMs);
+        result.putInt("traceBytes", snapshot.bytes.length);
+        result.putString("producerKind", "ART_DLSYM_JNI_TABLE");
+        result.putBoolean("producerReady", producerReady);
+        result.putBoolean(
+                "producerActive",
+                RuntimeNativeBridge.passiveJniTraceActive()
+        );
+        result.putInt(
+                "jniOnLoadHookedSlotCount",
+                RuntimeNativeBridge.passiveJniOnLoadHookedSlotCount()
+        );
+        result.putBoolean(
+                "registerNativesHooked",
+                RuntimeNativeBridge.passiveRegisterNativesHooked()
+        );
+        result.putBoolean(
+                "producerIncomplete",
+                RuntimeNativeBridge.passiveJniIncomplete()
+        );
+        result.putBoolean(
+                "producerRestoreFailed",
+                RuntimeNativeBridge.passiveJniRestoreFailed()
+        );
+        return result;
+    }
+
     @Override
     public ParcelFileDescriptor openFile(Uri uri, String mode)
             throws FileNotFoundException {
@@ -190,6 +305,43 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
             return openPipe(
                     "ModKitNativeTrace",
                     descriptor -> writeNativeTrace(descriptor, snapshot)
+            );
+        }
+        if (("/" + PATH_NATIVE_JNI_TRACE).equals(path)) {
+            RuntimeNativeTraceBuffer.Snapshot snapshot;
+            JniProducerSnapshot producer;
+            synchronized (TRACE_LOCK) {
+                if (!TRACE_MODE_JNI.equals(traceMode)) {
+                    throw new FileNotFoundException(
+                            "No passive JNI trace session is available."
+                    );
+                }
+                snapshot = RuntimeNativeTraceBuffer.snapshot();
+                producer = stoppedJniProducer;
+            }
+            if (snapshot.sessionId.isEmpty()) {
+                throw new FileNotFoundException(
+                        "No passive JNI trace session has been created."
+                );
+            }
+            if (snapshot.active) {
+                throw new FileNotFoundException(
+                        "Passive JNI trace session must be stopped before export."
+                );
+            }
+            if (producer == null) {
+                throw new FileNotFoundException(
+                        "Passive JNI producer provenance is unavailable."
+                );
+            }
+            JniProducerSnapshot exactProducer = producer;
+            return openPipe(
+                    "ModKitNativeJniTrace",
+                    descriptor -> writeNativeJniTrace(
+                            descriptor,
+                            snapshot,
+                            exactProducer
+                    )
             );
         }
         throw new FileNotFoundException("Unsupported runtime probe path.");
@@ -325,6 +477,78 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
             output.flush();
         } catch (Exception ignored) {
             // Pipe closure is itself the failure signal to the ModKit caller.
+        }
+    }
+
+    private void writeNativeJniTrace(
+            ParcelFileDescriptor descriptor,
+            RuntimeNativeTraceBuffer.Snapshot snapshot,
+            JniProducerSnapshot producer
+    ) {
+        try (ParcelFileDescriptor.AutoCloseOutputStream output =
+                     new ParcelFileDescriptor.AutoCloseOutputStream(descriptor)) {
+            ReadResult cmdlineResult =
+                    readBounded(new File("/proc/self/cmdline"), MAX_CMDLINE_BYTES);
+            String processIdentity = decodeCmdline(cmdlineResult.bytes);
+            byte[] trace = snapshot.bytes;
+
+            String header =
+                    "MODKIT_NATIVE_JNI_TRACE_V1\n" +
+                    "packageName=" + probeContext().getPackageName() + "\n" +
+                    "pid=" + Process.myPid() + "\n" +
+                    "processIdentity=" + processIdentity + "\n" +
+                    "sessionId=" + snapshot.sessionId + "\n" +
+                    "startedAtEpochMs=" + snapshot.startedAtEpochMs + "\n" +
+                    "stoppedAtEpochMs=" + snapshot.stoppedAtEpochMs + "\n" +
+                    "eventCount=" + snapshot.eventCount + "\n" +
+                    "traceSha256=" + sha256(trace) + "\n" +
+                    "traceBytes=" + trace.length + "\n" +
+                    "truncated=" + snapshot.truncated + "\n" +
+                    "producerKind=ART_DLSYM_JNI_TABLE\n" +
+                    "jniOnLoadHookedSlotCount=" +
+                    producer.jniOnLoadHookedSlotCount + "\n" +
+                    "registerNativesHooked=" +
+                    producer.registerNativesHooked + "\n" +
+                    "producerIncomplete=" +
+                    producer.incomplete + "\n" +
+                    "producerRestoreFailed=" +
+                    producer.restoreFailed + "\n" +
+                    "---TRACE---\n";
+            output.write(header.getBytes(StandardCharsets.UTF_8));
+            output.write(trace);
+            output.flush();
+        } catch (Exception ignored) {
+            // Pipe closure is itself the failure signal to the ModKit caller.
+        }
+    }
+
+    private static final class JniProducerSnapshot {
+        final int jniOnLoadHookedSlotCount;
+        final boolean registerNativesHooked;
+        final boolean incomplete;
+        final boolean restoreFailed;
+
+        JniProducerSnapshot(
+                int jniOnLoadHookedSlotCount,
+                boolean registerNativesHooked,
+                boolean incomplete,
+                boolean restoreFailed
+        ) {
+            this.jniOnLoadHookedSlotCount = jniOnLoadHookedSlotCount;
+            this.registerNativesHooked = registerNativesHooked;
+            this.incomplete = incomplete;
+            this.restoreFailed = restoreFailed;
+        }
+
+        static JniProducerSnapshot capture(boolean restored) {
+            boolean restoreFailed =
+                    RuntimeNativeBridge.passiveJniRestoreFailed() || !restored;
+            return new JniProducerSnapshot(
+                    RuntimeNativeBridge.passiveJniOnLoadHookedSlotCount(),
+                    RuntimeNativeBridge.passiveRegisterNativesHooked(),
+                    RuntimeNativeBridge.passiveJniIncomplete(),
+                    restoreFailed
+            );
         }
     }
 
