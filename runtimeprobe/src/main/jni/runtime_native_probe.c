@@ -36,6 +36,7 @@ static atomic_int g_restore_failed = 0;
 static patched_slot g_slots[MAX_PATCHED_SLOTS];
 static size_t g_slot_count = 0;
 static dlsym_fn g_real_dlsym = NULL;
+static _Thread_local int g_in_dlsym_wrapper = 0;
 
 static const char* base_name(const char* path) {
     if (path == NULL) return NULL;
@@ -371,9 +372,15 @@ static void emit_dlsym_event(
 }
 
 static void* modkit_trace_dlsym(void* handle, const char* symbol) {
-    atomic_fetch_add(&g_inflight, 1);
     dlsym_fn real = g_real_dlsym;
-    void* result = real == NULL ? NULL : real(handle, symbol);
+    if (real == NULL) return NULL;
+    if (g_in_dlsym_wrapper) {
+        return real(handle, symbol);
+    }
+
+    g_in_dlsym_wrapper = 1;
+    atomic_fetch_add(&g_inflight, 1);
+    void* result = real(handle, symbol);
 
     if (atomic_load(&g_trace_active) &&
             result != NULL && valid_symbol(symbol)) {
@@ -389,6 +396,7 @@ static void* modkit_trace_dlsym(void* handle, const char* symbol) {
     }
 
     atomic_fetch_sub(&g_inflight, 1);
+    g_in_dlsym_wrapper = 0;
     return result;
 }
 
