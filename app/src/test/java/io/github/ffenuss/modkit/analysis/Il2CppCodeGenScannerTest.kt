@@ -74,11 +74,30 @@ class Il2CppCodeGenScannerTest {
         assertBinding(result)
     }
 
+    @Test
+    fun strippedBinaryRecoversAps2FromPtDynamicWithoutSectionHeader() {
+        val result = scanFixture(
+            includeCodeRegistrationSymbol = false,
+            includeAndroidPackedRelocations = true,
+            androidPackedRelocationsInDynamicOnly = true,
+        )
+
+        assertNull(result.codeRegistrationVirtualAddress)
+        assertTrue(result.relativeRelocationCount > 0)
+        assertTrue(
+            result.moduleArrayDiscovery.orEmpty().startsWith(
+                "RELATIVE_RELOCATION_PAIR@",
+            ),
+        )
+        assertBinding(result)
+    }
+
     private fun scanFixture(
         includeCodeRegistrationSymbol: Boolean,
         includeOutsideFileNobits: Boolean = false,
         includeRelativeRelocations: Boolean = false,
         includeAndroidPackedRelocations: Boolean = false,
+        androidPackedRelocationsInDynamicOnly: Boolean = false,
     ): Il2CppBinaryEvidence {
         val file = Files.createTempFile("modkit-codegen", ".so").toFile()
         file.writeBytes(
@@ -87,6 +106,7 @@ class Il2CppCodeGenScannerTest {
                 includeOutsideFileNobits,
                 includeRelativeRelocations,
                 includeAndroidPackedRelocations,
+                androidPackedRelocationsInDynamicOnly,
             ),
         )
         try {
@@ -166,10 +186,15 @@ class Il2CppCodeGenScannerTest {
         includeOutsideFileNobits: Boolean,
         includeRelativeRelocations: Boolean,
         includeAndroidPackedRelocations: Boolean,
+        androidPackedRelocationsInDynamicOnly: Boolean,
     ): ByteArray {
         require(
             !(includeRelativeRelocations &&
                 includeAndroidPackedRelocations),
+        )
+        require(
+            !androidPackedRelocationsInDynamicOnly ||
+                includeAndroidPackedRelocations,
         )
         val bytes = ByteArray(0x2600)
         val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
@@ -189,7 +214,16 @@ class Il2CppCodeGenScannerTest {
         buffer.putLong(40, 0x2200)
         buffer.putShort(52, 64.toShort())
         buffer.putShort(54, 56.toShort())
-        buffer.putShort(56, 2.toShort())
+        buffer.putShort(
+            56,
+            (
+                if (androidPackedRelocationsInDynamicOnly) {
+                    3
+                } else {
+                    2
+                }
+                ).toShort(),
+        )
         buffer.putShort(58, 64.toShort())
         val sectionCount =
             3 +
@@ -197,7 +231,10 @@ class Il2CppCodeGenScannerTest {
                 (
                     if (
                         includeRelativeRelocations ||
-                        includeAndroidPackedRelocations
+                        (
+                            includeAndroidPackedRelocations &&
+                                !androidPackedRelocationsInDynamicOnly
+                            )
                     ) {
                         1
                     } else {
@@ -227,6 +264,18 @@ class Il2CppCodeGenScannerTest {
         buffer.putLong(ph1 + 32, 0x1000)
         buffer.putLong(ph1 + 40, 0x1000)
         buffer.putLong(ph1 + 48, 0x1000)
+
+        if (androidPackedRelocationsInDynamicOnly) {
+            val ph2 = 64 + 56 * 2
+            buffer.putInt(ph2, 2)
+            buffer.putInt(ph2 + 4, 6)
+            buffer.putLong(ph2 + 8, 0x1a00)
+            buffer.putLong(ph2 + 16, 0x200a00)
+            buffer.putLong(ph2 + 24, 0x200a00)
+            buffer.putLong(ph2 + 32, 0x30)
+            buffer.putLong(ph2 + 40, 0x30)
+            buffer.putLong(ph2 + 48, 8)
+        }
 
         val dynstrText = if (includeCodeRegistrationSymbol) {
             "\u0000g_CodeRegistration\u0000g_MetadataRegistration\u0000il2cpp_codegen_register\u0000"
@@ -271,31 +320,46 @@ class Il2CppCodeGenScannerTest {
             includeRelativeRelocations ||
             includeAndroidPackedRelocations
         ) {
-            val relocationSection =
-                0x2200 + nextSectionIndex * 64
-            buffer.putInt(
-                relocationSection + 4,
-                if (includeAndroidPackedRelocations) {
-                    0x60000002
-                } else {
-                    4
-                },
-            )
-            buffer.putLong(
-                relocationSection + 24,
-                0x1800,
-            )
-            buffer.putLong(
-                relocationSection + 32,
-                aps2?.size?.toLong() ?: 5L * 24L,
-            )
-            if (includeRelativeRelocations) {
-                buffer.putLong(
-                    relocationSection + 56,
-                    24,
+            if (!androidPackedRelocationsInDynamicOnly) {
+                val relocationSection =
+                    0x2200 + nextSectionIndex * 64
+                buffer.putInt(
+                    relocationSection + 4,
+                    if (includeAndroidPackedRelocations) {
+                        0x60000002
+                    } else {
+                        4
+                    },
                 )
+                buffer.putLong(
+                    relocationSection + 24,
+                    0x1800,
+                )
+                buffer.putLong(
+                    relocationSection + 32,
+                    aps2?.size?.toLong() ?: 5L * 24L,
+                )
+                if (includeRelativeRelocations) {
+                    buffer.putLong(
+                        relocationSection + 56,
+                        24,
+                    )
+                }
             }
             aps2?.copyInto(bytes, 0x1800)
+        }
+
+        if (androidPackedRelocationsInDynamicOnly) {
+            val dynamic = 0x1a00
+            buffer.putLong(dynamic, 0x60000011L)
+            buffer.putLong(dynamic + 8, 0x200800L)
+            buffer.putLong(dynamic + 16, 0x60000012L)
+            buffer.putLong(
+                dynamic + 24,
+                aps2?.size?.toLong() ?: 0L,
+            )
+            buffer.putLong(dynamic + 32, 0L)
+            buffer.putLong(dynamic + 40, 0L)
         }
 
         fun symbol(index: Int, nameOffset: Int, value: Long, typeInfo: Int = 0x11) {
