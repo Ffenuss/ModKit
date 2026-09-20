@@ -75,11 +75,40 @@ class InstructionDecoderTest {
     }
 
     @Test
-    fun aarch64IsNotFalselyAdvertisedByNewInternalRegistry() {
-        assertNull(
-            InstructionDecoders.forArchitecture(
-                NativeArchitecture.AARCH64,
-            ),
+    fun aarch64UsesFixedWidthStreamSafeDecoder() {
+        val decoder =
+            requireNotNull(
+                InstructionDecoders
+                    .forArchitecture(
+                        NativeArchitecture.AARCH64,
+                    ),
+            )
+        val result =
+            decoder.decodeAt(
+                code =
+                    byteArrayOf(
+                        0xC0.toByte(),
+                        0x03,
+                        0x5F,
+                        0xD6.toByte(),
+                    ),
+                offset = 0,
+                address = 0x4000,
+            )
+
+        assertEquals(
+            InstructionBoundaryPolicy.STREAM_SAFE,
+            decoder.boundaryPolicy,
+        )
+        assertTrue(result.canAdvanceSafely)
+        assertEquals(4, result.size)
+        assertEquals(
+            ControlFlowKind.RETURN,
+            result.controlFlow?.kind,
+        )
+        assertEquals(
+            30,
+            result.controlFlow?.targetRegister,
         )
     }
 }

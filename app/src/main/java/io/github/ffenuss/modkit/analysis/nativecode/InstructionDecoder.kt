@@ -42,7 +42,7 @@ object InstructionDecoders {
             NativeArchitecture.X86_64 -> X86KnownBoundaryInstructionDecoder(
                 NativeArchitecture.X86_64,
             )
-            NativeArchitecture.AARCH64 -> null
+            NativeArchitecture.AARCH64 -> AArch64InstructionDecoder
         }
 }
 
@@ -161,5 +161,224 @@ private class X86KnownBoundaryInstructionDecoder(
             canAdvanceSafely = decoded.instructionSize != null,
             reason = decoded.reason,
         )
+    }
+}
+
+private object AArch64InstructionDecoder : InstructionDecoder {
+    override val architecture =
+        NativeArchitecture.AARCH64
+    override val boundaryPolicy =
+        InstructionBoundaryPolicy.STREAM_SAFE
+
+    override fun decodeAt(
+        code: ByteArray,
+        offset: Int,
+        address: Long,
+    ): InstructionDecodeResult {
+        if (offset < 0 || offset + 4 > code.size) {
+            return InstructionDecodeResult(
+                architecture = architecture,
+                size = null,
+                controlFlow = null,
+                canAdvanceSafely = false,
+                reason = "truncated AArch64 instruction",
+            )
+        }
+
+        val word =
+            (code[offset].toLong() and 0xffL) or
+                ((code[offset + 1].toLong() and 0xffL) shl 8) or
+                ((code[offset + 2].toLong() and 0xffL) shl 16) or
+                ((code[offset + 3].toLong() and 0xffL) shl 24)
+
+        return InstructionDecodeResult(
+            architecture = architecture,
+            size = 4,
+            controlFlow =
+                aarch64ControlFlow(
+                    word = word,
+                    address = address,
+                ),
+            canAdvanceSafely = true,
+            reason = null,
+        )
+    }
+
+    private fun aarch64ControlFlow(
+        word: Long,
+        address: Long,
+    ): ControlFlowInstruction? {
+        if (
+            (word and 0xFFFFFC1FL) ==
+            0xD65F0000L
+        ) {
+            val rn =
+                ((word ushr 5) and 0x1fL)
+                    .toInt()
+            return ControlFlowInstruction(
+                address = address,
+                size = 4,
+                architecture =
+                    NativeArchitecture.AARCH64,
+                kind =
+                    ControlFlowKind.RETURN,
+                targetRegister = rn,
+            )
+        }
+
+        if (
+            (word and 0xFFFFFC1FL) ==
+            0xD61F0000L
+        ) {
+            val rn =
+                ((word ushr 5) and 0x1fL)
+                    .toInt()
+            return ControlFlowInstruction(
+                address = address,
+                size = 4,
+                architecture =
+                    NativeArchitecture.AARCH64,
+                kind =
+                    ControlFlowKind.INDIRECT_BRANCH,
+                targetRegister = rn,
+            )
+        }
+
+        if (
+            (word and 0xFFFFFC1FL) ==
+            0xD63F0000L
+        ) {
+            val rn =
+                ((word ushr 5) and 0x1fL)
+                    .toInt()
+            return ControlFlowInstruction(
+                address = address,
+                size = 4,
+                architecture =
+                    NativeArchitecture.AARCH64,
+                kind =
+                    ControlFlowKind.INDIRECT_CALL,
+                targetRegister = rn,
+            )
+        }
+
+        if (
+            (word and 0x7C000000L) ==
+            0x14000000L
+        ) {
+            val link =
+                (word and 0x80000000L) != 0L
+            val imm26 =
+                word and 0x03FFFFFFL
+            val target =
+                address +
+                    signExtend(
+                        imm26 shl 2,
+                        28,
+                    )
+            return ControlFlowInstruction(
+                address = address,
+                size = 4,
+                architecture =
+                    NativeArchitecture.AARCH64,
+                kind =
+                    if (link) {
+                        ControlFlowKind.CALL
+                    } else {
+                        ControlFlowKind.BRANCH
+                    },
+                targetAddress = target,
+                targetArchitecture =
+                    NativeArchitecture.AARCH64,
+            )
+        }
+
+        if (
+            (word and 0xFF000010L) ==
+            0x54000000L
+        ) {
+            val imm19 =
+                (word ushr 5) and 0x7FFFFL
+            val target =
+                address +
+                    signExtend(
+                        imm19 shl 2,
+                        21,
+                    )
+            return ControlFlowInstruction(
+                address = address,
+                size = 4,
+                architecture =
+                    NativeArchitecture.AARCH64,
+                kind =
+                    ControlFlowKind.CONDITIONAL_BRANCH,
+                targetAddress = target,
+                targetArchitecture =
+                    NativeArchitecture.AARCH64,
+                conditionCode =
+                    (word and 0xfL).toInt(),
+            )
+        }
+
+        if (
+            (word and 0x7E000000L) ==
+            0x34000000L
+        ) {
+            val imm19 =
+                (word ushr 5) and 0x7FFFFL
+            val target =
+                address +
+                    signExtend(
+                        imm19 shl 2,
+                        21,
+                    )
+            return ControlFlowInstruction(
+                address = address,
+                size = 4,
+                architecture =
+                    NativeArchitecture.AARCH64,
+                kind =
+                    ControlFlowKind.CONDITIONAL_BRANCH,
+                targetAddress = target,
+                targetArchitecture =
+                    NativeArchitecture.AARCH64,
+            )
+        }
+
+        if (
+            (word and 0x7E000000L) ==
+            0x36000000L
+        ) {
+            val imm14 =
+                (word ushr 5) and 0x3FFFL
+            val target =
+                address +
+                    signExtend(
+                        imm14 shl 2,
+                        16,
+                    )
+            return ControlFlowInstruction(
+                address = address,
+                size = 4,
+                architecture =
+                    NativeArchitecture.AARCH64,
+                kind =
+                    ControlFlowKind.CONDITIONAL_BRANCH,
+                targetAddress = target,
+                targetArchitecture =
+                    NativeArchitecture.AARCH64,
+            )
+        }
+
+        return null
+    }
+
+    private fun signExtend(
+        value: Long,
+        bits: Int,
+    ): Long {
+        val shift =
+            64 - bits
+        return (value shl shift) shr shift
     }
 }

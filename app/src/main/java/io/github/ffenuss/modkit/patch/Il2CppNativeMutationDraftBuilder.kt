@@ -21,6 +21,7 @@ data class NativeCodeWindow(
     val targetDisplayName: String,
     val abi: String,
     val fileOffset: Long,
+    val binaryVirtualAddress: Long?,
     val nextMethodFileOffset: Long?,
     val originalHex: String,
     val byteLength: Int,
@@ -152,6 +153,8 @@ object Il2CppNativeMutationDraftBuilder {
             targetDisplayName = target.displayName,
             abi = abi,
             fileOffset = offset,
+            binaryVirtualAddress =
+                target.binaryVirtualAddress,
             nextMethodFileOffset = nextMethodOffset,
             originalHex = original.toDisplayHex(),
             byteLength = original.size,

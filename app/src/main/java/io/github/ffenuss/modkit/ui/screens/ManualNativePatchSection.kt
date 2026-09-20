@@ -37,6 +37,7 @@ import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
+import io.github.ffenuss.modkit.analysis.nativecode.AArch64Disassembler
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.GameplayModificationFinder
 import io.github.ffenuss.modkit.patch.GameplayModificationOpportunity
@@ -340,6 +341,37 @@ fun ManualNativePatchSection(
                                     target = it,
                                 )
                         } ?: "// Metadata-контекст метода недоступен."
+                    val arm64Disassembly =
+                        remember(
+                            window.originalHex,
+                            window.binaryVirtualAddress,
+                            window.fileOffset,
+                            window.abi,
+                        ) {
+                            if (
+                                window.abi.equals(
+                                    "arm64-v8a",
+                                    ignoreCase = true,
+                                )
+                            ) {
+                                runCatching {
+                                    AArch64Disassembler
+                                        .disassemble(
+                                            code =
+                                                Il2CppNativeMutationDraftBuilder
+                                                    .parseHex(
+                                                        window.originalHex,
+                                                    ),
+                                            startAddress =
+                                                window.binaryVirtualAddress
+                                                    ?: window.fileOffset,
+                                            maxInstructions = 64,
+                                        )
+                                }.getOrNull()
+                            } else {
+                                null
+                            }
+                        }
                     Column(
                         modifier =
                             Modifier
@@ -413,12 +445,92 @@ fun ManualNativePatchSection(
                                 " · offset 0x" +
                                 window.fileOffset
                                     .toString(16) +
+                                (
+                                    window.binaryVirtualAddress
+                                        ?.let {
+                                            " · VA 0x" +
+                                                it.toString(16)
+                                        }
+                                        .orEmpty()
+                                    ) +
                                 " · " +
                                 window.byteLength +
                                 " байт",
                             style =
                                 MaterialTheme.typography.bodySmall,
                         )
+
+                        arm64Disassembly?.let {
+                            disassembly ->
+                            Card(
+                                Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    Modifier.padding(14.dp),
+                                    verticalArrangement =
+                                        Arrangement.spacedBy(
+                                            7.dp,
+                                        ),
+                                ) {
+                                    Text(
+                                        "ARM64-разбор",
+                                        fontWeight =
+                                            FontWeight.SemiBold,
+                                    )
+                                    Text(
+                                        "Распознано инструкций: " +
+                                            disassembly
+                                                .recognizedCount +
+                                            " · неизвестных: " +
+                                            disassembly
+                                                .unknownCount,
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                    )
+                                    disassembly.summary
+                                        .forEach {
+                                            Text(
+                                                "• " + it,
+                                                style =
+                                                    MaterialTheme
+                                                        .typography
+                                                        .bodySmall,
+                                            )
+                                        }
+                                    Text(
+                                        disassembly.instructions
+                                            .take(24)
+                                            .joinToString(
+                                                "\n",
+                                            ) {
+                                                it.text
+                                            },
+                                        fontFamily =
+                                            FontFamily.Monospace,
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                    )
+                                    if (
+                                        disassembly.instructions
+                                            .size > 24
+                                    ) {
+                                        Text(
+                                            "Показаны первые 24 из " +
+                                                disassembly
+                                                    .instructions
+                                                    .size +
+                                                " инструкций.",
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .bodySmall,
+                                        )
+                                    }
+                                }
+                            }
+                        }
 
                         if (
                             presets.isNotEmpty() &&
