@@ -586,7 +586,16 @@ class ElfImage private constructor(
             cancellation: CancellationSignal,
         ): Map<Long, Long> {
             val out = HashMap<Long, Long>()
-            for (section in sections) {
+            val uniqueSections =
+                sections.distinctBy {
+                    listOf(
+                        it.type,
+                        it.offset,
+                        it.size,
+                        it.entrySize,
+                    )
+                }
+            for (section in uniqueSections) {
                 checkCancelled(cancellation)
                 when (section.type) {
                     SHT_RELR,
