@@ -19,6 +19,12 @@ enum class Il2CppNativeReturnKind {
     BOOLEAN,
     INTEGER,
     POINTER_OR_REFERENCE,
+    FLOAT32,
+    FLOAT64,
+    /**
+     * Legacy persisted value from analyses produced before ModKit
+     * distinguished IL2CPP R4 from R8. Kept for serialization compatibility.
+     */
     FLOATING_POINT,
     VALUE_TYPE,
     UNKNOWN,
@@ -1298,7 +1304,8 @@ object Il2CppCodeGenScanner {
             0x02 -> Il2CppNativeReturnKind.BOOLEAN
             0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
             0x0a, 0x0b, 0x18, 0x19 -> Il2CppNativeReturnKind.INTEGER
-            0x0c, 0x0d -> Il2CppNativeReturnKind.FLOATING_POINT
+            0x0c -> Il2CppNativeReturnKind.FLOAT32
+            0x0d -> Il2CppNativeReturnKind.FLOAT64
             0x0e, 0x0f, 0x12, 0x14, 0x1c, 0x1d ->
                 Il2CppNativeReturnKind.POINTER_OR_REFERENCE
             0x11 -> Il2CppNativeReturnKind.VALUE_TYPE
