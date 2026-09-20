@@ -132,32 +132,135 @@ object AArch64MethodAnalyzer {
                 it.mnemonic == "ret"
             }
         if (
-            retIndex !in 1..4
+            retIndex !in 1..6
         ) {
             return null
         }
 
         val beforeRet =
             instructions.take(retIndex)
+        val integerSequence =
+            beforeRet.all {
+                it.mnemonic == "movz" ||
+                    it.mnemonic == "movk"
+            }
+
+        if (integerSequence) {
+            val decoded =
+                decodeMoveWideSequence(
+                    beforeRet,
+                ) ?: return null
+            if (decoded.register != 0) {
+                return null
+            }
+
+            val value =
+                decoded.bits
+            return AArch64MethodAnalysis(
+                shape =
+                    AArch64MethodShape
+                        .RETURN_CONSTANT,
+                confidence = "высокая",
+                pseudoCode =
+                    "return " +
+                        if (
+                            decoded.widthBits ==
+                            32
+                        ) {
+                            value.toInt()
+                                .toString()
+                        } else {
+                            value.toString()
+                        } +
+                        ";",
+                facts =
+                    listOf(
+                        "Результат формируется только в " +
+                            if (
+                                decoded.widthBits ==
+                                32
+                            ) {
+                                "W0"
+                            } else {
+                                "X0"
+                            },
+                        "После формирования результата сразу RET.",
+                        "Raw bits: 0x" +
+                            value.toULong()
+                                .toString(16),
+                    ),
+                constantBits =
+                    value,
+            )
+        }
+
+        val fmov =
+            beforeRet.lastOrNull()
+                ?: return null
+        val movePrefix =
+            beforeRet.dropLast(1)
         if (
-            beforeRet.any {
+            movePrefix.isEmpty() ||
+            movePrefix.any {
                 it.mnemonic != "movz" &&
                     it.mnemonic != "movk"
             }
         ) {
             return null
         }
-
         val decoded =
             decodeMoveWideSequence(
-                beforeRet,
+                movePrefix,
             ) ?: return null
-        if (decoded.register != 0) {
+        val fmovWord =
+            fmov.word
+        val fmovS =
+            (
+                fmovWord and
+                    0xFFFFFC1FL
+                ) ==
+                0x1E270000L
+        val fmovD =
+            (
+                fmovWord and
+                    0xFFFFFC1FL
+                ) ==
+                0x9E670000L
+        if (!fmovS && !fmovD) {
+            return null
+        }
+        val sourceRegister =
+            ((fmovWord ushr 5) and
+                0x1fL).toInt()
+        val destinationRegister =
+            (fmovWord and 0x1fL)
+                .toInt()
+        if (
+            destinationRegister != 0 ||
+            sourceRegister !=
+                decoded.register ||
+            (
+                fmovS &&
+                    decoded.widthBits != 32
+                ) ||
+            (
+                fmovD &&
+                    decoded.widthBits != 64
+                )
+        ) {
             return null
         }
 
-        val value =
-            decoded.bits
+        val valueText =
+            if (fmovS) {
+                Float.fromBits(
+                    decoded.bits.toInt(),
+                ).toString() + "f"
+            } else {
+                Double.fromBits(
+                    decoded.bits,
+                ).toString()
+            }
         return AArch64MethodAnalysis(
             shape =
                 AArch64MethodShape
@@ -165,28 +268,31 @@ object AArch64MethodAnalyzer {
             confidence = "высокая",
             pseudoCode =
                 "return " +
-                    if (decoded.widthBits == 32) {
-                        value.toInt().toString()
-                    } else {
-                        value.toString()
-                    } +
+                    valueText +
                     ";",
             facts =
                 listOf(
-                    "Результат формируется только в " +
-                        if (
-                            decoded.widthBits == 32
-                        ) {
-                            "W0"
+                    "Константные IEEE-754 bits собираются в " +
+                        if (fmovS) {
+                            "W$sourceRegister"
                         } else {
-                            "X0"
-                        },
-                    "После формирования результата сразу RET.",
+                            "X$sourceRegister"
+                        } +
+                        " и переносятся в " +
+                        if (fmovS) {
+                            "S0"
+                        } else {
+                            "D0"
+                        } +
+                        ".",
+                    "После FMOV сразу RET.",
                     "Raw bits: 0x" +
-                        value.toULong()
+                        decoded.bits
+                            .toULong()
                             .toString(16),
                 ),
-            constantBits = value,
+            constantBits =
+                decoded.bits,
         )
     }
 

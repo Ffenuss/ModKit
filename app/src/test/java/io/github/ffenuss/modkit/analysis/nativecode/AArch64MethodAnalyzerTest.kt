@@ -1,5 +1,7 @@
 package io.github.ffenuss.modkit.analysis.nativecode
 
+import io.github.ffenuss.modkit.analysis.Il2CppNativeReturnKind
+import io.github.ffenuss.modkit.patch.AArch64ScalarReturnEncoder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -187,5 +189,81 @@ class AArch64MethodAnalyzerTest {
             },
         )
     }
+
+
+    @Test
+    fun recognizesGeneratedFloatConstantReturn() {
+        val bytes =
+            parseHex(
+                AArch64ScalarReturnEncoder
+                    .encodeHex(
+                        returnKind =
+                            Il2CppNativeReturnKind.FLOAT32,
+                        valueText = "2.5",
+                    ),
+            )
+        val analysis =
+            AArch64MethodAnalyzer.analyze(
+                AArch64Disassembler
+                    .disassemble(
+                        code = bytes,
+                        startAddress =
+                            0x6000,
+                    ),
+            )
+
+        assertEquals(
+            AArch64MethodShape.RETURN_CONSTANT,
+            analysis.shape,
+        )
+        assertEquals(
+            "return 2.5f;",
+            analysis.pseudoCode,
+        )
+    }
+
+    @Test
+    fun recognizesGeneratedDoubleConstantReturn() {
+        val bytes =
+            parseHex(
+                AArch64ScalarReturnEncoder
+                    .encodeHex(
+                        returnKind =
+                            Il2CppNativeReturnKind.FLOAT64,
+                        valueText = "-123.75",
+                    ),
+            )
+        val analysis =
+            AArch64MethodAnalyzer.analyze(
+                AArch64Disassembler
+                    .disassemble(
+                        code = bytes,
+                        startAddress =
+                            0x7000,
+                    ),
+            )
+
+        assertEquals(
+            AArch64MethodShape.RETURN_CONSTANT,
+            analysis.shape,
+        )
+        assertEquals(
+            "return -123.75;",
+            analysis.pseudoCode,
+        )
+    }
+
+    private fun parseHex(
+        text: String,
+    ): ByteArray =
+        text.trim()
+            .split(
+                Regex("\\s+"),
+            )
+            .map {
+                it.toInt(16)
+                    .toByte()
+            }
+            .toByteArray()
 
 }
