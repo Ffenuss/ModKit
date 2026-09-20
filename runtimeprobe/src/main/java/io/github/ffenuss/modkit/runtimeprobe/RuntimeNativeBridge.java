@@ -26,6 +26,36 @@ public final class RuntimeNativeBridge {
         return loaded;
     }
 
+    public static boolean startPassiveDlsymTrace() {
+        if (!ensureLoaded()) return false;
+        return nativeStartPassiveDlsymTrace();
+    }
+
+    public static boolean stopPassiveDlsymTrace() {
+        if (!ensureLoaded()) return false;
+        return nativeStopPassiveDlsymTrace();
+    }
+
+    public static boolean passiveDlsymTraceActive() {
+        if (!ensureLoaded()) return false;
+        return nativePassiveDlsymTraceActive();
+    }
+
+    public static int passiveDlsymHookedSlotCount() {
+        if (!ensureLoaded()) return 0;
+        return nativePassiveDlsymHookedSlotCount();
+    }
+
+    public static boolean passiveDlsymIncomplete() {
+        if (!ensureLoaded()) return true;
+        return nativePassiveDlsymIncomplete();
+    }
+
+    public static boolean passiveDlsymRestoreFailed() {
+        if (!ensureLoaded()) return true;
+        return nativePassiveDlsymRestoreFailed();
+    }
+
     public static long resolveLoadedSymbol(
             String moduleName,
             String symbolName
@@ -59,6 +89,18 @@ public final class RuntimeNativeBridge {
         }
         return true;
     }
+
+    private static native boolean nativeStartPassiveDlsymTrace();
+
+    private static native boolean nativeStopPassiveDlsymTrace();
+
+    private static native boolean nativePassiveDlsymTraceActive();
+
+    private static native int nativePassiveDlsymHookedSlotCount();
+
+    private static native boolean nativePassiveDlsymIncomplete();
+
+    private static native boolean nativePassiveDlsymRestoreFailed();
 
     private static native long nativeResolveLoadedSymbol(
             String moduleName,
