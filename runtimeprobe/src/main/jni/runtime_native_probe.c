@@ -35,7 +35,7 @@ static atomic_int g_incomplete = 0;
 static atomic_int g_restore_failed = 0;
 static patched_slot g_slots[MAX_PATCHED_SLOTS];
 static size_t g_slot_count = 0;
-static dlsym_fn g_real_dlsym = NULL;
+static _Atomic(dlsym_fn) g_real_dlsym = NULL;
 static _Thread_local int g_in_dlsym_wrapper = 0;
 
 static const char* base_name(const char* path) {
@@ -74,8 +74,23 @@ static int app_owned_path(const char* path) {
 }
 
 static uintptr_t runtime_address(uintptr_t base, uintptr_t value) {
-    if (base == 0) return value;
-    return value >= base ? value : base + value;
+    if (base == 0 || value >= base) return value;
+    if (value > UINTPTR_MAX - base) return 0;
+    return base + value;
+}
+
+static int is_jump_slot_relocation(uint64_t info) {
+#if defined(__aarch64__)
+    return ELF64_R_TYPE(info) == R_AARCH64_JUMP_SLOT;
+#elif defined(__arm__)
+    return ELF32_R_TYPE((uint32_t)info) == R_ARM_JUMP_SLOT;
+#elif defined(__x86_64__)
+    return ELF64_R_TYPE(info) == R_X86_64_JUMP_SLOT;
+#elif defined(__i386__)
+    return ELF32_R_TYPE((uint32_t)info) == R_386_JMP_SLOT;
+#else
+    return 0;
+#endif
 }
 
 static int query_protection(void* address) {
@@ -121,23 +136,35 @@ static int slot_already_patched(void** slot) {
 
 static void* wrapper_pointer(void);
 
+static int ensure_real_dlsym(void) {
+    if (atomic_load(&g_real_dlsym) != NULL) return 1;
+
+    union {
+        void* object;
+        dlsym_fn function;
+    } conversion;
+    conversion.object = dlsym(RTLD_DEFAULT, "dlsym");
+    if (conversion.function == NULL) return 0;
+
+    atomic_store(&g_real_dlsym, conversion.function);
+    return 1;
+}
+
 static int patch_slot(void** slot) {
-    if (slot == NULL || slot_already_patched(slot)) return 1;
+    if (slot == NULL) {
+        atomic_store(&g_incomplete, 1);
+        return 0;
+    }
+    if (slot_already_patched(slot)) return 1;
     if (g_slot_count >= MAX_PATCHED_SLOTS) {
         atomic_store(&g_incomplete, 1);
         return 0;
     }
 
-    void* original = *slot;
-    if (original == NULL) return 1;
-
-    if (g_real_dlsym == NULL) {
-        union {
-            void* object;
-            dlsym_fn function;
-        } conversion;
-        conversion.object = original;
-        g_real_dlsym = conversion.function;
+    void* original = __atomic_load_n(slot, __ATOMIC_SEQ_CST);
+    if (original == NULL || original == wrapper_pointer()) {
+        atomic_store(&g_incomplete, 1);
+        return 0;
     }
 
     const int original_prot = query_protection(slot);
@@ -152,13 +179,18 @@ static int patch_slot(void** slot) {
         return 0;
     }
 
-    *slot = wrapper_pointer();
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    __atomic_store_n(
+            slot,
+            wrapper_pointer(),
+            __ATOMIC_SEQ_CST);
 
     if (!change_page_protection(slot, original_prot)) {
-        *slot = original;
+        __atomic_store_n(slot, original, __ATOMIC_SEQ_CST);
         atomic_store(&g_incomplete, 1);
-        atomic_store(&g_restore_failed, 1);
+        if (!change_page_protection(slot, original_prot)) {
+            atomic_store(&g_restore_failed, 1);
+            atomic_store(&g_trace_active, 0);
+        }
         return 0;
     }
 
@@ -178,12 +210,24 @@ static int patch_relocations(
         size_t relocation_bytes,
         int use_rela) {
     if (symtab == NULL || strtab == NULL || relocations == NULL) return 0;
+    const size_t relocation_size =
+            use_rela ? sizeof(ElfW(Rela)) : sizeof(ElfW(Rel));
+    if (relocation_size == 0 ||
+            relocation_bytes % relocation_size != 0) {
+        atomic_store(&g_incomplete, 1);
+        return 0;
+    }
+
     int patched = 0;
 
     if (use_rela) {
         const size_t count = relocation_bytes / sizeof(ElfW(Rela));
         const ElfW(Rela)* entries = (const ElfW(Rela)*)relocations;
         for (size_t index = 0; index < count; index++) {
+            if (!is_jump_slot_relocation(
+                    (uint64_t)entries[index].r_info)) {
+                continue;
+            }
 #if defined(__LP64__)
             const size_t symbol_index = ELF64_R_SYM(entries[index].r_info);
 #else
@@ -202,6 +246,10 @@ static int patch_relocations(
         const size_t count = relocation_bytes / sizeof(ElfW(Rel));
         const ElfW(Rel)* entries = (const ElfW(Rel)*)relocations;
         for (size_t index = 0; index < count; index++) {
+            if (!is_jump_slot_relocation(
+                    (uint64_t)entries[index].r_info)) {
+                continue;
+            }
 #if defined(__LP64__)
             const size_t symbol_index = ELF64_R_SYM(entries[index].r_info);
 #else
@@ -279,8 +327,16 @@ static int patch_module(
                 pltrelsz = (size_t)entry->d_un.d_val;
                 break;
             case DT_PLTREL:
-                have_pltrel = 1;
-                use_rela = entry->d_un.d_val == DT_RELA;
+                if (entry->d_un.d_val == DT_RELA) {
+                    have_pltrel = 1;
+                    use_rela = 1;
+                } else if (entry->d_un.d_val == DT_REL) {
+                    have_pltrel = 1;
+                    use_rela = 0;
+                } else {
+                    atomic_store(&g_incomplete, 1);
+                    return 0;
+                }
                 break;
             default:
                 break;
@@ -376,7 +432,7 @@ static void emit_dlsym_event(
 }
 
 static void* modkit_trace_dlsym(void* handle, const char* symbol) {
-    dlsym_fn real = g_real_dlsym;
+    dlsym_fn real = atomic_load(&g_real_dlsym);
     if (real == NULL) return NULL;
     if (g_in_dlsym_wrapper) {
         return real(handle, symbol);
@@ -424,8 +480,10 @@ static int restore_all_slots(void) {
             ok = 0;
             continue;
         }
-        *patch->slot = patch->original;
-        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        __atomic_store_n(
+                patch->slot,
+                patch->original,
+                __ATOMIC_SEQ_CST);
         if (!change_page_protection(
                 patch->slot,
                 patch->original_prot)) {
@@ -477,22 +535,31 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeStartPassiv
     (void)env;
     (void)clazz;
 
+    if (!ensure_real_dlsym()) {
+        return JNI_FALSE;
+    }
+
     pthread_mutex_lock(&g_hook_lock);
     if (atomic_load(&g_trace_active)) {
         pthread_mutex_unlock(&g_hook_lock);
         return JNI_TRUE;
     }
-    if (atomic_load(&g_restore_failed)) {
+    if (atomic_load(&g_restore_failed) ||
+            atomic_load(&g_inflight) != 0) {
         pthread_mutex_unlock(&g_hook_lock);
         return JNI_FALSE;
     }
     g_slot_count = 0;
-    g_real_dlsym = NULL;
     atomic_store(&g_incomplete, 0);
     atomic_store(&g_trace_active, 1);
     pthread_mutex_unlock(&g_hook_lock);
 
     scan_loaded_modules();
+    if (atomic_load(&g_restore_failed)) {
+        atomic_store(&g_trace_active, 0);
+        restore_all_slots();
+        return JNI_FALSE;
+    }
     if (pthread_create(
             &g_scan_thread,
             NULL,
