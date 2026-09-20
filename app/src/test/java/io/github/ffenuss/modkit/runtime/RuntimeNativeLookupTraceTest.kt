@@ -83,6 +83,39 @@ class RuntimeNativeLookupTraceTest {
     }
 
     @Test
+    fun jniOnLoadInvocationKeepsInvocationSemanticWithoutExecutionProof() {
+        val maps = mapsText()
+        val capture = RuntimeNativeTraceParser.capture(
+            artifactSha256 = SHA,
+            processIdentity = PACKAGE,
+            processIdentityConfirmed = true,
+            pid = PID,
+            source = RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME,
+            text =
+                "JNI_ON_LOAD\tlibsample.so\tJNI_OnLoad\t0x70020120",
+        )
+
+        val validation = RuntimeNativeLookupValidator.validate(
+            capture = capture,
+            runtimeEvidence = runtimeEvidence(maps),
+            procMapsText = maps,
+        )
+
+        val observation = validation.observations.single()
+        assertEquals(
+            RuntimeEvidenceObservationKind
+                .JNI_ON_LOAD_INVOCATION_OBSERVED,
+            observation.kind,
+        )
+        assertEquals(
+            RuntimeEvidenceObservationStrength.CONFIRMED,
+            observation.strength,
+        )
+        assertTrue(observation.independentlyConfirmed)
+        assertNull(observation.proofLevel)
+    }
+
+    @Test
     fun processIdentityMismatchBlocksEntireTrace() {
         val maps = mapsText()
         val capture = RuntimeNativeTraceParser.capture(
@@ -170,7 +203,7 @@ class RuntimeNativeLookupTraceTest {
     }
 
     @Test
-    fun traceCaptureExecutorsRemainUnavailableUntilActuallyRegistered() {
+    fun repackedTraceCaptureIsAvailableOnlyAfterConcreteExecutorsAreRegistered() {
         assertTrue(
             RuntimeNativeTraceCapability.TRACE_PARSER in
                 RuntimeNativeTraceCapabilityRegistry.registered,
@@ -208,7 +241,22 @@ class RuntimeNativeLookupTraceTest {
                     RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME,
                 ),
         )
-        assertFalse(
+        assertTrue(
+            RuntimeNativeTraceCapability
+                .REPACKED_PASSIVE_JNI_ONLOAD_INVOCATION_CAPTURE in
+                RuntimeNativeTraceCapabilityRegistry.registered,
+        )
+        assertTrue(
+            RuntimeNativeTraceCapabilityRegistry
+                .passiveJniOnLoadInvocationCaptureAvailable(
+                    RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME,
+                ),
+        )
+        assertTrue(
+            RuntimeNativeTraceCapability.REPACKED_TRACE_CAPTURE in
+                RuntimeNativeTraceCapabilityRegistry.registered,
+        )
+        assertTrue(
             RuntimeNativeTraceCapabilityRegistry.captureAvailable(
                 RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME,
             ),
