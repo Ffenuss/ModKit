@@ -19,9 +19,9 @@ data class RepackedRuntimePassiveTraceResult(
 )
 
 /**
- * Binds a future passive native-trace producer to an exact installed repacked
- * test process. This owns only session/control/export integrity; it does not
- * claim that a producer is currently registered.
+ * Binds the repacked passive dlsym producer to an exact installed test
+ * process. Positive observations remain proof-neutral until module/address
+ * validation; producer incompleteness can never be used as negative proof.
  */
 object RepackedRuntimePassiveTraceSessionCapture {
     fun start(
@@ -62,6 +62,21 @@ object RepackedRuntimePassiveTraceSessionCapture {
             expectedPid = query.pid,
             status = status,
         )
+        require(status.producerKind == "PLT_DLSYM_GOT") {
+            "Native trace producer kind is unsupported."
+        }
+        require(status.producerReady) {
+            "Passive dlsym producer failed to start."
+        }
+        require(status.producerActive) {
+            "Passive dlsym producer is not active."
+        }
+        require(!status.producerRestoreFailed) {
+            "Passive dlsym producer reports a prior restore failure."
+        }
+        require(status.hookedSlotCount >= 0) {
+            "Passive dlsym producer hook count is invalid."
+        }
         require(status.active) {
             "Native trace session did not become active."
         }
@@ -146,6 +161,21 @@ object RepackedRuntimePassiveTraceSessionCapture {
             expectedPid = session.pid,
             status = status,
         )
+        require(status.producerKind == "PLT_DLSYM_GOT") {
+            "Native trace producer kind changed before export."
+        }
+        require(status.producerReady) {
+            "Passive dlsym producer did not stop cleanly."
+        }
+        require(!status.producerActive) {
+            "Passive dlsym producer remained active after stop."
+        }
+        require(!status.producerRestoreFailed) {
+            "Passive dlsym producer failed to restore patched GOT slots."
+        }
+        require(status.hookedSlotCount >= 0) {
+            "Passive dlsym producer hook count is invalid."
+        }
         require(!status.active) {
             "Native trace session remained active after stop."
         }
