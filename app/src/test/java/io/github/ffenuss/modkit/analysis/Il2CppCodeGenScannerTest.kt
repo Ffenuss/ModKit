@@ -32,9 +32,27 @@ class Il2CppCodeGenScannerTest {
         assertBinding(result)
     }
 
-    private fun scanFixture(includeCodeRegistrationSymbol: Boolean): Il2CppBinaryEvidence {
+    @Test
+    fun legitimateNobitsSectionOutsideFileDoesNotAbortBinding() {
+        val result = scanFixture(
+            includeCodeRegistrationSymbol = true,
+            includeOutsideFileNobits = true,
+        )
+
+        assertBinding(result)
+    }
+
+    private fun scanFixture(
+        includeCodeRegistrationSymbol: Boolean,
+        includeOutsideFileNobits: Boolean = false,
+    ): Il2CppBinaryEvidence {
         val file = Files.createTempFile("modkit-codegen", ".so").toFile()
-        file.writeBytes(elfFixture(includeCodeRegistrationSymbol))
+        file.writeBytes(
+            elfFixture(
+                includeCodeRegistrationSymbol,
+                includeOutsideFileNobits,
+            ),
+        )
         try {
             return Il2CppCodeGenScanner.scan(
                 file = file,
@@ -107,7 +125,10 @@ class Il2CppCodeGenScannerTest {
         warnings = emptyList(),
     )
 
-    private fun elfFixture(includeCodeRegistrationSymbol: Boolean): ByteArray {
+    private fun elfFixture(
+        includeCodeRegistrationSymbol: Boolean,
+        includeOutsideFileNobits: Boolean,
+    ): ByteArray {
         val bytes = ByteArray(0x2600)
         val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
 
@@ -128,7 +149,10 @@ class Il2CppCodeGenScannerTest {
         buffer.putShort(54, 56.toShort())
         buffer.putShort(56, 2.toShort())
         buffer.putShort(58, 64.toShort())
-        buffer.putShort(60, 3.toShort())
+        buffer.putShort(
+            60,
+            (if (includeOutsideFileNobits) 4 else 3).toShort(),
+        )
         buffer.putShort(62, 0.toShort())
 
         // PT_LOAD #0: executable code.
@@ -175,6 +199,13 @@ class Il2CppCodeGenScannerTest {
         buffer.putLong(symSection + 32, (symbolCount * 24).toLong())
         buffer.putInt(symSection + 40, 1)
         buffer.putLong(symSection + 56, 24)
+
+        if (includeOutsideFileNobits) {
+            val bssSection = 0x2200 + 192
+            buffer.putInt(bssSection + 4, 8)
+            buffer.putLong(bssSection + 24, 0x5000)
+            buffer.putLong(bssSection + 32, 0x2000)
+        }
 
         fun symbol(index: Int, nameOffset: Int, value: Long, typeInfo: Int = 0x11) {
             val base = 0x400 + index * 24
