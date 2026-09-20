@@ -147,7 +147,10 @@ Status: **ACTIVE**
   - [x] Repacked targeted dlsym probe uses signer/PID binding, exact static ELF mapping and RTLD_NOLOAD
   - [x] Active targeted probe is explicitly distinguished from passive application trace capture
   - [x] ABI-aware native helper payload/build/install/launch flow covers arm64-v8a, armeabi-v7a, x86 and x86_64
-  - [ ] Passive repacked JNI/dlsym/RegisterNatives trace capture executor
+  - [x] Passive repacked dlsym producer patches/restores app-owned PLT/GOT slots and validates positive observations
+  - [x] Passive dlsym session/export is bounded, signer/PID/session/SHA bound and usable from Expert Lab
+  - [ ] Passive repacked JNI_OnLoad/RegisterNatives capture executor
+  - [ ] Full repacked trace capability remains gated until JNI capture is real
   - [ ] Non-root/root trace capture executors
 - [ ] Root runtime only for evidence that remains unresolved after non-root stages
   - [x] Root decision engine requires recorded lower-privilege attempts
