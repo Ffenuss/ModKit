@@ -462,6 +462,12 @@ class RepackedRuntimePassiveTraceSessionCaptureTest {
         startedAtEpochMs = STARTED,
         stoppedAtEpochMs = STOPPED,
         traceBytes = traceBytes,
+        producerKind = "PLT_DLSYM_GOT",
+        producerReady = producerReady,
+        producerActive = false,
+        hookedSlotCount = 1,
+        producerIncomplete = producerIncomplete,
+        producerRestoreFailed = producerRestoreFailed,
     )
 
     private fun exportBytes(
