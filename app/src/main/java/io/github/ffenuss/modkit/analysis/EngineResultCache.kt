@@ -364,7 +364,7 @@ class EngineResultCache(
         const val DEX_INVENTORY_ENGINE_VERSION = "1"
 
         const val UNIVERSAL_ELF_INVENTORY_ENGINE_ID = "elf.universal-inventory"
-        const val UNIVERSAL_ELF_INVENTORY_ENGINE_VERSION = "1"
+        const val UNIVERSAL_ELF_INVENTORY_ENGINE_VERSION = "2"
 
         const val IL2CPP_FAST_DUMP_ENGINE_ID = "il2cpp.fast-dump"
         const val IL2CPP_FAST_DUMP_ENGINE_VERSION = "3"
