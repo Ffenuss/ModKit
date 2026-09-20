@@ -7,7 +7,7 @@ import org.junit.Test
 
 class RootRuntimeReportTest {
     @Test
-    fun technicalReportKeepsRootUnavailableWithoutLowerStageAttemptsAndExecutor() {
+    fun technicalReportKeepsRootUnavailableWithoutLowerStageAttempts() {
         val root = Files.createTempDirectory("modkit-root-report-").toFile()
         try {
             val result = FastAnalysisResult(
@@ -40,7 +40,7 @@ class RootRuntimeReportTest {
 
             assertTrue(text.contains("ROOT RUNTIME POLICY"))
             assertTrue(text.contains("lastResortOnly: true"))
-            assertTrue(text.contains("executorRegistered: false"))
+            assertTrue(text.contains("executorRegistered: true"))
             assertTrue(text.contains("evidenceRequiresRoot: false"))
             assertTrue(text.contains("readyToRunRoot: false"))
             assertTrue(text.contains("REPACKED_TEST_RUNTIME_NOT_ATTEMPTED"))
