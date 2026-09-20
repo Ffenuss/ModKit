@@ -35,6 +35,7 @@ import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.ExpertCapabilityValidator
 import io.github.ffenuss.modkit.analysis.ExpertLabReportExporter
 import io.github.ffenuss.modkit.analysis.ExpertLabReportWriter
+import io.github.ffenuss.modkit.analysis.ExpertLabInventoryFilter
 import io.github.ffenuss.modkit.analysis.ExpertLabSession
 import io.github.ffenuss.modkit.analysis.ExpertLabSessionController
 import io.github.ffenuss.modkit.analysis.ProgressSink
@@ -74,6 +75,8 @@ fun ExpertLabScreen(onBack: () -> Unit) {
     var procMapsText by remember { mutableStateOf("") }
     var nativeLookupModule by remember { mutableStateOf("") }
     var nativeLookupSymbol by remember { mutableStateOf("") }
+    var backendFilter by remember { mutableStateOf("") }
+    var targetFilter by remember { mutableStateOf("") }
     var installReadiness by remember {
         mutableStateOf<RepackedRuntimeInstallReadiness?>(null)
     }
@@ -855,12 +858,39 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 }
             }
 
+            val filteredEngines =
+                ExpertLabInventoryFilter.filterEngines(
+                    engines = current.result.routingPlan.engines,
+                    query = backendFilter,
+                )
             item {
                 Text("Backend routing", fontWeight = FontWeight.SemiBold)
             }
+            item {
+                OutlinedTextField(
+                    value = backendFilter,
+                    onValueChange = { backendFilter = it },
+                    label = { Text("Фильтр backend") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "Показано " + filteredEngines.size +
+                        " из " + current.result.routingPlan.engines.size,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            if (filteredEngines.isEmpty()) {
+                item {
+                    Text(
+                        "По фильтру backend ничего не найдено.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
 
             items(
-                current.result.routingPlan.engines,
+                filteredEngines,
                 key = { it.id },
             ) { engine ->
                 Card(Modifier.fillMaxWidth()) {
@@ -927,6 +957,95 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                     }
                 }
             }
+
+            current.result.evidenceGraph
+                ?.takeIf { it.targets.isNotEmpty() }
+                ?.let { graph ->
+                    val filteredTargets =
+                        ExpertLabInventoryFilter.filterTargets(
+                            targets = graph.targets,
+                            query = targetFilter,
+                        )
+                    item {
+                        Text(
+                            "Evidence targets",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    item {
+                        OutlinedTextField(
+                            value = targetFilter,
+                            onValueChange = { targetFilter = it },
+                            label = {
+                                Text(
+                                    "Поиск по target / runtime / proof / blocker",
+                                )
+                            },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Text(
+                            "Показано " + filteredTargets.size +
+                                " из " + graph.targets.size,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    if (filteredTargets.isEmpty()) {
+                        item {
+                            Text(
+                                "По фильтру targets ничего не найдено.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                    items(
+                        filteredTargets,
+                        key = { "evidence-target:" + it.id },
+                    ) { target ->
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(
+                                Modifier.padding(12.dp),
+                                verticalArrangement =
+                                    Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    target.displayName,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    target.kind.name +
+                                        " · " + target.runtimeId +
+                                        " · " + target.proofLevel.name +
+                                        " · " + target.userStatus.name,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                Text(
+                                    "id: " + target.id,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                target.artifact?.let {
+                                    Text(
+                                        "artifact: " + it,
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                target.blockers
+                                    .take(3)
+                                    .forEach { blocker ->
+                                        Text(
+                                            "• " + blocker.code +
+                                                " · " + blocker.message,
+                                            color =
+                                                MaterialTheme.colorScheme.error,
+                                            style =
+                                                MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                            }
+                        }
+                    }
+                }
 
             current.result.il2cppFastDump?.let { dump ->
                 item {
