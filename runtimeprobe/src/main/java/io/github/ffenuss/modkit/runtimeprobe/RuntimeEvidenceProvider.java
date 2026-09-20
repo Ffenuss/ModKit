@@ -36,6 +36,10 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
 
     @Override
     public boolean onCreate() {
+        Context context = getContext();
+        if (context != null) {
+            RuntimeModMenu.install(context);
+        }
         return true;
     }
 
@@ -70,6 +74,49 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
     @Override
     public Bundle call(String method, String arg, Bundle extras) {
         enforceCaller();
+
+        if ("configureTestMenu".equals(method)) {
+            int itemCount =
+                    RuntimeModMenu.configure(
+                            probeContext(),
+                            extras
+                    );
+            Bundle result = baseReply();
+            result.putInt("itemCount", itemCount);
+            result.putInt(
+                    "patchItemCount",
+                    RuntimeModMenu.patchItemCount()
+            );
+            result.putInt(
+                    "infoItemCount",
+                    RuntimeModMenu.infoItemCount()
+            );
+            return result;
+        }
+        if ("clearTestMenu".equals(method)) {
+            RuntimeModMenu.clear(probeContext());
+            Bundle result = baseReply();
+            result.putInt("itemCount", 0);
+            result.putInt("patchItemCount", 0);
+            result.putInt("infoItemCount", 0);
+            return result;
+        }
+        if ("testMenuStatus".equals(method)) {
+            Bundle result = baseReply();
+            result.putInt(
+                    "itemCount",
+                    RuntimeModMenu.itemCount()
+            );
+            result.putInt(
+                    "patchItemCount",
+                    RuntimeModMenu.patchItemCount()
+            );
+            result.putInt(
+                    "infoItemCount",
+                    RuntimeModMenu.infoItemCount()
+            );
+            return result;
+        }
 
         if ("resolveLoadedSymbol".equals(method)) {
             if (arg == null || extras == null) {
