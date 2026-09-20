@@ -53,7 +53,10 @@ object RuntimeStageAttemptRecorder {
                 RuntimeStageBlockerCategory.EXECUTOR_GAP
             "not readable" in lowerMessage ||
                 "permission" in lowerMessage ||
-                "no unambiguous readable main process" in lowerMessage ->
+                "no unambiguous readable main process" in lowerMessage ||
+                "root access was not granted" in lowerMessage ||
+                "root shell is unavailable" in lowerMessage ||
+                "root process discovery" in lowerMessage ->
                 RuntimeStageBlockerCategory.TARGET_ENVIRONMENT
             else ->
                 RuntimeStageBlockerCategory.EVIDENCE_GAP
