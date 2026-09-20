@@ -417,7 +417,12 @@ object AnalysisManager {
                             val age = now - heartbeat
                             val stalledAfterMs =
                                 AnalysisWatchdogPolicy.stalledAfterMs(
-                                    current.progress?.scheduleClass,
+                                    scheduleClass =
+                                        current.progress
+                                            ?.scheduleClass,
+                                    currentTask =
+                                        current.progress
+                                            ?.currentTask,
                                 )
                             if (age >= stalledAfterMs) {
                                 val stalled = AnalysisRunState.Stalled(
