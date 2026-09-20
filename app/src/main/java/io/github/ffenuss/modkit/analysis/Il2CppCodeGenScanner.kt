@@ -60,7 +60,11 @@ object Il2CppCodeGenScanner {
         cancellation: CancellationSignal,
         progress: ProgressSink,
     ): Il2CppBinaryEvidence {
-        ElfImage.open(file, cancellation).use { image ->
+        ElfImage.open(
+            file = file,
+            cancellation = cancellation,
+            resolveRelativeRelocations = true,
+        ).use { image ->
             val blockers = mutableListOf<String>()
             val codeRegistration = uniqueDefinedSymbol(image, "coderegistration")
             val metadataRegistration = uniqueDefinedSymbol(image, "metadataregistration")
