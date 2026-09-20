@@ -150,6 +150,7 @@ class ElfImage private constructor(
         fun open(
             file: File,
             cancellation: CancellationSignal,
+            resolveRelativeRelocations: Boolean = false,
         ): ElfImage {
             require(file.isFile && file.canRead()) { "ELF file is not readable" }
             val raf = RandomAccessFile(file, "r")
@@ -171,13 +172,17 @@ class ElfImage private constructor(
                         cancellation,
                     )
                 val relativeRelocations =
-                    readRelativeRelocations(
-                        raf = raf,
-                        h = header,
-                        sections = sections,
-                        loadSegments = segments,
-                        cancellation = cancellation,
-                    )
+                    if (resolveRelativeRelocations) {
+                        readRelativeRelocations(
+                            raf = raf,
+                            h = header,
+                            sections = sections,
+                            loadSegments = segments,
+                            cancellation = cancellation,
+                        )
+                    } else {
+                        emptyMap()
+                    }
                 return ElfImage(
                     raf = raf,
                     is64Bit = header.is64,
