@@ -242,6 +242,17 @@ object RepackedRuntimePassiveTraceSessionCapture {
         ) {
             "Native trace export counters do not match session status."
         }
+        require(
+            export.producerKind == status.producerKind &&
+                export.hookedSlotCount ==
+                status.hookedSlotCount &&
+                export.producerIncomplete ==
+                status.producerIncomplete &&
+                export.producerRestoreFailed ==
+                status.producerRestoreFailed,
+        ) {
+            "Native trace export producer provenance does not match session status."
+        }
 
         return RepackedRuntimePassiveTraceResult(
             session = session,
