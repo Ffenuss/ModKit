@@ -431,6 +431,106 @@ class GameplayModificationFinderTest {
     }
 
     @Test
+    fun virtualTextureCanRunIsNotPresentedAsPlayerMovement() {
+        val target =
+            target(
+                token = 0x06000310,
+                name = "IsCanRun",
+                offset = 0x3100,
+                declaringType =
+                    "VTRuntime.VirtualTextureController",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.BOOLEAN,
+            )
+
+        assertTrue(
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun quadTreeRemoveItemIsNotPresentedAsInventoryMod() {
+        val target =
+            target(
+                token = 0x06000311,
+                name = "RemoveItem",
+                offset = 0x3110,
+                declaringType =
+                    "MapRuntime.LooseQuadTree",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.VOID,
+            )
+
+        assertTrue(
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun qualityLevelIsNotPresentedAsPlayerProgression() {
+        val target =
+            target(
+                token = 0x06000312,
+                name = "get_deviceLevel",
+                offset = 0x3120,
+                declaringType =
+                    "IGame.QualityManager",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.INTEGER,
+            )
+
+        assertTrue(
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun generatedLuaWrapIsNotPresentedAsNumericGameplayMod() {
+        val target =
+            target(
+                token = 0x06000313,
+                name = "get_MoveSpeed",
+                offset = 0x3130,
+                declaringType =
+                    "CurvedLineRendererLeadWrap",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.INTEGER,
+            )
+
+        assertTrue(
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
     fun purchaseAndPaymentSurfacesAreNotOfferedAsAutoMods() {
         val target = target(
             token = 0x06000006,
