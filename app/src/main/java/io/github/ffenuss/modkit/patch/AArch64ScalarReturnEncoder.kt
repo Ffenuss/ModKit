@@ -84,7 +84,7 @@ object AArch64ScalarReturnEncoder {
             )
             add(
                 FMOV_S_FROM_W_BASE or
-                    (SCRATCH_REGISTER shl 5),
+                    (SCRATCH_REGISTER.toLong() shl 5),
             )
             add(RET)
         }.toBytes()
@@ -105,7 +105,7 @@ object AArch64ScalarReturnEncoder {
             )
             add(
                 FMOV_D_FROM_X_BASE or
-                    (SCRATCH_REGISTER shl 5),
+                    (SCRATCH_REGISTER.toLong() shl 5),
             )
             add(RET)
         }.toBytes()
