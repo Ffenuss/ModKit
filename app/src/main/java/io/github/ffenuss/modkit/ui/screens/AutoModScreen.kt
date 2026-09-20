@@ -93,7 +93,7 @@ fun AutoModScreen(
     }
 
     fun prepareChanges() {
-        if (preparing || building) return
+        if (preparing || building || runtimeMenuBusy) return
         val signal = AtomicCancellationSignal()
         cancellation = signal
         preparing = true
@@ -115,6 +115,9 @@ fun AutoModScreen(
                 plan = prepared.plan
                 stagingOutcome = null
                 buildResult = null
+                runtimeMenuBuild = null
+                runtimeMenuInstallReadiness = null
+                runtimeMenuNote = null
                 confirmationNote = when {
                     prepared.requestedStaticConfirmations <= 0 -> null
                     prepared.remainingStaticConfirmations == 0 ->
@@ -134,7 +137,12 @@ fun AutoModScreen(
     }
 
     fun exportDiagnosticReport() {
-        if (exportingReport || preparing || building) return
+        if (
+            exportingReport ||
+            preparing ||
+            building ||
+            runtimeMenuBusy
+        ) return
         exportingReport = true
         error = null
         scope.launch {
@@ -168,7 +176,12 @@ fun AutoModScreen(
 
     fun buildApk() {
         val staged = stagingOutcome
-        if (staged?.applied != true || preparing || building) return
+        if (
+            staged?.applied != true ||
+            preparing ||
+            building ||
+            runtimeMenuBusy
+        ) return
 
         val signal = AtomicCancellationSignal()
         cancellation = signal
