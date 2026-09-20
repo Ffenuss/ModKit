@@ -101,10 +101,13 @@ fun ManualNativePatchSection(
             limit = MAX_SUGGESTED_MODIFICATIONS,
         )
     }
+    val actionableOpportunities =
+        opportunities.filter { it.selectable }
+    val deferredOpportunities =
+        opportunities.filterNot { it.selectable }
     val selectedOpportunities =
-        opportunities.filter {
-            it.id in selectedOpportunityIds &&
-                it.selectable
+        actionableOpportunities.filter {
+            it.id in selectedOpportunityIds
         }
     val normalizedFilter = targetFilter.trim().lowercase()
     val visibleEligible = remember(
@@ -203,29 +206,28 @@ fun ManualNativePatchSection(
             }
 
             Text(
-                "Предлагаемые модификации",
+                "Доступные модификации",
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "ModKit сам ищет gameplay-кандидаты среди точных IL2CPP-методов. " +
-                    "Активная галочка означает только конкретную доказуемую операцию над exact method; " +
-                    "игровой эффект всё равно проверяется после сборки.",
+                "Здесь показываются только сильные совпадения по самому имени метода " +
+                    "и доказанной сигнатуре. Конструкторы, proxy/compiler-generated, UI/framework " +
+                    "и слабые совпадения скрыты.",
                 style = MaterialTheme.typography.bodySmall,
             )
-            if (opportunities.isEmpty()) {
+            if (actionableOpportunities.isEmpty()) {
                 Text(
-                    "Автоматически распознаваемых gameplay-кандидатов в текущем наборе не найдено.",
+                    "Пока нет модификаций, которые ModKit может безопасно предложить галочкой. " +
+                        "Это лучше, чем показывать ложные «бессмертие/скорость» по случайному совпадению текста.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             } else {
-                val selectableCount =
-                    opportunities.count { it.selectable }
                 Text(
-                    "Найдено кандидатов: " + opportunities.size +
-                        " · можно выбрать сейчас: " + selectableCount,
+                    "Можно выбрать сейчас: " +
+                        actionableOpportunities.size,
                     style = MaterialTheme.typography.bodySmall,
                 )
-                opportunities.forEach { opportunity ->
+                actionableOpportunities.forEach { opportunity ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -234,7 +236,7 @@ fun ManualNativePatchSection(
                             checked =
                                 opportunity.id in
                                     selectedOpportunityIds,
-                            enabled = opportunity.selectable && !busy,
+                            enabled = !busy,
                             onCheckedChange = { checked ->
                                 selectedOpportunityIds =
                                     if (checked) {
@@ -256,19 +258,31 @@ fun ManualNativePatchSection(
                                     MaterialTheme.typography.bodySmall,
                             )
                             Text(
-                                opportunity.blocker
-                                    ?: opportunity.evidenceSummary,
+                                opportunity.evidenceSummary,
                                 style =
                                     MaterialTheme.typography.bodySmall,
                                 color =
-                                    if (opportunity.blocker != null) {
-                                        MaterialTheme.colorScheme.error
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    },
+                                    MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
+                }
+
+                if (deferredOpportunities.isNotEmpty()) {
+                    val deferredSummary =
+                        deferredOpportunities
+                            .groupingBy { it.category.title }
+                            .eachCount()
+                            .entries
+                            .sortedBy { it.key }
+                            .joinToString(" · ") {
+                                it.key + ": " + it.value
+                            }
+                    Text(
+                        "Ещё найдены точные числовые параметры без готового безопасного preset: " +
+                            deferredSummary,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
 
                 Button(

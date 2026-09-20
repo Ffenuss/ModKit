@@ -229,11 +229,20 @@ class GameplayModificationFinderTest {
 
     @Test
     fun categoryCapKeepsSuggestionListDiverse() {
+        val damageNames =
+            listOf(
+                "TakeDamage",
+                "ReceiveDamage",
+                "ApplyDamage",
+                "OnDamage",
+                "Hurt",
+                "ApplyHurt",
+            )
         val damageTargets =
-            (0 until 6).map { index ->
+            damageNames.mapIndexed { index, name ->
                 target(
                     token = 0x06000100L + index,
-                    name = "TakeDamage" + index,
+                    name = name,
                     offset = 0x1000L + index * 4L,
                 )
             }
@@ -320,6 +329,104 @@ class GameplayModificationFinderTest {
                 it.category ==
                     GameplayModificationCategory.MOVEMENT
             },
+        )
+    }
+
+    @Test
+    fun gradientConstructorDoesNotBecomeDeathOrHealthMod() {
+        val target =
+            target(
+                token = 0x06000300,
+                name = ".cctor",
+                offset = 0x3000,
+                declaringType =
+                    "Coffee.UIExtensions.UIGradient",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind = Il2CppNativeReturnKind.VOID,
+            )
+
+        assertTrue(
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun uiRegenPointsDoesNotBecomeHealthRegenerationMod() {
+        val target =
+            target(
+                token = 0x06000301,
+                name = "get_regenPoints",
+                offset = 0x3010,
+                declaringType =
+                    "UnityEngine.UI.Extensions.CableCurve",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.INTEGER,
+            )
+
+        assertTrue(
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun genericJumpCheckIsNotPresentedAsMovementCheat() {
+        val target =
+            target(
+                token = 0x06000302,
+                name = "JumpCheck",
+                offset = 0x3020,
+                declaringType =
+                    "BBstudio.BGMCommand",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.BOOLEAN,
+            )
+
+        assertTrue(
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun proxyCooldownConstructorIsHidden() {
+        val target =
+            target(
+                token = 0x06000303,
+                name = ".ctor",
+                offset = 0x3030,
+                declaringType =
+                    "PROXY_AUTO.PROXY_MapObj_GetNpcCooldown_Node",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind = Il2CppNativeReturnKind.VOID,
+            )
+
+        assertTrue(
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).isEmpty(),
         )
     }
 
@@ -445,6 +552,7 @@ class GameplayModificationFinderTest {
         name: String,
         offset: Long,
         imageName: String = "Assembly-CSharp.dll",
+        declaringType: String = "Game.Player",
     ) = EvidenceTarget(
         id =
             "il2cpp:method:" + imageName + ":" +
@@ -452,10 +560,10 @@ class GameplayModificationFinderTest {
                 ":" + imageName,
         runtimeId = "unity_il2cpp",
         kind = EvidenceTargetKind.METHOD,
-        displayName = "Game.Player." + name,
+        displayName = declaringType + "." + name,
         artifact = ARTIFACT,
         abi = "arm64-v8a",
-        declaringType = "Game.Player",
+        declaringType = declaringType,
         memberName = name,
         metadataToken = token,
         rva = null,

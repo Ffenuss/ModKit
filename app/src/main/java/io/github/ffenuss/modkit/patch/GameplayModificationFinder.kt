@@ -1,5 +1,6 @@
 package io.github.ffenuss.modkit.patch
 
+import io.github.ffenuss.modkit.analysis.EvidenceTarget
 import io.github.ffenuss.modkit.analysis.EvidenceTargetKind
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.Il2CppMethodBinaryBinding
@@ -15,14 +16,15 @@ enum class GameplayModificationCategory(
     COLLISION("Noclip / коллизии", 3),
     STAMINA("Стамина / энергия", 4),
     COOLDOWN("Кулдауны / таймеры", 5),
-    ATTACK_SPEED("Скорость атаки", 6),
-    REGENERATION("Регенерация / лечение", 7),
-    PROGRESSION("Уровень / опыт / навыки", 8),
-    INVENTORY("Инвентарь / предметы", 9),
-    DROPS("Дроп / награды", 10),
-    DIFFICULTY("Сложность / параметры врагов", 11),
-    WORLD("Прыжок / гравитация / время", 12),
-    CAMERA("Камера / FOV", 13),
+    CONTROL("Оглушение / ограничения", 6),
+    ATTACK_SPEED("Скорость атаки", 7),
+    REGENERATION("Регенерация / лечение", 8),
+    PROGRESSION("Уровень / опыт / навыки", 9),
+    INVENTORY("Инвентарь / предметы", 10),
+    DROPS("Дроп / награды", 11),
+    DIFFICULTY("Сложность / параметры врагов", 12),
+    WORLD("Прыжок / гравитация / время", 13),
+    CAMERA("Камера / FOV", 14),
 }
 
 enum class GameplayMutationAction(
@@ -33,6 +35,11 @@ enum class GameplayMutationAction(
     FORCE_TRUE("arm64-return-one"),
     FORCE_ZERO("arm64-return-zero"),
     DISCOVERY_ONLY(null),
+}
+
+enum class GameplayModificationConfidence {
+    EXACT_ACTION,
+    STRONG_NUMERIC_CANDIDATE,
 }
 
 data class GameplayModificationOpportunity(
@@ -46,23 +53,18 @@ data class GameplayModificationOpportunity(
     val selectable: Boolean,
     val blocker: String?,
     val evidenceSummary: String,
+    val confidence: GameplayModificationConfidence,
 )
 
 /**
- * Discovers user-facing gameplay modification opportunities from already
- * proven IL2CPP executable targets.
+ * High precision gameplay modification discovery.
  *
- * A metadata name is only semantic discovery evidence. It never proves the
- * gameplay effect. Selectable rows therefore describe the exact mutation
- * ("skip this exact method" / "force this exact bool return") rather than
- * claiming a higher-level effect such as "god mode".
+ * Rules intentionally operate on tokenized method names rather than raw
+ * substring matches. Example: "UIGradient" must never match "die".
+ * Declaring type is used only to reject infrastructure/generated surfaces,
+ * not to invent gameplay meaning for generic methods such as ctor/Invoke.
  */
 object GameplayModificationFinder {
-    private data class Rule(
-        val category: GameplayModificationCategory,
-        val terms: Set<String>,
-    )
-
     fun find(
         result: FastAnalysisResult,
         preparation: PatchPreparationPlan,
@@ -70,33 +72,40 @@ object GameplayModificationFinder {
         limit: Int = 64,
         perCategoryLimit: Int = 4,
     ): List<GameplayModificationOpportunity> {
-        require(limit in 1..256) { "Gameplay modification result limit is out of bounds." }
-        require(perCategoryLimit in 1..32) { "Gameplay category result limit is out of bounds." }
+        require(limit in 1..256) {
+            "Gameplay modification result limit is out of bounds."
+        }
+        require(perCategoryLimit in 1..32) {
+            "Gameplay category result limit is out of bounds."
+        }
 
-        val bindingByArtifactToken =
+        val bindingByArtifactImageToken =
             result.il2cppBinaryBinding
                 ?.evidence
                 .orEmpty()
                 .asSequence()
-                .flatMap { item ->
-                    item.bindings.asSequence().map { binding ->
+                .flatMap { evidence ->
+                    evidence.bindings.asSequence().map { binding ->
                         bindingKey(
-                            item.libraryEntry,
-                            binding.imageName,
-                            binding.metadataToken,
+                            artifact = evidence.libraryEntry,
+                            imageName = binding.imageName,
+                            token = binding.metadataToken,
                         ) to binding
                     }
                 }
                 .groupBy({ it.first }, { it.second })
 
-        val eligible = preparation.targets
-            .asSequence()
-            .filter(::isEligible)
-            .filter { prepared ->
-                !projectCodeOnly ||
-                    Il2CppPatchTargetBrowser.isAssemblyCSharp(prepared.target)
-            }
-            .toList()
+        val eligible =
+            preparation.targets
+                .asSequence()
+                .filter(::isEligible)
+                .filter { prepared ->
+                    !projectCodeOnly ||
+                        Il2CppPatchTargetBrowser
+                            .isAssemblyCSharp(prepared.target)
+                }
+                .filterNot { isInfrastructureOrGenerated(it.target) }
+                .toList()
 
         val sharedBodyCounts =
             result.evidenceGraph
@@ -109,124 +118,154 @@ object GameplayModificationFinder {
                 }
                 .mapNotNull { target ->
                     val artifact =
-                        target.artifact
-                            ?: return@mapNotNull null
+                        target.artifact ?: return@mapNotNull null
                     val offset =
-                        target.fileOffset
-                            ?: return@mapNotNull null
+                        target.fileOffset ?: return@mapNotNull null
                     bodyKey(artifact, offset)
                 }
                 .groupingBy { it }
                 .eachCount()
 
-        val ranked = eligible
-            .asSequence()
-            .mapNotNull { prepared ->
-                val target = prepared.target
-                val artifact = target.artifact ?: return@mapNotNull null
-                val token = target.metadataToken ?: return@mapNotNull null
-                val abi = target.abi ?: return@mapNotNull null
-                val offset = target.fileOffset ?: return@mapNotNull null
-                val identity = (
-                    target.declaringType.orEmpty() + "." +
-                        target.memberName.orEmpty()
-                    )
-                val compact = compact(identity)
-
-                if (forbiddenTerms.any { it in compact }) {
-                    return@mapNotNull null
-                }
-
-                val rule = rules.firstOrNull { candidate ->
-                    candidate.terms.any { it in compact }
-                } ?: return@mapNotNull null
-
-                val imageName =
-                    Il2CppPatchTargetBrowser
-                        .imageName(target)
-                        ?: return@mapNotNull null
-                val binding =
-                    bindingByArtifactToken[
-                        bindingKey(
-                            artifact,
-                            imageName,
-                            token,
-                        )
-                    ]
-                        ?.singleOrNull()
-                val action =
-                    resolveAction(
-                        category = rule.category,
-                        compactIdentity = compact,
-                        memberName = target.memberName.orEmpty(),
-                        returnKind =
-                            binding?.returnKind
-                                ?: Il2CppNativeReturnKind.UNKNOWN,
-                    )
-                val preset =
-                    action.presetId?.let { presetId ->
-                        NativePatchPresetCatalog.find(
-                            abi = abi,
-                            id = presetId,
-                        )
+        val ranked =
+            eligible
+                .asSequence()
+                .mapNotNull { prepared ->
+                    val target = prepared.target
+                    val artifact =
+                        target.artifact ?: return@mapNotNull null
+                    val token =
+                        target.metadataToken ?: return@mapNotNull null
+                    val abi =
+                        target.abi ?: return@mapNotNull null
+                    val offset =
+                        target.fileOffset ?: return@mapNotNull null
+                    val imageName =
+                        Il2CppPatchTargetBrowser.imageName(target)
+                            ?: return@mapNotNull null
+                    val memberName =
+                        target.memberName ?: return@mapNotNull null
+                    val methodTokens =
+                        semanticMethodTokens(memberName)
+                    if (methodTokens.isEmpty()) {
+                        return@mapNotNull null
                     }
-                val sharedCount =
-                    sharedBodyCounts[
-                        bodyKey(artifact, offset)
-                    ] ?: 0
-                val blocker = when {
-                    sharedCount != 1 ->
-                        "Native body общий для " + sharedCount +
-                            " metadata-методов; одиночный patch заблокирован."
-                    binding == null ->
-                        "Binary binding не содержит доказанной сигнатуры return type."
-                    action == GameplayMutationAction.DISCOVERY_ONLY ->
-                        numericBlocker(rule.category, binding.returnKind)
-                    preset == null ->
-                        "Для ABI/return type пока нет безопасного готового mutation preset."
-                    else -> null
-                }
-                val selectable =
-                    blocker == null &&
-                        preset != null &&
-                        action != GameplayMutationAction.DISCOVERY_ONLY
+                    if (containsForbiddenSurface(methodTokens)) {
+                        return@mapNotNull null
+                    }
 
-                GameplayModificationOpportunity(
-                    id =
-                        rule.category.name.lowercase() + ":" +
-                            target.id + ":" + action.name.lowercase(),
-                    category = rule.category,
-                    title =
-                        actionTitle(
-                            category = rule.category,
-                            action = action,
-                            methodName =
-                                target.memberName
-                                    ?: target.displayName,
-                        ),
-                    targetId = target.id,
-                    targetDisplayName = target.displayName,
-                    action = action,
-                    replacementHex = preset?.replacementHex,
-                    selectable = selectable,
-                    blocker = blocker,
-                    evidenceSummary =
-                        "EXACT_BINARY · token 0x" +
-                            token.toString(16) +
-                            " · offset 0x" +
-                            offset.toString(16) +
-                            " · semantic match по metadata identity; игровой эффект требует теста.",
-                )
-            }
-            .distinctBy { it.targetId }
-            .sortedWith(
-                compareByDescending<GameplayModificationOpportunity> {
-                    it.selectable
+                    val category =
+                        classify(methodTokens)
+                            ?: return@mapNotNull null
+                    val binding =
+                        bindingByArtifactImageToken[
+                            bindingKey(
+                                artifact = artifact,
+                                imageName = imageName,
+                                token = token,
+                            )
+                        ]
+                            ?.singleOrNull()
+                    val returnKind =
+                        binding?.returnKind
+                            ?: Il2CppNativeReturnKind.UNKNOWN
+                    val action =
+                        resolveAction(
+                            target = target,
+                            category = category,
+                            methodTokens = methodTokens,
+                            returnKind = returnKind,
+                        )
+                    val numericCandidate =
+                        action == GameplayMutationAction.DISCOVERY_ONLY &&
+                            isStrongNumericCandidate(
+                                memberName = memberName,
+                                category = category,
+                                returnKind = returnKind,
+                            )
+                    if (
+                        action == GameplayMutationAction.DISCOVERY_ONLY &&
+                        !numericCandidate
+                    ) {
+                        return@mapNotNull null
+                    }
+
+                    val preset =
+                        action.presetId?.let { presetId ->
+                            NativePatchPresetCatalog.find(
+                                abi = abi,
+                                id = presetId,
+                            )
+                        }
+                    val sharedCount =
+                        sharedBodyCounts[
+                            bodyKey(artifact, offset)
+                        ] ?: 0
+
+                    val blocker =
+                        when {
+                            sharedCount != 1 ->
+                                "Native body общий для " +
+                                    sharedCount +
+                                    " metadata-методов; автоматический patch заблокирован."
+                            binding == null ->
+                                "Не доказана сигнатура return type для exact binary target."
+                            numericCandidate ->
+                                numericBlocker(
+                                    category = category,
+                                    returnKind = returnKind,
+                                )
+                            preset == null ->
+                                "Для ABI/return type пока нет безопасного готового preset."
+                            else -> null
+                        }
+                    val selectable =
+                        blocker == null &&
+                            preset != null &&
+                            action != GameplayMutationAction.DISCOVERY_ONLY
+
+                    GameplayModificationOpportunity(
+                        id =
+                            category.name.lowercase() + ":" +
+                                target.id + ":" +
+                                action.name.lowercase(),
+                        category = category,
+                        title =
+                            actionTitle(
+                                category = category,
+                                action = action,
+                                methodName = memberName,
+                            ),
+                        targetId = target.id,
+                        targetDisplayName = target.displayName,
+                        action = action,
+                        replacementHex = preset?.replacementHex,
+                        selectable = selectable,
+                        blocker = blocker,
+                        evidenceSummary =
+                            "Точная binary-привязка · unique body · " +
+                                Il2CppPatchTargetBrowser
+                                    .returnKindLabel(returnKind),
+                        confidence =
+                            if (numericCandidate) {
+                                GameplayModificationConfidence
+                                    .STRONG_NUMERIC_CANDIDATE
+                            } else {
+                                GameplayModificationConfidence
+                                    .EXACT_ACTION
+                            },
+                    )
                 }
-                    .thenBy { it.category.priority }
-                    .thenBy { it.targetDisplayName.lowercase() },
-            )
-            .toList()
+                .distinctBy { it.targetId }
+                .sortedWith(
+                    compareByDescending<GameplayModificationOpportunity> {
+                        it.selectable
+                    }
+                        .thenBy { it.category.priority }
+                        .thenBy {
+                            it.targetDisplayName.lowercase()
+                        },
+                )
+                .toList()
 
         val categoryCounts =
             mutableMapOf<GameplayModificationCategory, Int>()
@@ -234,15 +273,12 @@ object GameplayModificationFinder {
             .asSequence()
             .filter { opportunity ->
                 val count =
-                    categoryCounts[
-                        opportunity.category
-                    ] ?: 0
+                    categoryCounts[opportunity.category] ?: 0
                 if (count >= perCategoryLimit) {
                     false
                 } else {
-                    categoryCounts[
-                        opportunity.category
-                    ] = count + 1
+                    categoryCounts[opportunity.category] =
+                        count + 1
                     true
                 }
             }
@@ -254,56 +290,148 @@ object GameplayModificationFinder {
         prepared: PreparedTarget,
     ): Boolean =
         (
-            prepared.status == PreparationTargetStatus.CONFIRMED_NEEDS_CHANGE ||
-                prepared.status == PreparationTargetStatus.READY
+            prepared.status ==
+                PreparationTargetStatus.CONFIRMED_NEEDS_CHANGE ||
+                prepared.status ==
+                PreparationTargetStatus.READY
             ) &&
             prepared.target.runtimeId == "unity_il2cpp" &&
             prepared.target.fileOffset != null &&
             prepared.target.abi != null &&
             prepared.target.metadataToken != null
 
+    private fun isInfrastructureOrGenerated(
+        target: EvidenceTarget,
+    ): Boolean {
+        val member =
+            target.memberName
+                .orEmpty()
+                .trim()
+        if (
+            member.equals(".ctor", ignoreCase = true) ||
+            member.equals(".cctor", ignoreCase = true) ||
+            member.equals("ctor", ignoreCase = true) ||
+            member.equals("cctor", ignoreCase = true) ||
+            member.startsWith("<")
+        ) {
+            return true
+        }
+
+        val type =
+            target.declaringType
+                .orEmpty()
+                .lowercase()
+        if (
+            infrastructureTypePrefixes.any {
+                type.startsWith(it)
+            }
+        ) {
+            return true
+        }
+        if (
+            generatedTypeMarkers.any {
+                it in type
+            }
+        ) {
+            return true
+        }
+        return false
+    }
+
+    private fun containsForbiddenSurface(
+        methodTokens: List<String>,
+    ): Boolean =
+        forbiddenTokenPhrases.any {
+            containsPhrase(methodTokens, it)
+        }
+
+    private fun classify(
+        methodTokens: List<String>,
+    ): GameplayModificationCategory? {
+        val semantic =
+            stripAccessor(methodTokens)
+        return categoryPhrases
+            .firstOrNull { (_, phrases) ->
+                phrases.any {
+                    containsPhrase(semantic, it)
+                }
+            }
+            ?.first
+    }
+
     private fun resolveAction(
+        target: EvidenceTarget,
         category: GameplayModificationCategory,
-        compactIdentity: String,
-        memberName: String,
+        methodTokens: List<String>,
         returnKind: Il2CppNativeReturnKind,
     ): GameplayMutationAction {
+        val semantic =
+            stripAccessor(methodTokens)
+
         if (returnKind == Il2CppNativeReturnKind.BOOLEAN) {
-            if (forceFalseTerms.any { it in compactIdentity }) {
+            if (
+                forceFalsePhrases.any {
+                    containsPhrase(semantic, it)
+                }
+            ) {
                 return GameplayMutationAction.FORCE_FALSE
             }
-            if (forceTrueTerms.any { it in compactIdentity }) {
-                return GameplayMutationAction.FORCE_TRUE
+            if (
+                forceTruePhrases.any {
+                    containsPhrase(semantic, it)
+                }
+            ) {
+                if (
+                    category != GameplayModificationCategory.COLLISION ||
+                    isPlayerLike(target)
+                ) {
+                    return GameplayMutationAction.FORCE_TRUE
+                }
             }
         }
 
         if (returnKind == Il2CppNativeReturnKind.VOID) {
-            val skippable =
+            val phrases =
                 when (category) {
-                    GameplayModificationCategory.SURVIVABILITY,
-                    GameplayModificationCategory.DAMAGE ->
-                        voidDamageTerms.any { it in compactIdentity }
+                    GameplayModificationCategory.DAMAGE,
+                    GameplayModificationCategory.SURVIVABILITY ->
+                        voidDamagePhrases
                     GameplayModificationCategory.STAMINA ->
-                        voidStaminaTerms.any { it in compactIdentity }
+                        voidStaminaPhrases
                     GameplayModificationCategory.COOLDOWN ->
-                        voidCooldownTerms.any { it in compactIdentity }
+                        voidCooldownPhrases
                     GameplayModificationCategory.MOVEMENT ->
-                        voidMovementLimitTerms.any { it in compactIdentity }
+                        voidMovementLimitPhrases
                     GameplayModificationCategory.COLLISION ->
-                        voidCollisionTerms.any { it in compactIdentity }
+                        if (isPlayerLike(target)) {
+                            voidCollisionPhrases
+                        } else {
+                            emptyList()
+                        }
                     GameplayModificationCategory.INVENTORY ->
-                        voidInventoryTerms.any { it in compactIdentity }
+                        voidInventoryPhrases
                     GameplayModificationCategory.PROGRESSION ->
-                        voidProgressionTerms.any { it in compactIdentity }
-                    else -> false
+                        voidProgressionPhrases
+                    GameplayModificationCategory.CONTROL ->
+                        voidControlPhrases
+                    else -> emptyList()
                 }
-            if (skippable) return GameplayMutationAction.SKIP_METHOD
+            if (
+                phrases.any {
+                    containsPhrase(semantic, it)
+                }
+            ) {
+                return GameplayMutationAction.SKIP_METHOD
+            }
         }
 
         if (
             returnKind == Il2CppNativeReturnKind.INTEGER &&
             category == GameplayModificationCategory.COOLDOWN &&
-            memberName.startsWith("get_", ignoreCase = true)
+            isGetter(target.memberName.orEmpty()) &&
+            cooldownNumericPhrases.any {
+                containsPhrase(semantic, it)
+            }
         ) {
             return GameplayMutationAction.FORCE_ZERO
         }
@@ -311,22 +439,46 @@ object GameplayModificationFinder {
         return GameplayMutationAction.DISCOVERY_ONLY
     }
 
+    private fun isStrongNumericCandidate(
+        memberName: String,
+        category: GameplayModificationCategory,
+        returnKind: Il2CppNativeReturnKind,
+    ): Boolean {
+        if (!isGetter(memberName)) return false
+        if (
+            returnKind != Il2CppNativeReturnKind.INTEGER &&
+            returnKind != Il2CppNativeReturnKind.FLOATING_POINT
+        ) {
+            return false
+        }
+        return category in numericCategories
+    }
+
     private fun actionTitle(
         category: GameplayModificationCategory,
         action: GameplayMutationAction,
         methodName: String,
-    ): String = when (action) {
-        GameplayMutationAction.SKIP_METHOD ->
-            category.title + ": пропустить " + methodName + "()"
-        GameplayMutationAction.FORCE_FALSE ->
-            category.title + ": " + methodName + "() всегда false"
-        GameplayMutationAction.FORCE_TRUE ->
-            category.title + ": " + methodName + "() всегда true"
-        GameplayMutationAction.FORCE_ZERO ->
-            category.title + ": " + methodName + "() всегда 0"
-        GameplayMutationAction.DISCOVERY_ONLY ->
-            category.title + ": найден кандидат " + methodName + "()"
-    }
+    ): String =
+        when (action) {
+            GameplayMutationAction.SKIP_METHOD ->
+                category.title + ": отключить " +
+                    readableMethod(methodName) + "()"
+            GameplayMutationAction.FORCE_FALSE ->
+                category.title + ": " +
+                    readableMethod(methodName) +
+                    "() → false"
+            GameplayMutationAction.FORCE_TRUE ->
+                category.title + ": " +
+                    readableMethod(methodName) +
+                    "() → true"
+            GameplayMutationAction.FORCE_ZERO ->
+                category.title + ": " +
+                    readableMethod(methodName) +
+                    "() → 0"
+            GameplayMutationAction.DISCOVERY_ONLY ->
+                category.title + ": найден числовой параметр " +
+                    readableMethod(methodName)
+        }
 
     private fun numericBlocker(
         category: GameplayModificationCategory,
@@ -334,21 +486,117 @@ object GameplayModificationFinder {
     ): String =
         when (returnKind) {
             Il2CppNativeReturnKind.FLOATING_POINT ->
-                "Найден числовой кандидат для «" + category.title +
-                    "», но float/double constant/multiplier executor ещё не реализован."
+                "Найден точный числовой параметр «" +
+                    category.title +
+                    "», но безопасный float/double preset ещё не реализован."
             Il2CppNativeReturnKind.INTEGER ->
-                "Найден числовой кандидат для «" + category.title +
-                    "», но безопасная величина изменения не доказана автоматически."
-            Il2CppNativeReturnKind.VALUE_TYPE ->
-                "Возвращается value type; простой X0/S0 patch ABI-некорректен."
-            Il2CppNativeReturnKind.POINTER_OR_REFERENCE ->
-                "Ссылочный результат найден, но null не является автоматически корректной модификацией."
-            Il2CppNativeReturnKind.UNKNOWN ->
-                "Return type ещё не доказан."
-            Il2CppNativeReturnKind.BOOLEAN,
-            Il2CppNativeReturnKind.VOID ->
-                "Семантика метода недостаточна для автоматического действия."
+                "Найден точный числовой параметр «" +
+                    category.title +
+                    "», но величина изменения ещё не выбрана и не провалидирована."
+            else ->
+                "Числовая модификация пока не готова."
         }
+
+    private fun isGetter(
+        memberName: String,
+    ): Boolean =
+        memberName.startsWith("get_", ignoreCase = true)
+
+    private fun isPlayerLike(
+        target: EvidenceTarget,
+    ): Boolean {
+        val tokens =
+            tokenizeIdentifier(
+                target.declaringType.orEmpty(),
+            )
+        return playerContextPhrases.any {
+            containsPhrase(tokens, it)
+        }
+    }
+
+    private fun semanticMethodTokens(
+        memberName: String,
+    ): List<String> =
+        tokenizeIdentifier(memberName)
+            .filterNot {
+                it == "ctor" || it == "cctor"
+            }
+
+    private fun stripAccessor(
+        tokens: List<String>,
+    ): List<String> =
+        if (
+            tokens.firstOrNull() == "get" ||
+            tokens.firstOrNull() == "set"
+        ) {
+            tokens.drop(1)
+        } else {
+            tokens
+        }
+
+    private fun tokenizeIdentifier(
+        value: String,
+    ): List<String> {
+        if (value.isBlank()) return emptyList()
+        val spaced =
+            value
+                .replace(
+                    Regex("([a-z0-9])([A-Z])"),
+                    "$1 $2",
+                )
+                .replace(
+                    Regex("([A-Z]+)([A-Z][a-z])"),
+                    "$1 $2",
+                )
+                .replace(
+                    Regex("[^A-Za-z0-9]+"),
+                    " ",
+                )
+        return spaced
+            .trim()
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+            .map { it.lowercase() }
+    }
+
+    private fun containsPhrase(
+        tokens: List<String>,
+        phrase: List<String>,
+    ): Boolean {
+        if (
+            phrase.isEmpty() ||
+            phrase.size > tokens.size
+        ) {
+            return false
+        }
+        for (
+            index in 0..tokens.size - phrase.size
+        ) {
+            var matches = true
+            for (offset in phrase.indices) {
+                if (
+                    tokens[index + offset] !=
+                    phrase[offset]
+                ) {
+                    matches = false
+                    break
+                }
+            }
+            if (matches) return true
+        }
+        return false
+    }
+
+    private fun p(
+        value: String,
+    ): List<String> =
+        value.split(' ')
+
+    private fun readableMethod(
+        value: String,
+    ): String =
+        value.removePrefix("get_")
+            .removePrefix("set_")
 
     private fun bindingKey(
         artifact: String,
@@ -362,296 +610,366 @@ object GameplayModificationFinder {
     private fun bodyKey(
         artifact: String,
         offset: Long,
-    ): String = artifact + "@" + offset
+    ): String =
+        artifact + "@" + offset
 
-    private fun compact(value: String): String =
-        value.lowercase().filter { it.isLetterOrDigit() }
-
-    private val forbiddenTerms =
-        setOf(
-            "purchase",
-            "inapppurchase",
-            "iap",
-            "billing",
-            "payment",
-            "receipt",
-            "checkout",
-            "subscription",
-            "entitlement",
-            "anticheat",
-            "integritycheck",
-            "serverauth",
-            "authentication",
-            "login",
-        )
-
-    private val forceTrueTerms =
-        setOf(
-            "invincible",
-            "invulnerable",
-            "immortal",
-            "godmode",
-            "isalive",
-            "canmove",
-            "canrun",
-            "cansprint",
-            "canjump",
-            "candash",
-            "canfly",
-            "canattack",
-            "cancast",
-            "canuse",
-            "hasstamina",
-            "hasenergy",
-            "hasammo",
-            "hasitem",
-            "ignorecollision",
-            "canpassthrough",
-            "noclip",
-        )
-
-    private val forceFalseTerms =
-        setOf(
-            "isdead",
-            "isdying",
-            "deadstate",
-            "oncooldown",
-            "isoncooldown",
-            "cooldownactive",
-            "islocked",
-            "movementblocked",
-            "collisionenabled",
-        )
-
-    private val voidDamageTerms =
-        setOf(
-            "takedamage",
-            "receivedamage",
-            "applydamage",
-            "ondamage",
-            "hurt",
-            "applyhurt",
-            "die",
-            "ondeath",
-            "killplayer",
-        )
-
-    private val voidStaminaTerms =
-        setOf(
-            "consumestamina",
-            "spendstamina",
-            "drainstamina",
-            "consumeenergy",
-            "spendenergy",
-            "drainenergy",
-        )
-
-    private val voidCooldownTerms =
-        setOf(
-            "startcooldown",
-            "begincooldown",
-            "applycooldown",
-            "setcooldown",
-        )
-
-    private val voidMovementLimitTerms =
-        setOf(
-            "applyspeedlimit",
-            "limitspeed",
-            "clampspeed",
-            "blockmovement",
-        )
-
-    private val voidCollisionTerms =
-        setOf(
-            "applycollision",
-            "resolvecollision",
-            "blockbycollision",
-        )
-
-    private val voidInventoryTerms =
-        setOf(
-            "consumeammo",
-            "spendammo",
-            "removeammo",
-            "decrementammo",
-            "consumeitem",
-            "spenditem",
-            "removeitem",
-            "decrementitem",
-        )
-
-    private val voidProgressionTerms =
-        setOf(
-            "spendskillpoint",
-            "consumeskillpoint",
-            "spendtalentpoint",
-            "consumetalentpoint",
-        )
-
-    private val rules =
+    private val infrastructureTypePrefixes =
         listOf(
-            Rule(
-                GameplayModificationCategory.COLLISION,
-                setOf(
-                    "noclip",
-                    "collision",
-                    "collider",
-                    "passthrough",
-                    "throughwall",
-                    "obstacle",
+            "system.",
+            "microsoft.",
+            "unityengine.",
+            "coffee.uiextensions.",
+            "tmpro.",
+            "newtonsoft.",
+            "google.",
+            "cysharp.",
+            "dg.tweening.",
+        )
+
+    private val generatedTypeMarkers =
+        listOf(
+            "proxy_auto",
+            "ifixbaseproxy",
+            "<>",
+            "generatedproxy",
+        )
+
+    private val forbiddenTokenPhrases =
+        listOf(
+            p("purchase"),
+            p("in app purchase"),
+            p("iap"),
+            p("billing"),
+            p("payment"),
+            p("receipt"),
+            p("checkout"),
+            p("subscription"),
+            p("entitlement"),
+            p("anti cheat"),
+            p("integrity check"),
+            p("server auth"),
+            p("authentication"),
+            p("login"),
+            p("local storage"),
+            p("database"),
+            p("preferences"),
+        )
+
+    private val forceTruePhrases =
+        listOf(
+            p("is invincible"),
+            p("is invulnerable"),
+            p("is immortal"),
+            p("god mode"),
+            p("is alive"),
+            p("can move"),
+            p("can run"),
+            p("can sprint"),
+            p("can jump"),
+            p("can dash"),
+            p("can fly"),
+            p("can attack"),
+            p("can cast"),
+            p("has stamina"),
+            p("has energy"),
+            p("has ammo"),
+            p("has item"),
+            p("ignore collision"),
+            p("can pass through"),
+            p("no clip"),
+        )
+
+    private val forceFalsePhrases =
+        listOf(
+            p("is dead"),
+            p("is dying"),
+            p("on cooldown"),
+            p("is on cooldown"),
+            p("cooldown active"),
+            p("movement blocked"),
+            p("is stunned"),
+            p("is rooted"),
+            p("is silenced"),
+        )
+
+    private val voidDamagePhrases =
+        listOf(
+            p("take damage"),
+            p("receive damage"),
+            p("apply damage"),
+            p("on damage"),
+            p("hurt"),
+            p("apply hurt"),
+            p("die"),
+            p("on death"),
+            p("kill player"),
+        )
+
+    private val voidStaminaPhrases =
+        listOf(
+            p("consume stamina"),
+            p("spend stamina"),
+            p("drain stamina"),
+            p("consume energy"),
+            p("spend energy"),
+            p("drain energy"),
+        )
+
+    private val voidCooldownPhrases =
+        listOf(
+            p("start cooldown"),
+            p("begin cooldown"),
+            p("apply cooldown"),
+            p("set cooldown"),
+        )
+
+    private val voidMovementLimitPhrases =
+        listOf(
+            p("apply speed limit"),
+            p("limit speed"),
+            p("clamp speed"),
+            p("block movement"),
+        )
+
+    private val voidCollisionPhrases =
+        listOf(
+            p("apply collision"),
+            p("resolve collision"),
+            p("block by collision"),
+        )
+
+    private val voidInventoryPhrases =
+        listOf(
+            p("consume ammo"),
+            p("spend ammo"),
+            p("remove ammo"),
+            p("decrement ammo"),
+            p("consume item"),
+            p("spend item"),
+            p("remove item"),
+            p("decrement item"),
+        )
+
+    private val voidProgressionPhrases =
+        listOf(
+            p("spend skill point"),
+            p("consume skill point"),
+            p("spend talent point"),
+            p("consume talent point"),
+        )
+
+    private val voidControlPhrases =
+        listOf(
+            p("apply stun"),
+            p("apply root"),
+            p("apply silence"),
+            p("apply slow"),
+        )
+
+    private val cooldownNumericPhrases =
+        listOf(
+            p("cooldown"),
+            p("cooldown time"),
+            p("recharge time"),
+        )
+
+    private val categoryPhrases =
+        listOf(
+            GameplayModificationCategory.COLLISION to
+                listOf(
+                    p("no clip"),
+                    p("ignore collision"),
+                    p("can pass through"),
+                    p("apply collision"),
+                    p("resolve collision"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.STAMINA,
-                setOf(
-                    "stamina",
-                    "fatigue",
-                    "sprintenergy",
-                    "runenergy",
+            GameplayModificationCategory.STAMINA to
+                listOf(
+                    p("stamina"),
+                    p("max stamina"),
+                    p("stamina regen"),
+                    p("consume stamina"),
+                    p("spend stamina"),
+                    p("energy"),
+                    p("max energy"),
+                    p("consume energy"),
+                    p("spend energy"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.COOLDOWN,
-                setOf(
-                    "cooldown",
-                    "recharge",
-                    "skilldelay",
-                    "abilitydelay",
+            GameplayModificationCategory.COOLDOWN to
+                listOf(
+                    p("cooldown"),
+                    p("cooldown time"),
+                    p("recharge time"),
+                    p("start cooldown"),
+                    p("is on cooldown"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.ATTACK_SPEED,
-                setOf(
-                    "attackspeed",
-                    "attackrate",
-                    "firerate",
-                    "shotspeed",
+            GameplayModificationCategory.CONTROL to
+                listOf(
+                    p("is stunned"),
+                    p("is rooted"),
+                    p("is silenced"),
+                    p("apply stun"),
+                    p("apply root"),
+                    p("apply silence"),
+                    p("apply slow"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.REGENERATION,
-                setOf(
-                    "regeneration",
-                    "regen",
-                    "healing",
-                    "healrate",
+            GameplayModificationCategory.ATTACK_SPEED to
+                listOf(
+                    p("attack speed"),
+                    p("attack rate"),
+                    p("fire rate"),
+                    p("shot speed"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.MOVEMENT,
-                setOf(
-                    "movespeed",
-                    "movementspeed",
-                    "walkspeed",
-                    "runspeed",
-                    "sprintspeed",
-                    "movement",
-                    "locomotion",
-                    "jumpheight",
-                    "jump",
-                    "dash",
-                    "gravity",
+            GameplayModificationCategory.REGENERATION to
+                listOf(
+                    p("health regen"),
+                    p("health regeneration"),
+                    p("regen rate"),
+                    p("regeneration rate"),
+                    p("heal rate"),
+                    p("healing rate"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.SURVIVABILITY,
-                setOf(
-                    "invincible",
-                    "invulnerable",
-                    "immortal",
-                    "godmode",
-                    "isdead",
-                    "isdying",
-                    "isalive",
-                    "health",
-                    "hitpoints",
-                    "playerhp",
-                    "ondeath",
-                    "die",
+            GameplayModificationCategory.MOVEMENT to
+                listOf(
+                    p("move speed"),
+                    p("movement speed"),
+                    p("walk speed"),
+                    p("run speed"),
+                    p("sprint speed"),
+                    p("dash speed"),
+                    p("can move"),
+                    p("can run"),
+                    p("can sprint"),
+                    p("can jump"),
+                    p("can dash"),
+                    p("jump height"),
+                    p("jump distance"),
+                    p("jump force"),
+                    p("gravity scale"),
+                    p("block movement"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.DAMAGE,
-                setOf(
-                    "takedamage",
-                    "receivedamage",
-                    "applydamage",
-                    "ondamage",
-                    "damage",
-                    "hurt",
-                    "attackpower",
-                    "damagebonus",
-                    "critical",
-                    "critchance",
+            GameplayModificationCategory.SURVIVABILITY to
+                listOf(
+                    p("is invincible"),
+                    p("is invulnerable"),
+                    p("is immortal"),
+                    p("god mode"),
+                    p("is alive"),
+                    p("is dead"),
+                    p("is dying"),
+                    p("max health"),
+                    p("max hp"),
+                    p("hit points"),
+                    p("player hp"),
+                    p("on death"),
+                    p("die"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.PROGRESSION,
-                setOf(
-                    "experience",
-                    "experiencepoint",
-                    "xpgain",
-                    "playerxp",
-                    "levelup",
-                    "playerlevel",
-                    "skillpoint",
-                    "talentpoint",
-                    "rank",
-                    "spendskillpoint",
-                    "consumeskillpoint",
-                    "spendtalentpoint",
+            GameplayModificationCategory.DAMAGE to
+                listOf(
+                    p("take damage"),
+                    p("receive damage"),
+                    p("apply damage"),
+                    p("on damage"),
+                    p("damage"),
+                    p("base damage"),
+                    p("attack damage"),
+                    p("attack power"),
+                    p("damage bonus"),
+                    p("damage multiplier"),
+                    p("critical chance"),
+                    p("critical damage"),
+                    p("crit chance"),
+                    p("crit damage"),
+                    p("hurt"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.INVENTORY,
-                setOf(
-                    "inventory",
-                    "itemcount",
-                    "itemcapacity",
-                    "carryweight",
-                    "backpack",
-                    "ammo",
-                    "consumeitem",
-                    "removeitem",
-                    "hasitem",
+            GameplayModificationCategory.PROGRESSION to
+                listOf(
+                    p("experience"),
+                    p("experience points"),
+                    p("xp"),
+                    p("xp gain"),
+                    p("player xp"),
+                    p("level"),
+                    p("player level"),
+                    p("skill point"),
+                    p("skill points"),
+                    p("talent point"),
+                    p("talent points"),
+                    p("level up"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.DROPS,
-                setOf(
-                    "droprate",
-                    "dropchance",
-                    "lootchance",
-                    "loot",
-                    "reward",
+            GameplayModificationCategory.INVENTORY to
+                listOf(
+                    p("ammo"),
+                    p("max ammo"),
+                    p("item count"),
+                    p("inventory capacity"),
+                    p("carry weight"),
+                    p("backpack capacity"),
+                    p("consume ammo"),
+                    p("remove ammo"),
+                    p("consume item"),
+                    p("remove item"),
+                    p("has ammo"),
+                    p("has item"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.DIFFICULTY,
-                setOf(
-                    "difficulty",
-                    "enemyhealth",
-                    "enemydamage",
-                    "enemyspeed",
+            GameplayModificationCategory.DROPS to
+                listOf(
+                    p("drop rate"),
+                    p("drop chance"),
+                    p("loot chance"),
+                    p("loot multiplier"),
+                    p("reward multiplier"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.WORLD,
-                setOf(
-                    "timescale",
-                    "gametime",
-                    "gravityscale",
-                    "jumpforce",
+            GameplayModificationCategory.DIFFICULTY to
+                listOf(
+                    p("difficulty"),
+                    p("enemy health"),
+                    p("enemy damage"),
+                    p("enemy speed"),
                 ),
-            ),
-            Rule(
-                GameplayModificationCategory.CAMERA,
-                setOf(
-                    "fieldofview",
-                    "camerafov",
-                    "zoom",
+            GameplayModificationCategory.WORLD to
+                listOf(
+                    p("time scale"),
+                    p("game time"),
+                    p("gravity scale"),
+                    p("jump height"),
+                    p("jump force"),
                 ),
-            ),
+            GameplayModificationCategory.CAMERA to
+                listOf(
+                    p("field of view"),
+                    p("camera fov"),
+                    p("fov"),
+                    p("zoom"),
+                ),
+        )
+
+    private val numericCategories =
+        setOf(
+            GameplayModificationCategory.SURVIVABILITY,
+            GameplayModificationCategory.DAMAGE,
+            GameplayModificationCategory.MOVEMENT,
+            GameplayModificationCategory.STAMINA,
+            GameplayModificationCategory.COOLDOWN,
+            GameplayModificationCategory.ATTACK_SPEED,
+            GameplayModificationCategory.REGENERATION,
+            GameplayModificationCategory.PROGRESSION,
+            GameplayModificationCategory.INVENTORY,
+            GameplayModificationCategory.DROPS,
+            GameplayModificationCategory.DIFFICULTY,
+            GameplayModificationCategory.WORLD,
+            GameplayModificationCategory.CAMERA,
+        )
+
+    private val playerContextPhrases =
+        listOf(
+            p("player"),
+            p("hero"),
+            p("character"),
+            p("avatar"),
+            p("player controller"),
+            p("character controller"),
+            p("player motor"),
+            p("character motor"),
         )
 }
