@@ -32,12 +32,18 @@ import io.github.ffenuss.modkit.build.VerifiedBuildPipeline
 import io.github.ffenuss.modkit.build.VerifiedBuildResult
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.AutoModPreparationCoordinator
+import io.github.ffenuss.modkit.patch.AutoModRuntimeTestMenuBuild
+import io.github.ffenuss.modkit.patch.AutoModRuntimeTestMenuCoordinator
 import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
 import io.github.ffenuss.modkit.patch.MutationApplyOutcome
 import io.github.ffenuss.modkit.patch.PatchLabDiagnosticReportExporter
 import io.github.ffenuss.modkit.patch.PatchLabDiagnosticReportWriter
 import io.github.ffenuss.modkit.patch.PatchPreparationPlan
 import io.github.ffenuss.modkit.patch.PreparationTargetStatus
+import io.github.ffenuss.modkit.runtime.AndroidRepackedRuntimeInstaller
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallPlanner
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallReadiness
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallReadinessState
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -68,6 +74,18 @@ fun AutoModScreen(
     var error by remember(result.index.artifactSha256) { mutableStateOf<String?>(null) }
     var exportingReport by remember(result.index.artifactSha256) {
         mutableStateOf(false)
+    }
+    var runtimeMenuBuild by remember(result.index.artifactSha256) {
+        mutableStateOf<AutoModRuntimeTestMenuBuild?>(null)
+    }
+    var runtimeMenuBusy by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
+    }
+    var runtimeMenuInstallReadiness by remember(result.index.artifactSha256) {
+        mutableStateOf<RepackedRuntimeInstallReadiness?>(null)
+    }
+    var runtimeMenuNote by remember(result.index.artifactSha256) {
+        mutableStateOf<String?>(null)
     }
     var cancellation by remember(result.index.artifactSha256) {
         mutableStateOf<AtomicCancellationSignal?>(null)
@@ -175,6 +193,155 @@ fun AutoModScreen(
             } finally {
                 building = false
                 cancellation = null
+            }
+        }
+    }
+
+    fun buildRuntimeTestMenu() {
+        val prepared = plan ?: return
+        if (runtimeMenuBusy || preparing || building) return
+
+        val signal = AtomicCancellationSignal()
+        cancellation = signal
+        runtimeMenuBusy = true
+        runtimeMenuBuild = null
+        runtimeMenuInstallReadiness = null
+        runtimeMenuNote = null
+        error = null
+        progress = null
+
+        scope.launch {
+            try {
+                runtimeMenuBuild =
+                    AutoModRuntimeTestMenuCoordinator.build(
+                        context = context,
+                        target = target,
+                        result = analysisResult,
+                        preparation = prepared,
+                        cancellation = signal,
+                        progress = ProgressSink { update ->
+                            scope.launch { progress = update }
+                        },
+                    )
+                runtimeMenuNote =
+                    "Тестовая APK собрана. Установите её, затем запустите через ModKit."
+            } catch (_: AnalysisCancelledException) {
+                error = "Сборка runtime test menu отменена."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                runtimeMenuBusy = false
+                cancellation = null
+            }
+        }
+    }
+
+    fun installRuntimeTestMenu() {
+        val prepared = runtimeMenuBuild ?: return
+        if (runtimeMenuBusy || preparing || building) return
+
+        val signal = AtomicCancellationSignal()
+        cancellation = signal
+        runtimeMenuBusy = true
+        error = null
+        runtimeMenuNote = null
+
+        scope.launch {
+            try {
+                val installPlan =
+                    withContext(Dispatchers.IO) {
+                        RepackedRuntimeInstallPlanner.plan(
+                            build = prepared.build,
+                            cancellation = signal,
+                        )
+                    }
+                require(installPlan.ready) {
+                    installPlan.blockers.firstOrNull()
+                        ?: "Тестовая APK не готова к установке."
+                }
+                val readiness =
+                    AndroidRepackedRuntimeInstaller.inspectReadiness(
+                        context = context,
+                        plan = installPlan,
+                    )
+                runtimeMenuInstallReadiness = readiness
+                when (readiness.state) {
+                    RepackedRuntimeInstallReadinessState
+                        .READY_NEW_INSTALL,
+                    RepackedRuntimeInstallReadinessState
+                        .READY_TEST_SIGNER_UPDATE -> {
+                        withContext(Dispatchers.IO) {
+                            AndroidRepackedRuntimeInstaller.submit(
+                                context = context,
+                                plan = installPlan,
+                                cancellation = signal,
+                            )
+                        }
+                        runtimeMenuNote =
+                            "Запрос установки отправлен Android. Подтвердите установку системы."
+                    }
+                    RepackedRuntimeInstallReadinessState
+                        .UNKNOWN_SOURCES_PERMISSION_REQUIRED -> {
+                        runtimeMenuNote =
+                            "Разрешите ModKit установку неизвестных приложений, затем нажмите установку ещё раз."
+                        context.startActivity(
+                            AndroidRepackedRuntimeInstaller
+                                .unknownSourcesSettingsIntent(
+                                    context,
+                                ),
+                        )
+                    }
+                    RepackedRuntimeInstallReadinessState
+                        .INSTALLED_SIGNATURE_CONFLICT -> {
+                        runtimeMenuNote =
+                            "Оригинальное приложение с тем же packageName подписано другим ключом. " +
+                                "Android не установит тестовую копию поверх него. ModKit не удаляет оригинал автоматически."
+                    }
+                }
+            } catch (_: AnalysisCancelledException) {
+                error = "Установка runtime test APK отменена."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                runtimeMenuBusy = false
+                cancellation = null
+            }
+        }
+    }
+
+    fun launchRuntimeTestMenu() {
+        val prepared = runtimeMenuBuild ?: return
+        if (runtimeMenuBusy || preparing || building) return
+
+        runtimeMenuBusy = true
+        error = null
+        runtimeMenuNote = null
+        scope.launch {
+            try {
+                val launched =
+                    AutoModRuntimeTestMenuCoordinator
+                        .configureAndLaunch(
+                            context = context,
+                            prepared = prepared,
+                        )
+                runtimeMenuNote =
+                    "Test Menu загружено: " +
+                        launched.menuStatus.patchItemCount +
+                        " переключателей · " +
+                        launched.menuStatus.infoItemCount +
+                        " диагностических целей. " +
+                        "Запущено: " +
+                        launched.activityClassName
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                runtimeMenuBusy = false
             }
         }
     }
@@ -290,7 +457,7 @@ fun AutoModScreen(
             }
         }
 
-        if (preparing || building) {
+        if (preparing || building || runtimeMenuBusy) {
             item {
                 Card(Modifier.fillMaxWidth()) {
                     Column(
@@ -299,7 +466,12 @@ fun AutoModScreen(
                     ) {
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                         Text(
-                            progress?.currentTask ?: if (building) "Сборка APK…" else "Подготовка изменений…",
+                            progress?.currentTask
+                                ?: when {
+                                    runtimeMenuBusy -> "Runtime Test Menu…"
+                                    building -> "Сборка APK…"
+                                    else -> "Подготовка изменений…"
+                                },
                             fontWeight = FontWeight.SemiBold,
                         )
                         progress?.currentArtifact?.let {
@@ -316,7 +488,13 @@ fun AutoModScreen(
                             onClick = { cancellation?.cancel() },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text(if (building) "Отменить сборку" else "Отменить подготовку")
+                            Text(
+                                when {
+                                    runtimeMenuBusy -> "Отменить"
+                                    building -> "Отменить сборку"
+                                    else -> "Отменить подготовку"
+                                },
+                            )
                         }
                     }
                 }
@@ -514,10 +692,126 @@ fun AutoModScreen(
             }
         }
 
+        plan?.let { prepared ->
+            item {
+                val preview =
+                    io.github.ffenuss.modkit.patch
+                        .RuntimeGameplayTestMenuBuilder
+                        .build(
+                            result = analysisResult,
+                            preparation = prepared,
+                            analysisResultsRoot =
+                                File(
+                                    context.filesDir,
+                                    "analysis-results",
+                                ),
+                            stagingRoot =
+                                File(
+                                    context.filesDir,
+                                    "runtime-menu-preview",
+                                ),
+                        )
+                Card(Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement =
+                            Arrangement.spacedBy(7.dp),
+                    ) {
+                        Text(
+                            "ModKit Test Menu",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            "Проверяемые runtime-переключатели: " +
+                                preview.patchItemCount +
+                                " · диагностические цели: " +
+                                preview.infoItemCount +
+                                ".",
+                            style =
+                                MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            "Переключатели создаются только для exact локальных целей. " +
+                                "Billing/auth/anti-cheat и server-backed RNG показываются как INFO без bypass-патча.",
+                            style =
+                                MaterialTheme.typography.bodySmall,
+                        )
+                        Button(
+                            onClick = ::buildRuntimeTestMenu,
+                            enabled =
+                                !runtimeMenuBusy &&
+                                    !preparing &&
+                                    !building &&
+                                    preview.items.isNotEmpty(),
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (runtimeMenuBusy) {
+                                    "Подготовка Test Menu…"
+                                } else {
+                                    "Собрать тестовую игру с оверлеем"
+                                },
+                            )
+                        }
+                        runtimeMenuBuild?.let { built ->
+                            Text(
+                                "Собрано: " +
+                                    built.menu.patchItemCount +
+                                    " переключателей · " +
+                                    built.menu.infoItemCount +
+                                    " INFO · package " +
+                                    built.build.packageName,
+                                style =
+                                    MaterialTheme.typography.bodySmall,
+                            )
+                            OutlinedButton(
+                                onClick = ::installRuntimeTestMenu,
+                                enabled =
+                                    !runtimeMenuBusy &&
+                                        !preparing &&
+                                        !building,
+                                modifier =
+                                    Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Установить тестовую игру")
+                            }
+                            Button(
+                                onClick = ::launchRuntimeTestMenu,
+                                enabled =
+                                    !runtimeMenuBusy &&
+                                        !preparing &&
+                                        !building,
+                                modifier =
+                                    Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Запустить с ModKit Test Menu")
+                            }
+                        }
+                        runtimeMenuInstallReadiness?.let {
+                            Text(
+                                "Install: " +
+                                    it.state.name,
+                                style =
+                                    MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        runtimeMenuNote?.let {
+                            Text(
+                                it,
+                                style =
+                                    MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         item {
             Button(
                 onClick = ::prepareChanges,
-                enabled = !preparing && !building,
+                enabled = !preparing && !building && !runtimeMenuBusy,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(if (plan == null) "Подготовить изменения" else "Обновить подготовку")
@@ -527,7 +821,11 @@ fun AutoModScreen(
         item {
             Button(
                 onClick = ::buildApk,
-                enabled = stagingOutcome?.applied == true && !preparing && !building,
+                enabled =
+                    stagingOutcome?.applied == true &&
+                        !preparing &&
+                        !building &&
+                        !runtimeMenuBusy,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(if (building) "Сборка…" else "Собрать APK")
