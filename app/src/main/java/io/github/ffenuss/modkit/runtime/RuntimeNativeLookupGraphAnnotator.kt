@@ -13,6 +13,40 @@ import io.github.ffenuss.modkit.analysis.FastAnalysisResult
  * execution proof.
  */
 object RuntimeNativeLookupGraphAnnotator {
+    fun annotateAll(
+        result: FastAnalysisResult,
+        validation: RuntimeNativeTraceValidationResult,
+    ): FastAnalysisResult {
+        var updated = result
+        validation.observations
+            .filter {
+                it.kind ==
+                    RuntimeEvidenceObservationKind.JNI_DLSYM_OBSERVED &&
+                    it.independentlyConfirmed
+            }
+            .forEach { observation ->
+                val moduleName = observation.supportingFacts
+                    .firstOrNull { it.startsWith("module=") }
+                    ?.substringAfter("module=")
+                    ?: return@forEach
+                val symbolName = observation.supportingFacts
+                    .firstOrNull { it.startsWith("symbol=") }
+                    ?.substringAfter("symbol=")
+                    ?: return@forEach
+                updated = annotate(
+                    result = updated,
+                    moduleName = moduleName,
+                    symbolName = symbolName,
+                    validation = RuntimeNativeTraceValidationResult(
+                        observations = listOf(observation),
+                        rejectedEvents = 0,
+                        blockers = emptyList(),
+                    ),
+                )
+            }
+        return updated
+    }
+
     fun annotate(
         result: FastAnalysisResult,
         moduleName: String,
