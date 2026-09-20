@@ -1224,6 +1224,12 @@ object Il2CppCodeGenScanner {
 
             if (functionVa <= 0L || !image.isExecutableVa(functionVa)) return@forEachIndexed
 
+            val returnKind =
+                resolveReturnKind(
+                    image = image,
+                    metadataRegistrationVa = metadataRegistrationVa,
+                    returnTypeIndex = method.returnTypeIndex,
+                )
             out += Il2CppMethodBinaryBinding(
                 methodIndex = method.index,
                 managedIdentity = method.declaringType + "." + method.name,
@@ -1234,14 +1240,19 @@ object Il2CppCodeGenScanner {
                 functionVirtualAddress = functionVa,
                 functionFileOffset = image.fileOffsetForVa(functionVa),
                 returnTypeIndex = method.returnTypeIndex,
-                returnKind = resolveReturnKind(
-                    image = image,
-                    metadataRegistrationVa = metadataRegistrationVa,
-                    returnTypeIndex = method.returnTypeIndex,
-                ),
-                returnTypeProof = metadataRegistrationVa?.let {
-                    "Il2CppMetadataRegistration.types[" + method.returnTypeIndex + "]"
-                },
+                returnKind = returnKind,
+                returnTypeProof =
+                    if (
+                        metadataRegistrationVa != null &&
+                        returnKind != Il2CppNativeReturnKind.UNKNOWN
+                    ) {
+                        "Il2CppMetadataRegistration.types[" +
+                            method.returnTypeIndex +
+                            "] @ 0x" +
+                            metadataRegistrationVa.toString(16)
+                    } else {
+                        null
+                    },
             )
         }
         return out
@@ -1288,7 +1299,8 @@ object Il2CppCodeGenScanner {
             0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09,
             0x0a, 0x0b, 0x18, 0x19 -> Il2CppNativeReturnKind.INTEGER
             0x0c, 0x0d -> Il2CppNativeReturnKind.FLOATING_POINT
-            0x0e, 0x0f, 0x12, 0x1c, 0x1d -> Il2CppNativeReturnKind.POINTER_OR_REFERENCE
+            0x0e, 0x0f, 0x12, 0x14, 0x1c, 0x1d ->
+                Il2CppNativeReturnKind.POINTER_OR_REFERENCE
             0x11 -> Il2CppNativeReturnKind.VALUE_TYPE
             else -> Il2CppNativeReturnKind.UNKNOWN
         }
