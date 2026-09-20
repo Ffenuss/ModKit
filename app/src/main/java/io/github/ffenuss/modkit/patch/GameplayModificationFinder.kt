@@ -25,6 +25,7 @@ enum class GameplayModificationCategory(
     DIFFICULTY("Сложность / параметры врагов", 12),
     WORLD("Прыжок / гравитация / время", 13),
     CAMERA("Камера / FOV", 14),
+    SENSITIVE_SURFACE("Billing / auth / anti-cheat", 90),
 }
 
 enum class GameplayMutationAction(
@@ -41,6 +42,7 @@ enum class GameplayModificationConfidence {
     EXACT_ACTION,
     STRONG_NUMERIC_CANDIDATE,
     SEMANTIC_MODEL_SIGNAL,
+    SENSITIVE_SURFACE_SIGNAL,
 }
 
 data class GameplayModificationOpportunity(
@@ -150,8 +152,55 @@ object GameplayModificationFinder {
                     if (methodTokens.isEmpty()) {
                         return@mapNotNull null
                     }
-                    if (containsForbiddenSurface(methodTokens)) {
-                        return@mapNotNull null
+                    val sensitiveKind =
+                        sensitiveSurfaceKind(
+                            target = target,
+                            methodTokens = methodTokens,
+                        )
+                    if (sensitiveKind != null) {
+                        val binding =
+                            bindingByArtifactImageToken[
+                                bindingKey(
+                                    artifact = artifact,
+                                    imageName = imageName,
+                                    token = token,
+                                )
+                            ]
+                                ?.singleOrNull()
+                        val returnKind =
+                            binding?.returnKind
+                                ?: Il2CppNativeReturnKind.UNKNOWN
+                        return@mapNotNull GameplayModificationOpportunity(
+                            id =
+                                "sensitive:" +
+                                    sensitiveKind.lowercase() + ":" +
+                                    target.id,
+                            category =
+                                GameplayModificationCategory
+                                    .SENSITIVE_SURFACE,
+                            title =
+                                "Чувствительная поверхность: " +
+                                    sensitiveKind,
+                            targetId = target.id,
+                            targetDisplayName =
+                                target.displayName,
+                            action =
+                                GameplayMutationAction
+                                    .DISCOVERY_ONLY,
+                            replacementHex = null,
+                            selectable = false,
+                            blocker =
+                                "Поверхность доступна для анализа и сопоставления, " +
+                                    "но ModKit не генерирует пресет для обхода оплаты, " +
+                                    "авторизации, integrity/anti-cheat или entitlement-проверок.",
+                            evidenceSummary =
+                                "Точная IL2CPP binary-привязка · " +
+                                    Il2CppPatchTargetBrowser
+                                        .returnKindLabel(returnKind),
+                            confidence =
+                                GameplayModificationConfidence
+                                    .SENSITIVE_SURFACE_SIGNAL,
+                        )
                     }
 
                     val category =
@@ -546,12 +595,23 @@ object GameplayModificationFinder {
         }
     }
 
-    private fun containsForbiddenSurface(
+    private fun sensitiveSurfaceKind(
+        target: EvidenceTarget,
         methodTokens: List<String>,
-    ): Boolean =
-        forbiddenTokenPhrases.any {
-            containsPhrase(methodTokens, it)
-        }
+    ): String? {
+        val combined =
+            tokenizeIdentifier(
+                target.declaringType.orEmpty(),
+            ) + stripAccessor(methodTokens)
+
+        return sensitiveSurfacePhrases
+            .firstOrNull { (_, phrases) ->
+                phrases.any {
+                    containsPhrase(combined, it)
+                }
+            }
+            ?.first
+    }
 
     private fun classify(
         methodTokens: List<String>,
@@ -842,25 +902,55 @@ object GameplayModificationFinder {
             "generatedproxy",
         )
 
-    private val forbiddenTokenPhrases =
+    private val sensitiveSurfacePhrases =
         listOf(
-            p("purchase"),
-            p("in app purchase"),
-            p("iap"),
-            p("billing"),
-            p("payment"),
-            p("receipt"),
-            p("checkout"),
-            p("subscription"),
-            p("entitlement"),
-            p("anti cheat"),
-            p("integrity check"),
-            p("server auth"),
-            p("authentication"),
-            p("login"),
-            p("local storage"),
-            p("database"),
-            p("preferences"),
+            "purchase / billing" to
+                listOf(
+                    p("purchase"),
+                    p("in app purchase"),
+                    p("iap"),
+                    p("billing"),
+                    p("payment"),
+                    p("checkout"),
+                    p("subscription"),
+                    p("store"),
+                ),
+            "receipt / entitlement" to
+                listOf(
+                    p("receipt"),
+                    p("entitlement"),
+                    p("license"),
+                    p("owned"),
+                    p("ownership"),
+                ),
+            "authentication / login" to
+                listOf(
+                    p("server auth"),
+                    p("authentication"),
+                    p("authorize"),
+                    p("authorization"),
+                    p("login"),
+                    p("sign in"),
+                    p("session token"),
+                    p("access token"),
+                ),
+            "integrity / anti-cheat" to
+                listOf(
+                    p("anti cheat"),
+                    p("anticheat"),
+                    p("integrity check"),
+                    p("tamper"),
+                    p("root detection"),
+                    p("debugger detection"),
+                    p("signature check"),
+                ),
+            "persistent account data" to
+                listOf(
+                    p("local storage"),
+                    p("database"),
+                    p("preferences"),
+                    p("account data"),
+                ),
         )
 
     private val forceTruePhrases =
