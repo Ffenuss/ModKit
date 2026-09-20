@@ -33,6 +33,7 @@ import io.github.ffenuss.modkit.patch.MutationApplyOutcome
 import io.github.ffenuss.modkit.patch.MutationPreflightEngine
 import io.github.ffenuss.modkit.patch.MutationPreflightResult
 import io.github.ffenuss.modkit.patch.NativeMutationDraft
+import io.github.ffenuss.modkit.patch.NativePatchPresetCatalog
 import io.github.ffenuss.modkit.patch.PatchPreparationPlan
 import io.github.ffenuss.modkit.patch.PreparationTargetStatus
 import java.io.File
@@ -62,35 +63,52 @@ fun ManualNativePatchSection(
         mutableStateOf<AtomicCancellationSignal?>(null)
     }
 
-    val eligible = preparation.targets.filter { prepared ->
-        prepared.status == PreparationTargetStatus.CONFIRMED_NEEDS_CHANGE ||
-            prepared.status == PreparationTargetStatus.READY
-    }.filter { prepared ->
-        prepared.target.runtimeId == "unity_il2cpp" &&
-            prepared.target.fileOffset != null &&
-            prepared.target.abi != null
+    val eligibleCount = remember(key) {
+        preparation.targets.count(::isManualNativeEligible)
     }
     val normalizedFilter = targetFilter.trim().lowercase()
-    val visibleEligible = eligible
-        .asSequence()
-        .filter { prepared ->
-            normalizedFilter.isBlank() ||
-                prepared.target.displayName
-                    .lowercase()
-                    .contains(normalizedFilter) ||
-                prepared.target.id
-                    .lowercase()
-                    .contains(normalizedFilter) ||
-                prepared.target.declaringType
-                    ?.lowercase()
-                    ?.contains(normalizedFilter) == true ||
-                prepared.target.memberName
-                    ?.lowercase()
-                    ?.contains(normalizedFilter) == true
+    val visibleEligible = remember(
+        key,
+        normalizedFilter,
+    ) {
+        preparation.targets
+            .asSequence()
+            .filter(::isManualNativeEligible)
+            .filter { prepared ->
+                normalizedFilter.isBlank() ||
+                    prepared.target.displayName
+                        .lowercase()
+                        .contains(normalizedFilter) ||
+                    prepared.target.id
+                        .lowercase()
+                        .contains(normalizedFilter) ||
+                    prepared.target.declaringType
+                        ?.lowercase()
+                        ?.contains(normalizedFilter) == true ||
+                    prepared.target.memberName
+                        ?.lowercase()
+                        ?.contains(normalizedFilter) == true
+            }
+            .take(MAX_VISIBLE_TARGETS)
+            .toList()
+    }
+    val selectedPrepared = remember(
+        key,
+        selectedTargetId,
+    ) {
+        selectedTargetId?.let { selectedId ->
+            preparation.targets.firstOrNull {
+                it.target.id == selectedId &&
+                    isManualNativeEligible(it)
+            }
         }
-        .take(MAX_VISIBLE_TARGETS)
-        .toList()
-
+    }
+    val presets =
+        selectedPrepared
+            ?.target
+            ?.abi
+            ?.let(NativePatchPresetCatalog::forAbi)
+            .orEmpty()
 
     Card(Modifier.fillMaxWidth()) {
         Column(
@@ -104,7 +122,7 @@ fun ManualNativePatchSection(
                 style = MaterialTheme.typography.bodySmall,
             )
 
-            if (eligible.isEmpty()) {
+            if (eligibleCount == 0) {
                 Text(
                     "Нет целей с подтверждённой бинарной привязкой и file offset.",
                     style = MaterialTheme.typography.bodySmall,
@@ -121,7 +139,7 @@ fun ManualNativePatchSection(
                     Text(
                         "Имя класса/метода или target id. " +
                             "Доступно подтверждённых целей: " +
-                            eligible.size,
+                            eligibleCount,
                     )
                 },
                 singleLine = true,
@@ -132,6 +150,7 @@ fun ManualNativePatchSection(
                 OutlinedButton(
                     onClick = {
                         selectedTargetId = prepared.target.id
+                        replacementHex = ""
                         draft = null
                         preflight = null
                         applyOutcome = null
@@ -153,14 +172,72 @@ fun ManualNativePatchSection(
                 )
             } else if (
                 normalizedFilter.isBlank() &&
-                eligible.size > MAX_VISIBLE_TARGETS
+                eligibleCount > MAX_VISIBLE_TARGETS
             ) {
                 Text(
                     "Показаны первые " + MAX_VISIBLE_TARGETS +
-                        " из " + eligible.size +
+                        " из " + eligibleCount +
                         ". Введите имя метода или класса для поиска.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+            }
+
+            selectedPrepared?.let { selected ->
+                val evidenceTarget = selected.target
+                Text(
+                    "Выбрано: " + evidenceTarget.displayName,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "ABI: " + evidenceTarget.abi +
+                        " · file offset: 0x" +
+                        evidenceTarget.fileOffset
+                            .toString(16) +
+                        (
+                            evidenceTarget.metadataToken
+                                ?.let {
+                                    " · token: 0x" +
+                                        it.toString(16)
+                                }
+                                .orEmpty()
+                            ),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+
+                if (presets.isNotEmpty()) {
+                    Text(
+                        "Готовые шаблоны для " +
+                            evidenceTarget.abi,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        "Шаблон меняет entry point метода. " +
+                            "ModKit не угадывает тип возврата: " +
+                            "выберите вариант, соответствующий реальной сигнатуре.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    presets.forEach { preset ->
+                        OutlinedButton(
+                            onClick = {
+                                replacementHex =
+                                    preset.replacementHex
+                                draft = null
+                                preflight = null
+                                applyOutcome = null
+                                error = null
+                            },
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                        ) {
+                            Text(preset.label)
+                        }
+                        Text(
+                            preset.description,
+                            style =
+                                MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
             }
 
             OutlinedTextField(
@@ -352,5 +429,18 @@ fun ManualNativePatchSection(
         }
     }
 }
+
+private fun isManualNativeEligible(
+    prepared: io.github.ffenuss.modkit.patch.PreparedTarget,
+): Boolean =
+    (
+        prepared.status ==
+            PreparationTargetStatus.CONFIRMED_NEEDS_CHANGE ||
+            prepared.status ==
+            PreparationTargetStatus.READY
+        ) &&
+        prepared.target.runtimeId == "unity_il2cpp" &&
+        prepared.target.fileOffset != null &&
+        prepared.target.abi != null
 
 private const val MAX_VISIBLE_TARGETS = 24
