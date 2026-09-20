@@ -6,7 +6,7 @@ import org.junit.Test
 
 class RuntimeNativeTraceReportTest {
     @Test
-    fun technicalReportNeverAdvertisesUnregisteredNativeTraceCapture() {
+    fun technicalReportAdvertisesOnlyRegisteredNativeTraceCapture() {
         val root = Files.createTempDirectory("modkit-native-trace-report-").toFile()
         try {
             val result = FastAnalysisResult(
@@ -31,7 +31,7 @@ class RuntimeNativeTraceReportTest {
             assertTrue(text.contains("RUNTIME NATIVE TRACE CAPABILITIES"))
             assertTrue(text.contains("- TRACE_PARSER: true"))
             assertTrue(text.contains("- EXECUTABLE_ADDRESS_VALIDATOR: true"))
-            assertTrue(text.contains("- REPACKED_TRACE_CAPTURE: false"))
+            assertTrue(text.contains("- REPACKED_TRACE_CAPTURE: true"))
             assertTrue(text.contains("- NON_ROOT_TRACE_CAPTURE: false"))
             assertTrue(text.contains("- ROOT_TRACE_CAPTURE: false"))
             assertTrue(
@@ -44,7 +44,17 @@ class RuntimeNativeTraceReportTest {
                     "- REPACKED_PASSIVE_DLSYM_CAPTURE: true",
                 ),
             )
-            assertTrue(text.contains("capture-REPACKED_TEST_RUNTIME: false"))
+            assertTrue(
+                text.contains(
+                    "- REPACKED_PASSIVE_JNI_REGISTRATION_CAPTURE: true",
+                ),
+            )
+            assertTrue(
+                text.contains(
+                    "- REPACKED_PASSIVE_JNI_ONLOAD_INVOCATION_CAPTURE: true",
+                ),
+            )
+            assertTrue(text.contains("capture-REPACKED_TEST_RUNTIME: true"))
             assertTrue(text.contains("capture-NON_ROOT_RUNTIME: false"))
             assertTrue(text.contains("capture-ROOT_RUNTIME: false"))
         } finally {
