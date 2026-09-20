@@ -63,6 +63,11 @@ object PatchLabDiagnosticReportWriter {
                 result = result,
                 preparation = preparation,
             )
+            writeSemanticNeighborhoods(
+                zip = zip,
+                result = result,
+                preparation = preparation,
+            )
             writeDump(zip, result)
         }
 
@@ -248,6 +253,9 @@ object PatchLabDiagnosticReportWriter {
             )
             writer.line(
                 "automod/current-opportunities.tsv - current strict finder output and blockers",
+            )
+            writer.line(
+                "automod/semantic-neighborhoods.tsv - model-field signals linked to methods in the same IL2CPP type",
             )
             writer.line()
             writer.line(
@@ -565,6 +573,128 @@ object PatchLabDiagnosticReportWriter {
                         tsv(it)
                     },
                 )
+            }
+        }
+    }
+
+    private fun writeSemanticNeighborhoods(
+        zip: ZipOutputStream,
+        result: FastAnalysisResult,
+        preparation: PatchPreparationPlan?,
+    ) {
+        writeTextEntry(
+            zip,
+            "automod/semantic-neighborhoods.tsv",
+        ) { writer ->
+            writer.line(
+                "category\tfield\tdeclaringTypeIndex\tfieldToken\tmethod\tmethodToken\tparameterCount\treturnTypeIndex\texactBinding\treturnKind\tfileOffset",
+            )
+            if (preparation == null) {
+                writer.line(
+                    "NOT_AVAILABLE\tRun preparation before export",
+                )
+                return@writeTextEntry
+            }
+            val model =
+                result.il2cppFastDump
+                    ?.metadata
+                    ?: return@writeTextEntry
+            val signals =
+                GameplayModificationFinder.find(
+                    result = result,
+                    preparation = preparation,
+                    projectCodeOnly = true,
+                    limit = 256,
+                    perCategoryLimit = 32,
+                ).filter {
+                    it.confidence ==
+                        GameplayModificationConfidence
+                            .SEMANTIC_MODEL_SIGNAL
+                }
+            if (signals.isEmpty()) return@writeTextEntry
+
+            val bindingsByToken =
+                result.il2cppBinaryBinding
+                    ?.evidence
+                    .orEmpty()
+                    .asSequence()
+                    .flatMap { evidence ->
+                        evidence.bindings.asSequence().map {
+                            it.metadataToken to it
+                        }
+                    }
+                    .groupBy(
+                        keySelector = { it.first },
+                        valueTransform = { it.second },
+                    )
+
+            signals.forEach { signal ->
+                val field =
+                    model.fields.firstOrNull {
+                        signal.targetDisplayName ==
+                            it.declaringType + "." +
+                            it.name
+                    } ?: return@forEach
+
+                val methods =
+                    model.methods
+                        .asSequence()
+                        .filter {
+                            it.declaringTypeIndex ==
+                                field.declaringTypeIndex
+                        }
+                        .take(64)
+                        .toList()
+
+                if (methods.isEmpty()) {
+                    writer.line(
+                        listOf(
+                            signal.category.name,
+                            signal.targetDisplayName,
+                            field.declaringTypeIndex,
+                            hex(field.token),
+                            "",
+                            "",
+                            "",
+                            "",
+                            false,
+                            "",
+                            "",
+                        ).joinToString("\t") {
+                            tsv(it)
+                        },
+                    )
+                    return@forEach
+                }
+
+                methods.forEach { method ->
+                    val binding =
+                        bindingsByToken[
+                            method.token
+                        ]
+                            ?.singleOrNull()
+                    writer.line(
+                        listOf(
+                            signal.category.name,
+                            signal.targetDisplayName,
+                            field.declaringTypeIndex,
+                            hex(field.token),
+                            method.declaringType + "." +
+                                method.name,
+                            hex(method.token),
+                            method.parameterCount,
+                            method.returnTypeIndex,
+                            binding != null,
+                            binding?.returnKind?.name
+                                ?: "",
+                            binding?.functionFileOffset
+                                ?.let(::hex)
+                                ?: "",
+                        ).joinToString("\t") {
+                            tsv(it)
+                        },
+                    )
+                }
             }
         }
     }
