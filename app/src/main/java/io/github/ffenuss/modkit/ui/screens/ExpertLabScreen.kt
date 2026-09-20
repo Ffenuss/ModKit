@@ -958,6 +958,77 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 }
             }
 
+            current.result.dexInventory?.let { inventory ->
+                item {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(
+                            Modifier.padding(14.dp),
+                            verticalArrangement =
+                                Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(
+                                "DEX inventory · raw",
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                "entries=" + inventory.records.size +
+                                    " · warnings=" +
+                                    inventory.warnings.size,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            inventory.records
+                                .take(MAX_RAW_DEX_RECORDS)
+                                .forEach { record ->
+                                    Text(
+                                        "• " + record.entryPath +
+                                            " · v" + record.version +
+                                            " · strings=" +
+                                            (record.stringIdsCount
+                                                ?.toString() ?: "n/a") +
+                                            " · types=" +
+                                            (record.typeIdsCount
+                                                ?.toString() ?: "n/a") +
+                                            " · methods=" +
+                                            (record.methodIdsCount
+                                                ?.toString() ?: "n/a") +
+                                            " · classes=" +
+                                            (record.classDefsCount
+                                                ?.toString() ?: "n/a"),
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                    )
+                                    record.warnings
+                                        .take(2)
+                                        .forEach { warning ->
+                                            Text(
+                                                "  ↳ " + warning,
+                                                color =
+                                                    MaterialTheme.colorScheme.error,
+                                                style =
+                                                    MaterialTheme.typography.bodySmall,
+                                            )
+                                        }
+                                }
+                            if (
+                                inventory.records.size >
+                                MAX_RAW_DEX_RECORDS
+                            ) {
+                                Text(
+                                    "… ещё " +
+                                        (
+                                            inventory.records.size -
+                                                MAX_RAW_DEX_RECORDS
+                                            ) +
+                                        " DEX entries",
+                                    style =
+                                        MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             current.result.evidenceGraph
                 ?.takeIf { it.targets.isNotEmpty() }
                 ?.let { graph ->
@@ -1840,3 +1911,4 @@ private fun hex(value: Long?): String =
 
 private const val MAX_RAW_PREVIEW_CHARS = 3_500
 private const val MAX_RAW_BINDINGS = 24
+private const val MAX_RAW_DEX_RECORDS = 32
