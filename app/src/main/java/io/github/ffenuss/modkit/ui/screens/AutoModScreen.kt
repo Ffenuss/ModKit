@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
@@ -33,6 +32,7 @@ import io.github.ffenuss.modkit.build.VerifiedBuildPipeline
 import io.github.ffenuss.modkit.build.VerifiedBuildResult
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.AutoModPreparationCoordinator
+import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
 import io.github.ffenuss.modkit.patch.MutationApplyOutcome
 import io.github.ffenuss.modkit.patch.PatchPreparationPlan
 import io.github.ffenuss.modkit.patch.PreparationTargetStatus
@@ -257,6 +257,24 @@ fun AutoModScreen(
                     candidate.target.fileOffset != null &&
                     candidate.target.abi != null
             }
+            val projectCodeCount =
+                prepared.targets.count { candidate ->
+                    (
+                        candidate.status ==
+                            PreparationTargetStatus
+                                .CONFIRMED_NEEDS_CHANGE ||
+                            candidate.status ==
+                            PreparationTargetStatus.READY
+                        ) &&
+                        candidate.target.runtimeId ==
+                        "unity_il2cpp" &&
+                        candidate.target.fileOffset != null &&
+                        candidate.target.abi != null &&
+                        Il2CppPatchTargetBrowser
+                            .isAssemblyCSharp(
+                                candidate.target,
+                            )
+                }
             item {
                 Card(Modifier.fillMaxWidth()) {
                     val summary = prepared.summary
@@ -294,20 +312,48 @@ fun AutoModScreen(
                 }
             }
 
-            items(prepared.targets.take(12), key = { it.target.id }) { preparedTarget ->
+            item {
                 Card(Modifier.fillMaxWidth()) {
                     Column(
                         Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalArrangement =
+                            Arrangement.spacedBy(5.dp),
                     ) {
-                        Text(preparedTarget.target.displayName, fontWeight = FontWeight.SemiBold)
                         Text(
-                            preparationStatusLabel(preparedTarget.status),
-                            style = MaterialTheme.typography.bodySmall,
+                            "Что можно менять",
+                            fontWeight =
+                                FontWeight.SemiBold,
                         )
-                        preparedTarget.blockers.firstOrNull()?.let {
-                            Text(it, style = MaterialTheme.typography.bodySmall)
+                        if (projectCodeCount > 0) {
+                            Text(
+                                "Код самой игры/приложения " +
+                                    "(Assembly-CSharp): " +
+                                    projectCodeCount +
+                                    " подтверждённых методов.",
+                                style =
+                                    MaterialTheme
+                                        .typography
+                                        .bodySmall,
+                            )
                         }
+                        Text(
+                            "Всего точных IL2CPP-методов: " +
+                                manualEligibleCount +
+                                ". Библиотеки Unity/.NET и плагины " +
+                                "по умолчанию скрываются внутри Patch Lab, " +
+                                "чтобы не смешивать их с кодом проекта.",
+                            style =
+                                MaterialTheme.typography
+                                    .bodySmall,
+                        )
+                        Text(
+                            "Название метода показывает только его имя. " +
+                                "ModKit не приписывает ему игровой смысл, " +
+                                "если он не подтверждён анализом.",
+                            style =
+                                MaterialTheme.typography
+                                    .bodySmall,
+                        )
                     }
                 }
             }
@@ -322,9 +368,15 @@ fun AutoModScreen(
                             if (showManualPatch) {
                                 "Скрыть ручной Patch Lab"
                             } else {
-                                "Выбрать подтверждённый IL2CPP-метод (" +
-                                    manualEligibleCount +
-                                    ")"
+                                if (projectCodeCount > 0) {
+                                    "Выбрать изменения в коде проекта (" +
+                                        projectCodeCount +
+                                        ")"
+                                } else {
+                                    "Выбрать подтверждённый IL2CPP-метод (" +
+                                        manualEligibleCount +
+                                        ")"
+                                }
                             },
                         )
                     }
