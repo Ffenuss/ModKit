@@ -17,7 +17,8 @@ data class Il2CppBinaryBindingResult(
 
 object Il2CppBinaryBindingEngine {
     private const val MAX_LIBRARY_BYTES = 2L * 1024L * 1024L * 1024L
-    private const val EXTRACTION_BUFFER_BYTES = 16 * 1024
+    private const val EXTRACTION_READ_BYTES = 16 * 1024
+    private const val EXTRACTION_WRITE_BUFFER_BYTES = 256 * 1024
     private const val HEARTBEAT_MS = 1_000L
 
     fun analyze(
@@ -161,10 +162,10 @@ object Il2CppBinaryBindingEngine {
 
                 zip.getInputStream(entry).use { input ->
                     FileOutputStream(output)
-                        .buffered(EXTRACTION_BUFFER_BYTES)
+                        .buffered(EXTRACTION_WRITE_BUFFER_BYTES)
                         .use { sink ->
                         val buffer =
-                            ByteArray(EXTRACTION_BUFFER_BYTES)
+                            ByteArray(EXTRACTION_READ_BYTES)
                         while (true) {
                             if (cancellation.isCancelled()) throw AnalysisCancelledException()
                             val read = input.read(buffer)
