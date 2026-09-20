@@ -50,6 +50,7 @@ fun ManualNativePatchSection(
     val key = analysis.index.artifactSha256 + ":" + preparation.preparedAtEpochMs
 
     var selectedTargetId by remember(key) { mutableStateOf<String?>(null) }
+    var targetFilter by remember(key) { mutableStateOf("") }
     var replacementHex by remember(key) { mutableStateOf("") }
     var draft by remember(key) { mutableStateOf<NativeMutationDraft?>(null) }
     var preflight by remember(key) { mutableStateOf<MutationPreflightResult?>(null) }
@@ -69,6 +70,27 @@ fun ManualNativePatchSection(
             prepared.target.fileOffset != null &&
             prepared.target.abi != null
     }
+    val normalizedFilter = targetFilter.trim().lowercase()
+    val visibleEligible = eligible
+        .asSequence()
+        .filter { prepared ->
+            normalizedFilter.isBlank() ||
+                prepared.target.displayName
+                    .lowercase()
+                    .contains(normalizedFilter) ||
+                prepared.target.id
+                    .lowercase()
+                    .contains(normalizedFilter) ||
+                prepared.target.declaringType
+                    ?.lowercase()
+                    ?.contains(normalizedFilter) == true ||
+                prepared.target.memberName
+                    ?.lowercase()
+                    ?.contains(normalizedFilter) == true
+        }
+        .take(MAX_VISIBLE_TARGETS)
+        .toList()
+
 
     Card(Modifier.fillMaxWidth()) {
         Column(
@@ -91,7 +113,21 @@ fun ManualNativePatchSection(
             }
 
             Text("Цель", fontWeight = FontWeight.SemiBold)
-            eligible.take(MAX_VISIBLE_TARGETS).forEach { prepared ->
+            OutlinedTextField(
+                value = targetFilter,
+                onValueChange = { targetFilter = it },
+                label = { Text("Поиск метода") },
+                supportingText = {
+                    Text(
+                        "Имя класса/метода или target id. " +
+                            "Доступно подтверждённых целей: " +
+                            eligible.size,
+                    )
+                },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            visibleEligible.forEach { prepared ->
                 val selected = selectedTargetId == prepared.target.id
                 OutlinedButton(
                     onClick = {
@@ -110,11 +146,19 @@ fun ManualNativePatchSection(
                     )
                 }
             }
-            if (eligible.size > MAX_VISIBLE_TARGETS) {
+            if (visibleEligible.isEmpty()) {
+                Text(
+                    "По этому запросу подтверждённых методов не найдено.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            } else if (
+                normalizedFilter.isBlank() &&
+                eligible.size > MAX_VISIBLE_TARGETS
+            ) {
                 Text(
                     "Показаны первые " + MAX_VISIBLE_TARGETS +
                         " из " + eligible.size +
-                        ". Поиск по целям будет добавлен в следующем UI-проходе.",
+                        ". Введите имя метода или класса для поиска.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -309,4 +353,4 @@ fun ManualNativePatchSection(
     }
 }
 
-private const val MAX_VISIBLE_TARGETS = 8
+private const val MAX_VISIBLE_TARGETS = 24
