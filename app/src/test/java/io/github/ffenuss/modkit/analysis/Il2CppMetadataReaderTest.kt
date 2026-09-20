@@ -38,6 +38,37 @@ class Il2CppMetadataReaderTest {
     }
 
     @Test
+    fun boundedLimitReportsParsedAndDeclaredCounts() {
+        val bytes = fixture(version = 29)
+        val file = Files.createTempFile(
+            "modkit-il2cpp-bounded",
+            ".dat",
+        ).toFile()
+        file.writeBytes(bytes)
+        try {
+            val model = Il2CppMetadataReader.read(
+                file = file,
+                cancellation = neverCancelled(),
+                progress = ProgressSink { },
+                limits = Il2CppMetadataReader.Limits(
+                    maxMethods = 0,
+                ),
+            )
+
+            assertTrue(model.truncated)
+            assertEquals(1, model.declaredMethodCount)
+            assertTrue(model.methods.isEmpty())
+            assertTrue(
+                model.warnings.any {
+                    it.contains("methods 0/1")
+                },
+            )
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
     fun unsupportedVersionIsValidatedWithoutFakeReconstruction() {
         val bytes = ByteArray(256)
         val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
