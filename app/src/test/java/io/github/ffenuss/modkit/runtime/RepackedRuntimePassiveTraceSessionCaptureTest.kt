@@ -488,7 +488,11 @@ class RepackedRuntimePassiveTraceSessionCaptureTest {
             appendLine(
                 "traceBytes=" + traceBytes.size,
             )
-            append("truncated=$truncated")
+            appendLine("truncated=$truncated")
+            appendLine("producerKind=PLT_DLSYM_GOT")
+            appendLine("hookedSlotCount=1")
+            appendLine("producerIncomplete=$truncated")
+            append("producerRestoreFailed=false")
         }.toByteArray(Charsets.UTF_8)
         return header +
             RepackedRuntimeNativeTraceExportProtocol
