@@ -92,6 +92,85 @@ class EvidenceGraphBuilderTest {
     }
 
     @Test
+    fun exactBindingsKeepOwningLibraryWithoutSearchingSiblingLists() {
+        val first =
+            methodBinding()
+        val second =
+            first.copy(
+                methodIndex = 1,
+                managedIdentity = "Game.Player.Jump",
+                metadataToken = 0x06000002,
+                slotIndex = 1,
+                functionVirtualAddress = 0x7000,
+                functionFileOffset = 0x900,
+                moduleName = "Second.dll",
+                imageName = "Second.dll",
+            )
+        val secondLibrary =
+            "split_config.arm64_v8a.apk:" +
+                "lib/arm64-v8a/libil2cpp.so"
+        val binary =
+            Il2CppBinaryBindingResult(
+                evidence =
+                    listOf(
+                        binaryEvidence(
+                            libraryEntry =
+                                LIBRARY_ENTRY,
+                            binding = first,
+                        ),
+                        binaryEvidence(
+                            libraryEntry =
+                                secondLibrary,
+                            binding = second,
+                        ),
+                    ),
+                exactBindingCount = 2,
+                warnings = emptyList(),
+            )
+        val result =
+            baseResult()
+                .copy(
+                    il2cppFastDump = fastDump(),
+                    il2cppBinaryBinding = binary,
+                    il2cppEvidence =
+                        EvidenceGate.evaluate(
+                            artifactSha256 =
+                                ARTIFACT_SHA,
+                            metadataIdentityExact =
+                                true,
+                            binaryIdentityExact =
+                                true,
+                            runtimeConfirmed =
+                                false,
+                            mutationValidated =
+                                false,
+                            requestedChangeReady =
+                                false,
+                        ),
+                )
+                .withEvidenceGraph()
+
+        val byName =
+            requireNotNull(
+                result.evidenceGraph,
+            ).targets.associateBy {
+                it.displayName
+            }
+        assertEquals(
+            LIBRARY_ENTRY,
+            byName.getValue(
+                "Game.Player.Hit",
+            ).artifact,
+        )
+        assertEquals(
+            secondLibrary,
+            byName.getValue(
+                "Game.Player.Jump",
+            ).artifact,
+        )
+    }
+
+    @Test
     fun failedStaticBindingStaysExplicitAndQueuesUnavailableRuntimeEscalation() {
         val blocker = EvidenceBlocker(
             code = "STRIPPED_CODEGEN_MODULE_ARRAY_UNRESOLVED",
@@ -258,6 +337,35 @@ class EvidenceGraphBuilderTest {
         dumpFilePath = "/tmp/dump.cs",
         preview = "class Player",
         warnings = emptyList(),
+    )
+
+    private fun binaryEvidence(
+        libraryEntry: String,
+        binding: Il2CppMethodBinaryBinding,
+    ) = Il2CppBinaryEvidence(
+        libraryEntry = libraryEntry,
+        machine = 183,
+        pointerSize = 8,
+        relativeRelocationCount = 0,
+        codeRegistrationVirtualAddress = 0x1000,
+        metadataRegistrationVirtualAddress = 0x2000,
+        codegenRegisterVirtualAddress = 0x3000,
+        moduleArrayDiscovery = "TEST",
+        modules =
+            listOf(
+                Il2CppCodeGenModuleEvidence(
+                    moduleName =
+                        binding.moduleName,
+                    moduleVirtualAddress = 0x4000,
+                    methodPointerCount = 2,
+                    methodPointersVirtualAddress =
+                        0x5000,
+                    sampledPointers = 2,
+                    executablePointers = 2,
+                ),
+            ),
+        bindings = listOf(binding),
+        blockers = emptyList(),
     )
 
     private fun methodBinding() = Il2CppMethodBinaryBinding(
