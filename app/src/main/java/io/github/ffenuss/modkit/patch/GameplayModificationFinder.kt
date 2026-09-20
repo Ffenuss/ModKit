@@ -40,6 +40,7 @@ enum class GameplayMutationAction(
 enum class GameplayModificationConfidence {
     EXACT_ACTION,
     STRONG_NUMERIC_CANDIDATE,
+    SEMANTIC_MODEL_SIGNAL,
 }
 
 data class GameplayModificationOpportunity(
@@ -276,9 +277,15 @@ object GameplayModificationFinder {
                 )
                 .toList()
 
+        val metadataSignals =
+            discoverMetadataFieldSignals(
+                result = result,
+                projectCodeOnly = projectCodeOnly,
+            )
+
         val categoryCounts =
             mutableMapOf<GameplayModificationCategory, Int>()
-        return ranked
+        return (ranked + metadataSignals)
             .asSequence()
             .filter { opportunity ->
                 val count =
@@ -326,45 +333,31 @@ object GameplayModificationFinder {
             return true
         }
 
-        val type =
-            target.declaringType
-                .orEmpty()
-                .lowercase()
-        if (
-            type.endsWith("wrap") ||
-            type.contains("luabinder") ||
-            type.contains("objecttranslator")
-        ) {
-            return true
-        }
-        if (
-            infrastructureTypePrefixes.any {
-                type.startsWith(it)
-            }
-        ) {
-            return true
-        }
-        if (
-            generatedTypeMarkers.any {
-                it in type
-            }
-        ) {
-            return true
-        }
-        return false
+        return isInfrastructureOrGeneratedType(
+            target.declaringType.orEmpty(),
+        )
     }
 
     private fun isSemanticallyPlausible(
         target: EvidenceTarget,
         category: GameplayModificationCategory,
         methodTokens: List<String>,
+    ): Boolean =
+        isSemanticallyPlausible(
+            declaringType = target.declaringType.orEmpty(),
+            category = category,
+            semanticTokens = stripAccessor(methodTokens),
+        )
+
+    private fun isSemanticallyPlausible(
+        declaringType: String,
+        category: GameplayModificationCategory,
+        semanticTokens: List<String>,
     ): Boolean {
         val typeTokens =
-            tokenizeIdentifier(
-                target.declaringType.orEmpty(),
-            )
+            tokenizeIdentifier(declaringType)
         val semantic =
-            stripAccessor(methodTokens)
+            semanticTokens
 
         val rejectedTypePhrases =
             categoryRejectedTypePhrases[category].orEmpty()
@@ -394,6 +387,163 @@ object GameplayModificationFinder {
             .any {
                 containsPhrase(semantic, it)
             }
+    }
+
+    private fun discoverMetadataFieldSignals(
+        result: FastAnalysisResult,
+        projectCodeOnly: Boolean,
+    ): List<GameplayModificationOpportunity> {
+        val model =
+            result.il2cppFastDump
+                ?.metadata
+                ?: return emptyList()
+        if (!model.structuredSupported) return emptyList()
+
+        val imageByTypeIndex =
+            HashMap<Int, String>()
+        model.images.forEach { image ->
+            if (image.typeStart < 0 || image.typeCount <= 0) {
+                return@forEach
+            }
+            repeat(image.typeCount) { relative ->
+                imageByTypeIndex.putIfAbsent(
+                    image.typeStart + relative,
+                    image.name,
+                )
+            }
+        }
+
+        return model.fields
+            .asSequence()
+            .mapNotNull { field ->
+                val imageName =
+                    imageByTypeIndex[field.declaringTypeIndex]
+                if (
+                    projectCodeOnly &&
+                    !isAssemblyCSharpImage(imageName)
+                ) {
+                    return@mapNotNull null
+                }
+
+                val fieldTokens =
+                    tokenizeIdentifier(field.name)
+                if (fieldTokens.isEmpty()) {
+                    return@mapNotNull null
+                }
+                val category =
+                    classifyField(fieldTokens)
+                        ?: return@mapNotNull null
+                if (
+                    !isSemanticallyPlausible(
+                        declaringType = field.declaringType,
+                        category = category,
+                        semanticTokens = fieldTokens,
+                    )
+                ) {
+                    return@mapNotNull null
+                }
+                if (
+                    isInfrastructureOrGeneratedType(
+                        field.declaringType,
+                    )
+                ) {
+                    return@mapNotNull null
+                }
+
+                GameplayModificationOpportunity(
+                    id =
+                        "model-field:" +
+                            category.name.lowercase() + ":" +
+                            field.declaringTypeIndex + ":" +
+                            field.token.toString(16),
+                    category = category,
+                    title =
+                        category.title +
+                            ": сигнал поля " +
+                            field.name,
+                    targetId =
+                        "il2cpp:field:" +
+                            field.declaringTypeIndex + ":" +
+                            field.token.toString(16),
+                    targetDisplayName =
+                        field.declaringType + "." +
+                            field.name,
+                    action =
+                        GameplayMutationAction
+                            .DISCOVERY_ONLY,
+                    replacementHex = null,
+                    selectable = false,
+                    blocker =
+                        "Поле найдено в IL2CPP metadata, но runtime offset, экземпляр объекта " +
+                            "и безопасная запись не доказаны. Автопатч запрещён.",
+                    evidenceSummary =
+                        "IL2CPP metadata field · " +
+                            (imageName ?: "image не определён") +
+                            " · token 0x" +
+                            field.token.toString(16),
+                    confidence =
+                        GameplayModificationConfidence
+                            .SEMANTIC_MODEL_SIGNAL,
+                )
+            }
+            .distinctBy {
+                it.targetDisplayName.lowercase()
+            }
+            .sortedWith(
+                compareBy<GameplayModificationOpportunity> {
+                    it.category.priority
+                }
+                    .thenBy {
+                        it.targetDisplayName.lowercase()
+                    },
+            )
+            .toList()
+    }
+
+    private fun classifyField(
+        fieldTokens: List<String>,
+    ): GameplayModificationCategory? =
+        fieldCategoryPhrases
+            .firstOrNull { (_, phrases) ->
+                phrases.any {
+                    containsPhrase(fieldTokens, it)
+                }
+            }
+            ?.first
+
+    private fun isAssemblyCSharpImage(
+        imageName: String?,
+    ): Boolean {
+        val normalized =
+            imageName
+                ?.lowercase()
+                ?: return false
+        return normalized == "assembly-csharp" ||
+            normalized == "assembly-csharp.dll"
+    }
+
+    private fun isInfrastructureOrGeneratedType(
+        declaringType: String,
+    ): Boolean {
+        val type =
+            declaringType.lowercase()
+        if (
+            type.endsWith("wrap") ||
+            type.contains("luabinder") ||
+            type.contains("objecttranslator")
+        ) {
+            return true
+        }
+        if (
+            infrastructureTypePrefixes.any {
+                type.startsWith(it)
+            }
+        ) {
+            return true
+        }
+        return generatedTypeMarkers.any {
+            it in type
+        }
     }
 
     private fun containsForbiddenSurface(
@@ -1280,6 +1430,130 @@ object GameplayModificationFinder {
                     p("enemy health"),
                     p("enemy damage"),
                     p("enemy speed"),
+                ),
+        )
+
+    private val fieldCategoryPhrases =
+        listOf(
+            GameplayModificationCategory.COLLISION to
+                listOf(
+                    p("no clip"),
+                    p("ignore collision"),
+                    p("collision"),
+                    p("block move type"),
+                ),
+            GameplayModificationCategory.STAMINA to
+                listOf(
+                    p("max stamina"),
+                    p("stamina"),
+                    p("max energy"),
+                    p("energy"),
+                ),
+            GameplayModificationCategory.COOLDOWN to
+                listOf(
+                    p("cooldown"),
+                    p("cooldown time"),
+                    p("recharge time"),
+                ),
+            GameplayModificationCategory.ATTACK_SPEED to
+                listOf(
+                    p("attack speed"),
+                    p("attack rate"),
+                    p("fire rate"),
+                ),
+            GameplayModificationCategory.REGENERATION to
+                listOf(
+                    p("health regen"),
+                    p("health regeneration"),
+                    p("regen rate"),
+                    p("healing rate"),
+                ),
+            GameplayModificationCategory.MOVEMENT to
+                listOf(
+                    p("move speed"),
+                    p("movement speed"),
+                    p("max speed"),
+                    p("speed multiplier"),
+                    p("speed mutiplien"),
+                    p("run speed"),
+                    p("walk speed"),
+                    p("sprint speed"),
+                    p("jump height"),
+                    p("jump force"),
+                    p("gravity scale"),
+                ),
+            GameplayModificationCategory.SURVIVABILITY to
+                listOf(
+                    p("max health"),
+                    p("max hp"),
+                    p("health"),
+                    p("hit points"),
+                    p("player hp"),
+                ),
+            GameplayModificationCategory.DAMAGE to
+                listOf(
+                    p("attack damage"),
+                    p("base damage"),
+                    p("damage multiplier"),
+                    p("critical damage"),
+                    p("crit damage"),
+                    p("damage"),
+                    p("attack power"),
+                ),
+            GameplayModificationCategory.PROGRESSION to
+                listOf(
+                    p("experience"),
+                    p("experience points"),
+                    p("xp"),
+                    p("player xp"),
+                    p("player level"),
+                    p("level"),
+                    p("rank"),
+                    p("quality"),
+                    p("skill point"),
+                    p("skill points"),
+                    p("talent point"),
+                    p("talent points"),
+                ),
+            GameplayModificationCategory.INVENTORY to
+                listOf(
+                    p("max ammo"),
+                    p("ammo"),
+                    p("item count"),
+                    p("inventory capacity"),
+                    p("carry weight"),
+                    p("backpack capacity"),
+                ),
+            GameplayModificationCategory.DROPS to
+                listOf(
+                    p("drop rate"),
+                    p("drop chance"),
+                    p("loot chance"),
+                    p("loot multiplier"),
+                    p("reward multiplier"),
+                ),
+            GameplayModificationCategory.DIFFICULTY to
+                listOf(
+                    p("difficulty"),
+                    p("enemy health"),
+                    p("enemy damage"),
+                    p("enemy speed"),
+                ),
+            GameplayModificationCategory.WORLD to
+                listOf(
+                    p("time scale"),
+                    p("game time"),
+                    p("gravity scale"),
+                    p("jump height"),
+                    p("jump force"),
+                ),
+            GameplayModificationCategory.CAMERA to
+                listOf(
+                    p("field of view"),
+                    p("camera fov"),
+                    p("fov"),
+                    p("zoom rate"),
+                    p("zoom"),
                 ),
         )
 
