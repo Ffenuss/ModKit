@@ -299,6 +299,36 @@ object Il2CppCodeGenScanner {
                         pairIndex * pairStride -
                         pointerSize
                 if (base <= 0L) continue
+
+                val typesPointerField =
+                    base +
+                        METADATA_REGISTRATION_TYPES_PAIR_INDEX *
+                            pairStride +
+                        pointerSize
+                val fieldOffsetsPointerField =
+                    base +
+                        METADATA_REGISTRATION_FIELD_OFFSETS_PAIR_INDEX *
+                            pairStride +
+                        pointerSize
+                val typeSizesPointerField =
+                    base +
+                        METADATA_REGISTRATION_TYPE_SIZES_PAIR_INDEX *
+                            pairStride +
+                        pointerSize
+                if (
+                    image.relativeRelocationValueAt(
+                        typesPointerField,
+                    ) == null ||
+                    image.relativeRelocationValueAt(
+                        fieldOffsetsPointerField,
+                    ) == null ||
+                    image.relativeRelocationValueAt(
+                        typeSizesPointerField,
+                    ) == null
+                ) {
+                    continue
+                }
+
                 if (
                     validateMetadataRegistrationCandidate(
                         image = image,
