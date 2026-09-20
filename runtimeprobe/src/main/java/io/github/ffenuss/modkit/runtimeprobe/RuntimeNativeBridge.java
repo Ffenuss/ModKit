@@ -71,7 +71,7 @@ public final class RuntimeNativeBridge {
         return nativePassiveJniTraceActive();
     }
 
-    public static int passiveJniOnLoadHookedSlotCount() {
+    public static int passiveJniOnLoadLookupHookedSlotCount() {
         if (!ensureLoaded()) return 0;
         return nativePassiveJniOnLoadHookedSlotCount();
     }
