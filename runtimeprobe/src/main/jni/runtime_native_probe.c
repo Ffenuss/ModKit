@@ -22,7 +22,6 @@ typedef jint (JNICALL *register_natives_fn)(
         jclass,
         const JNINativeMethod*,
         jint);
-typedef jint (JNICALL *jni_onload_fn)(JavaVM*, void*);
 
 typedef struct {
     void** slot;
@@ -30,18 +29,9 @@ typedef struct {
     int original_prot;
 } patched_slot;
 
-typedef struct {
-    jni_onload_fn original;
-    void* address;
-    char module[256];
-    unsigned long generation;
-    int armed;
-} pending_jni_onload;
-
 static JavaVM* g_vm = NULL;
 static jclass g_trace_buffer_class = NULL;
 static jmethodID g_append_dlsym = NULL;
-static jmethodID g_append_jni_onload = NULL;
 static jmethodID g_append_register_native_class = NULL;
 
 static pthread_mutex_t g_hook_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -69,7 +59,6 @@ static _Atomic(register_natives_fn) g_real_register_natives = NULL;
 static int g_register_natives_original_prot = 0;
 static _Thread_local int g_in_art_dlsym_wrapper = 0;
 static _Thread_local int g_in_register_natives_wrapper = 0;
-static _Thread_local pending_jni_onload g_pending_jni_onload = {0};
 
 static const char* base_name(const char* path) {
     if (path == NULL) return NULL;
@@ -745,68 +734,6 @@ static void emit_dlsym_event(
     }
 }
 
-static void emit_jni_onload_event(
-        const char* module,
-        void* address) {
-    if (g_vm == NULL || g_trace_buffer_class == NULL ||
-            g_append_jni_onload == NULL || module == NULL ||
-            address == NULL) {
-        atomic_store(&g_jni_incomplete, 1);
-        return;
-    }
-
-    JNIEnv* env = NULL;
-    int attached = 0;
-    const jint state = (*g_vm)->GetEnv(
-            g_vm,
-            (void**)&env,
-            JNI_VERSION_1_6);
-    if (state == JNI_EDETACHED) {
-        if ((*g_vm)->AttachCurrentThread(
-                g_vm,
-                &env,
-                NULL) != JNI_OK) {
-            atomic_store(&g_jni_incomplete, 1);
-            return;
-        }
-        attached = 1;
-    } else if (state != JNI_OK || env == NULL) {
-        atomic_store(&g_jni_incomplete, 1);
-        return;
-    }
-
-    if ((*env)->ExceptionCheck(env)) {
-        atomic_store(&g_jni_incomplete, 1);
-        if (attached) {
-            (*g_vm)->DetachCurrentThread(g_vm);
-        }
-        return;
-    }
-
-    jstring module_string = (*env)->NewStringUTF(env, module);
-    if (module_string != NULL) {
-        (*env)->CallStaticBooleanMethod(
-                env,
-                g_trace_buffer_class,
-                g_append_jni_onload,
-                module_string,
-                (jlong)(uintptr_t)address);
-    }
-    if ((*env)->ExceptionCheck(env)) {
-        (*env)->ExceptionClear(env);
-        atomic_store(&g_jni_incomplete, 1);
-    }
-    if (module_string != NULL) {
-        (*env)->DeleteLocalRef(env, module_string);
-    } else {
-        atomic_store(&g_jni_incomplete, 1);
-    }
-
-    if (attached) {
-        (*g_vm)->DetachCurrentThread(g_vm);
-    }
-}
-
 static void emit_register_native_event(
         JNIEnv* env,
         jclass clazz,
@@ -865,29 +792,6 @@ static void emit_register_native_event(
     }
 }
 
-static jint JNICALL modkit_trace_jni_onload(
-        JavaVM* vm,
-        void* reserved) {
-    pending_jni_onload pending = g_pending_jni_onload;
-    g_pending_jni_onload.armed = 0;
-    if (!pending.armed || pending.original == NULL) {
-        atomic_store(&g_jni_incomplete, 1);
-        return JNI_ERR;
-    }
-
-    atomic_fetch_add(&g_jni_inflight, 1);
-    const jint result = pending.original(vm, reserved);
-    if (atomic_load(&g_jni_trace_active) &&
-            pending.generation ==
-                    atomic_load(&g_jni_generation)) {
-        emit_jni_onload_event(
-                pending.module,
-                pending.address);
-    }
-    atomic_fetch_sub(&g_jni_inflight, 1);
-    return result;
-}
-
 static void* modkit_trace_art_dlsym(
         void* handle,
         const char* symbol) {
@@ -908,38 +812,7 @@ static void* modkit_trace_art_dlsym(
                 app_owned_path(info.dli_fname)) {
             const char* module = base_name(info.dli_fname);
             if (valid_module(module)) {
-                if (g_pending_jni_onload.armed) {
-                    atomic_store(&g_jni_incomplete, 1);
-                } else {
-                    union {
-                        void* object;
-                        jni_onload_fn function;
-                    } conversion;
-                    conversion.object = result;
-                    const size_t module_length = strlen(module);
-                    if (conversion.function != NULL &&
-                            module_length <
-                                    sizeof(g_pending_jni_onload.module)) {
-                        g_pending_jni_onload.original =
-                                conversion.function;
-                        g_pending_jni_onload.address = result;
-                        memcpy(
-                                g_pending_jni_onload.module,
-                                module,
-                                module_length + 1);
-                        g_pending_jni_onload.generation =
-                                atomic_load(&g_jni_generation);
-                        g_pending_jni_onload.armed = 1;
-                        union {
-                            jni_onload_fn function;
-                            void* object;
-                        } wrapper;
-                        wrapper.function = modkit_trace_jni_onload;
-                        result = wrapper.object;
-                    } else {
-                        atomic_store(&g_jni_incomplete, 1);
-                    }
-                }
+                emit_dlsym_event(module, symbol, result);
             }
         }
     }
@@ -1168,15 +1041,6 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
             "appendDlsym",
             "(Ljava/lang/String;Ljava/lang/String;J)Z");
     if (g_append_dlsym == NULL) {
-        (*env)->ExceptionClear(env);
-        return JNI_ERR;
-    }
-    g_append_jni_onload = (*env)->GetStaticMethodID(
-            env,
-            g_trace_buffer_class,
-            "appendJniOnLoad",
-            "(Ljava/lang/String;J)Z");
-    if (g_append_jni_onload == NULL) {
         (*env)->ExceptionClear(env);
         return JNI_ERR;
     }
