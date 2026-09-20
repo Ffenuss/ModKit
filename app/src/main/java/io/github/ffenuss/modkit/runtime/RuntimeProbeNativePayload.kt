@@ -27,6 +27,8 @@ object RuntimeProbeNativePayloadValidator {
         "RuntimeNativeBridge_nativeResolveLoadedSymbol",
         "RuntimeNativeBridge_nativeStartPassiveDlsymTrace",
         "RuntimeNativeBridge_nativeStopPassiveDlsymTrace",
+        "RuntimeNativeBridge_nativeStartPassiveJniTrace",
+        "RuntimeNativeBridge_nativeStopPassiveJniTrace",
     ).map {
         it.toByteArray(Charsets.US_ASCII)
     }
