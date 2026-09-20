@@ -81,6 +81,11 @@ public final class RuntimeNativeBridge {
         return nativePassiveRegisterNativesHooked();
     }
 
+    public static boolean passiveJniOnLoadInvocationReady() {
+        if (!ensureLoaded()) return false;
+        return nativePassiveJniOnLoadInvocationReady();
+    }
+
     public static boolean passiveJniIncomplete() {
         if (!ensureLoaded()) return true;
         return nativePassiveJniIncomplete();
@@ -146,6 +151,8 @@ public final class RuntimeNativeBridge {
     private static native int nativePassiveJniOnLoadHookedSlotCount();
 
     private static native boolean nativePassiveRegisterNativesHooked();
+
+    private static native boolean nativePassiveJniOnLoadInvocationReady();
 
     private static native boolean nativePassiveJniIncomplete();
 
