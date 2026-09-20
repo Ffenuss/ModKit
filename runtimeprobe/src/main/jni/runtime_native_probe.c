@@ -337,7 +337,11 @@ static void emit_dlsym_event(
             (void**)&env,
             JNI_VERSION_1_6);
     if (state == JNI_EDETACHED) {
-        if ((*g_vm)->AttachCurrentThread(g_vm, &env, NULL) != JNI_OK) {
+        if (
+                (*g_vm)->AttachCurrentThread(
+                        g_vm,
+                        (void**)&env,
+                        NULL) != JNI_OK) {
             return;
         }
         attached = 1;
