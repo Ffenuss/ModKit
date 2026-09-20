@@ -28,6 +28,7 @@ import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.Il2CppNativeMutationDraftBuilder
+import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
 import io.github.ffenuss.modkit.patch.MutationApplyCoordinator
 import io.github.ffenuss.modkit.patch.MutationApplyOutcome
 import io.github.ffenuss.modkit.patch.MutationPreflightEngine
@@ -75,19 +76,10 @@ fun ManualNativePatchSection(
             .asSequence()
             .filter(::isManualNativeEligible)
             .filter { prepared ->
-                normalizedFilter.isBlank() ||
-                    prepared.target.displayName
-                        .lowercase()
-                        .contains(normalizedFilter) ||
-                    prepared.target.id
-                        .lowercase()
-                        .contains(normalizedFilter) ||
-                    prepared.target.declaringType
-                        ?.lowercase()
-                        ?.contains(normalizedFilter) == true ||
-                    prepared.target.memberName
-                        ?.lowercase()
-                        ?.contains(normalizedFilter) == true
+                Il2CppPatchTargetBrowser.matches(
+                    target = prepared.target,
+                    query = normalizedFilter,
+                )
             }
             .take(MAX_VISIBLE_TARGETS)
             .toList()
@@ -109,6 +101,15 @@ fun ManualNativePatchSection(
             ?.abi
             ?.let(NativePatchPresetCatalog::forAbi)
             .orEmpty()
+
+    val assemblyCSharpCount = remember(key) {
+        preparation.targets.count {
+            isManualNativeEligible(it) &&
+                Il2CppPatchTargetBrowser.isAssemblyCSharp(
+                    it.target,
+                )
+        }
+    }
 
     val selectedSharedBodyCount = remember(
         key,
@@ -152,7 +153,7 @@ fun ManualNativePatchSection(
                 label = { Text("Поиск метода") },
                 supportingText = {
                     Text(
-                        "Имя класса/метода или target id. " +
+                        "Имя класса/метода, image/assembly или target id. " +
                             "Доступно подтверждённых целей: " +
                             eligibleCount,
                     )
@@ -160,6 +161,42 @@ fun ManualNativePatchSection(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            if (assemblyCSharpCount > 0) {
+                OutlinedButton(
+                    onClick = {
+                        targetFilter = "Assembly-CSharp"
+                        selectedTargetId = null
+                        replacementHex = ""
+                        draft = null
+                        preflight = null
+                        applyOutcome = null
+                        error = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "Показать Assembly-CSharp (" +
+                            assemblyCSharpCount +
+                            ")",
+                    )
+                }
+            }
+            if (normalizedFilter.isNotBlank()) {
+                OutlinedButton(
+                    onClick = {
+                        targetFilter = ""
+                        selectedTargetId = null
+                        replacementHex = ""
+                        draft = null
+                        preflight = null
+                        applyOutcome = null
+                        error = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Сбросить поиск")
+                }
+            }
             visibleEligible.forEach { prepared ->
                 val selected = selectedTargetId == prepared.target.id
                 OutlinedButton(
@@ -224,6 +261,15 @@ fun ManualNativePatchSection(
                             ),
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Il2CppPatchTargetBrowser
+                    .imageName(evidenceTarget)
+                    ?.let { image ->
+                        Text(
+                            "Image/assembly: " + image,
+                            style =
+                                MaterialTheme.typography.bodySmall,
+                        )
+                    }
 
                 if (selectedSharedBodyCount > 1) {
                     Text(
@@ -275,6 +321,15 @@ fun ManualNativePatchSection(
                 }
             }
 
+            if (selectedPrepared == null) {
+                Text(
+                    "Шаг 1: найдите и выберите подтверждённый метод. " +
+                        "После выбора появятся готовые ARM64-шаблоны и ручной ввод байтов.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            if (selectedPrepared != null) {
             OutlinedTextField(
                 value = replacementHex,
                 onValueChange = {
@@ -335,6 +390,7 @@ fun ManualNativePatchSection(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Проверить изменение")
+            }
             }
 
             draft?.let { currentDraft ->
