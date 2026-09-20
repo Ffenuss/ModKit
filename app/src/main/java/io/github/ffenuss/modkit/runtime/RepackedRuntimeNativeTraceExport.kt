@@ -13,6 +13,10 @@ data class RepackedRuntimeNativeTraceExport(
     val traceSha256: String,
     val traceBytes: Int,
     val truncated: Boolean,
+    val producerKind: String,
+    val hookedSlotCount: Int,
+    val producerIncomplete: Boolean,
+    val producerRestoreFailed: Boolean,
     val text: String,
 )
 
@@ -79,6 +83,10 @@ object RepackedRuntimeNativeTraceExportProtocol {
             "traceSha256",
             "traceBytes",
             "truncated",
+            "producerKind",
+            "hookedSlotCount",
+            "producerIncomplete",
+            "producerRestoreFailed",
         )
         require(fields.keys == required) {
             "Runtime native trace header fields do not match schema."
@@ -99,6 +107,17 @@ object RepackedRuntimeNativeTraceExportProtocol {
             .toIntOrNull()
         val truncated = fields.getValue("truncated")
             .toBooleanStrictOrNull()
+        val producerKind =
+            fields.getValue("producerKind")
+        val hookedSlotCount =
+            fields.getValue("hookedSlotCount")
+                .toIntOrNull()
+        val producerIncomplete =
+            fields.getValue("producerIncomplete")
+                .toBooleanStrictOrNull()
+        val producerRestoreFailed =
+            fields.getValue("producerRestoreFailed")
+                .toBooleanStrictOrNull()
 
         require(packageName.isNotBlank()) {
             "Runtime native trace package name is empty."
@@ -141,6 +160,21 @@ object RepackedRuntimeNativeTraceExportProtocol {
         }
         require(truncated != null) {
             "Runtime native trace truncation flag is invalid."
+        }
+        require(producerKind == "PLT_DLSYM_GOT") {
+            "Runtime native trace producer kind is unsupported."
+        }
+        require(
+            hookedSlotCount != null &&
+                hookedSlotCount in 0..8192,
+        ) {
+            "Runtime native trace hooked-slot count is invalid."
+        }
+        require(producerIncomplete != null) {
+            "Runtime native trace producer-incomplete flag is invalid."
+        }
+        require(producerRestoreFailed != null) {
+            "Runtime native trace restore-failed flag is invalid."
         }
 
         val traceStart =
@@ -187,6 +221,11 @@ object RepackedRuntimeNativeTraceExportProtocol {
             traceSha256 = declaredSha.lowercase(),
             traceBytes = declaredBytes,
             truncated = truncated,
+            producerKind = producerKind,
+            hookedSlotCount = hookedSlotCount,
+            producerIncomplete = producerIncomplete,
+            producerRestoreFailed =
+                producerRestoreFailed,
             text = text,
         )
     }
