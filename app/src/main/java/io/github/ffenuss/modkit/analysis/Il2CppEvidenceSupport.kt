@@ -9,20 +9,32 @@ internal fun Il2CppBinaryBindingResult.toEvidenceBlockers(): List<EvidenceBlocke
         .map { code ->
             EvidenceBlocker(
                 code = code,
-                message = when (code) {
-                    "METADATA_IMAGE_MAP_UNAVAILABLE" ->
+                message = when {
+                    code.startsWith(
+                        "AMBIGUOUS_RELOCATED_CODEGEN_MODULES:",
+                    ) ->
+                        "Relocation-backed CodeGenModule candidates are ambiguous for " +
+                            code.substringAfter(':') +
+                            " metadata image(s)."
+                    code.startsWith(
+                        "PARTIAL_RELOCATED_CODEGEN_MODULE_SET:",
+                    ) ->
+                        "Relocation-backed CodeGenModule recovery proved only " +
+                            code.substringAfter(':') +
+                            " metadata images; unresolved images remain proof-neutral."
+                    code == "METADATA_IMAGE_MAP_UNAVAILABLE" ->
                         "Metadata image map is unavailable for exact module association."
-                    "CODE_REGISTRATION_SYMBOL_UNRESOLVED" ->
+                    code == "CODE_REGISTRATION_SYMBOL_UNRESOLVED" ->
                         "CodeRegistration symbol was not resolved and no replacement proof succeeded."
-                    "CODEGEN_MODULE_ARRAY_UNRESOLVED" ->
+                    code == "CODEGEN_MODULE_ARRAY_UNRESOLVED" ->
                         "Il2CppCodeGenModule array could not be resolved."
-                    "AMBIGUOUS_CODEGEN_MODULE_ARRAY" ->
+                    code == "AMBIGUOUS_CODEGEN_MODULE_ARRAY" ->
                         "Multiple CodeGenModule arrays satisfy the available evidence."
-                    "CODEGEN_FALLBACK_SCAN_LIMIT_REACHED" ->
+                    code == "CODEGEN_FALLBACK_SCAN_LIMIT_REACHED" ->
                         "Bounded stripped-binary recovery reached its scan limit."
-                    "STRIPPED_CODEGEN_MODULE_ARRAY_UNRESOLVED" ->
+                    code == "STRIPPED_CODEGEN_MODULE_ARRAY_UNRESOLVED" ->
                         "Stripped binary recovery did not prove a unique CodeGenModule array."
-                    "NO_METHOD_TOKEN_SLOT_BINDINGS" ->
+                    code == "NO_METHOD_TOKEN_SLOT_BINDINGS" ->
                         "No MethodDef token could be bound to an executable method-pointer slot."
                     else ->
                         "Binary confirmation is blocked: $code."
