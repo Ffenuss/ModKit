@@ -112,7 +112,20 @@ class ElfImage private constructor(
         private const val SHT_NOBITS = 8L
         private const val SHT_REL = 9L
         private const val SHT_DYNSYM = 11L
+        private const val SHT_RELR = 19L
+        private const val SHT_ANDROID_REL = 0x60000001L
+        private const val SHT_ANDROID_RELA = 0x60000002L
+        private const val SHT_ANDROID_RELR = 0x6fffff00L
+
+        private const val RELOCATION_GROUPED_BY_INFO_FLAG = 1L
+        private const val RELOCATION_GROUPED_BY_OFFSET_DELTA_FLAG = 2L
+        private const val RELOCATION_GROUPED_BY_ADDEND_FLAG = 4L
+        private const val RELOCATION_GROUP_HAS_ADDEND_FLAG = 8L
+        private const val RELOCATION_GROUP_KNOWN_FLAGS = 0x0fL
+
         private const val MAX_RELATIVE_RELOCATIONS = 1_000_000
+        private const val MAX_PACKED_RELOCATION_BYTES =
+            64 * 1024 * 1024
         private const val SHN_UNDEF = 0
 
         private data class Header(
@@ -283,49 +296,351 @@ class ElfImage private constructor(
         ): Map<Long, Long> {
             val out = HashMap<Long, Long>()
             for (section in sections) {
+                checkCancelled(cancellation)
+                when (section.type) {
+                    SHT_RELR,
+                    SHT_ANDROID_RELR ->
+                        readRelrSection(
+                            raf = raf,
+                            h = h,
+                            section = section,
+                            loadSegments = loadSegments,
+                            cancellation = cancellation,
+                            out = out,
+                        )
+
+                    SHT_ANDROID_REL,
+                    SHT_ANDROID_RELA ->
+                        readAndroidPackedRelocations(
+                            raf = raf,
+                            h = h,
+                            section = section,
+                            loadSegments = loadSegments,
+                            cancellation = cancellation,
+                            out = out,
+                        )
+
+                    SHT_REL,
+                    SHT_RELA ->
+                        readClassicRelativeRelocations(
+                            raf = raf,
+                            h = h,
+                            section = section,
+                            loadSegments = loadSegments,
+                            cancellation = cancellation,
+                            out = out,
+                        )
+                }
+            }
+            return out
+        }
+
+        private fun readClassicRelativeRelocations(
+            raf: RandomAccessFile,
+            h: Header,
+            section: Section,
+            loadSegments: List<ElfLoadSegment>,
+            cancellation: CancellationSignal,
+            out: MutableMap<Long, Long>,
+        ) {
+            if (section.size == 0L) return
+            val minimumEntrySize =
+                when {
+                    h.is64 && section.type == SHT_RELA -> 24L
+                    h.is64 && section.type == SHT_REL -> 16L
+                    !h.is64 && section.type == SHT_RELA -> 12L
+                    else -> 8L
+                }
+            val entrySize =
+                section.entrySize
+                    .takeIf { it >= minimumEntrySize }
+                    ?: minimumEntrySize
+            val count = section.size / entrySize
+            require(count <= MAX_RELATIVE_RELOCATIONS.toLong()) {
+                "ELF relocation section exceeds bounded entry limit"
+            }
+
+            repeat(count.toInt()) { index ->
+                if (index % 1024 == 0) {
+                    checkCancelled(cancellation)
+                }
+                val base =
+                    section.offset +
+                        index.toLong() * entrySize
+                val relocationOffset =
+                    if (h.is64) {
+                        u64(raf, base)
+                    } else {
+                        u32(raf, base)
+                    }
+                val info =
+                    if (h.is64) {
+                        u64(raf, base + 8)
+                    } else {
+                        u32(raf, base + 4)
+                    }
+                val symbolIndex =
+                    if (h.is64) {
+                        info ushr 32
+                    } else {
+                        info ushr 8
+                    }
+                val relocationType =
+                    if (h.is64) {
+                        (info and 0xffffffffL).toInt()
+                    } else {
+                        (info and 0xffL).toInt()
+                    }
                 if (
-                    section.type != SHT_RELA &&
-                    section.type != SHT_REL
+                    symbolIndex != 0L ||
+                    !isRelativeRelocation(
+                        machine = h.machine,
+                        type = relocationType,
+                    )
                 ) {
-                    continue
-                }
-                if (section.size == 0L) continue
-
-                val minimumEntrySize =
-                    when {
-                        h.is64 && section.type == SHT_RELA -> 24L
-                        h.is64 && section.type == SHT_REL -> 16L
-                        !h.is64 && section.type == SHT_RELA -> 12L
-                        else -> 8L
-                    }
-                val entrySize =
-                    section.entrySize
-                        .takeIf { it >= minimumEntrySize }
-                        ?: minimumEntrySize
-                val count = section.size / entrySize
-                require(count <= MAX_RELATIVE_RELOCATIONS.toLong()) {
-                    "ELF relocation section exceeds bounded entry limit"
+                    return@repeat
                 }
 
-                repeat(count.toInt()) { index ->
-                    if (index % 1024 == 0) {
-                        checkCancelled(cancellation)
+                val value =
+                    if (section.type == SHT_RELA) {
+                        if (h.is64) {
+                            u64(raf, base + 16)
+                        } else {
+                            u32(raf, base + 8)
+                        }
+                    } else {
+                        rawPointerAtVa(
+                            raf = raf,
+                            h = h,
+                            loadSegments = loadSegments,
+                            virtualAddress = relocationOffset,
+                        ) ?: return@repeat
                     }
-                    val base =
-                        section.offset +
-                            index.toLong() * entrySize
-                    val relocationOffset =
-                        if (h.is64) {
-                            u64(raf, base)
-                        } else {
-                            u32(raf, base)
+                recordRelativeRelocation(
+                    out = out,
+                    offset = relocationOffset,
+                    value = value,
+                )
+            }
+        }
+
+        private fun readRelrSection(
+            raf: RandomAccessFile,
+            h: Header,
+            section: Section,
+            loadSegments: List<ElfLoadSegment>,
+            cancellation: CancellationSignal,
+            out: MutableMap<Long, Long>,
+        ) {
+            if (section.size == 0L) return
+            val pointerSize = if (h.is64) 8L else 4L
+            val entrySize =
+                section.entrySize
+                    .takeIf { it >= pointerSize }
+                    ?: pointerSize
+            require(section.size % entrySize == 0L) {
+                "ELF RELR section size is not entry aligned"
+            }
+            val count = section.size / entrySize
+            require(count <= MAX_RELATIVE_RELOCATIONS.toLong()) {
+                "ELF RELR section exceeds bounded entry limit"
+            }
+
+            var relocationOffset = 0L
+            repeat(count.toInt()) { index ->
+                if (index % 1024 == 0) {
+                    checkCancelled(cancellation)
+                }
+                val entryOffset =
+                    section.offset +
+                        index.toLong() * entrySize
+                val entry =
+                    if (h.is64) {
+                        u64(raf, entryOffset)
+                    } else {
+                        u32(raf, entryOffset)
+                    }
+
+                if ((entry and 1L) == 0L) {
+                    val value =
+                        rawPointerAtVa(
+                            raf = raf,
+                            h = h,
+                            loadSegments = loadSegments,
+                            virtualAddress = entry,
+                        )
+                    if (value != null) {
+                        recordRelativeRelocation(
+                            out = out,
+                            offset = entry,
+                            value = value,
+                        )
+                    }
+                    relocationOffset = safeAdd(
+                        entry,
+                        pointerSize,
+                        "ELF RELR relocation offset overflow",
+                    )
+                } else {
+                    val bitCount = entrySize.toInt() * 8
+                    for (bitIndex in 1 until bitCount) {
+                        if (
+                            (entry and
+                                (1L shl bitIndex)) != 0L
+                        ) {
+                            val value =
+                                rawPointerAtVa(
+                                    raf = raf,
+                                    h = h,
+                                    loadSegments = loadSegments,
+                                    virtualAddress =
+                                        relocationOffset,
+                                )
+                            if (value != null) {
+                                recordRelativeRelocation(
+                                    out = out,
+                                    offset =
+                                        relocationOffset,
+                                    value = value,
+                                )
+                            }
                         }
-                    val info =
-                        if (h.is64) {
-                            u64(raf, base + 8)
+                        relocationOffset = safeAdd(
+                            relocationOffset,
+                            pointerSize,
+                            "ELF RELR bitmap offset overflow",
+                        )
+                    }
+                }
+            }
+        }
+
+        private fun readAndroidPackedRelocations(
+            raf: RandomAccessFile,
+            h: Header,
+            section: Section,
+            loadSegments: List<ElfLoadSegment>,
+            cancellation: CancellationSignal,
+            out: MutableMap<Long, Long>,
+        ) {
+            if (section.size == 0L) return
+            require(
+                section.size <=
+                    MAX_PACKED_RELOCATION_BYTES.toLong(),
+            ) {
+                "Android packed relocation section exceeds bounded byte limit"
+            }
+            require(section.size <= Int.MAX_VALUE.toLong()) {
+                "Android packed relocation section is too large"
+            }
+
+            val bytes = ByteArray(section.size.toInt())
+            raf.seek(section.offset)
+            raf.readFully(bytes)
+            require(
+                bytes.size >= 4 &&
+                    bytes[0] == 'A'.code.toByte() &&
+                    bytes[1] == 'P'.code.toByte() &&
+                    bytes[2] == 'S'.code.toByte() &&
+                    bytes[3] == '2'.code.toByte(),
+            ) {
+                "Invalid Android APS2 relocation header"
+            }
+
+            val reader = Sleb128Reader(bytes, 4)
+            val totalCount = reader.read()
+            require(
+                totalCount in
+                    0..MAX_RELATIVE_RELOCATIONS.toLong(),
+            ) {
+                "Android packed relocation count exceeds bounded limit"
+            }
+            var currentCount = 0L
+            var relocationOffset = reader.read()
+            require(relocationOffset >= 0L) {
+                "Android packed relocation offset is negative"
+            }
+            var addend = 0L
+
+            while (currentCount < totalCount) {
+                checkCancelled(cancellation)
+                val groupSize = reader.read()
+                val groupFlags = reader.read()
+                require(
+                    groupSize > 0L &&
+                        groupSize <= totalCount - currentCount
+                ) {
+                    "Invalid Android packed relocation group size"
+                }
+                require(
+                    groupFlags >= 0L &&
+                        groupFlags and
+                            RELOCATION_GROUP_KNOWN_FLAGS.inv() == 0L
+                ) {
+                    "Unsupported Android packed relocation flags"
+                }
+
+                val groupedByInfo =
+                    groupFlags and
+                        RELOCATION_GROUPED_BY_INFO_FLAG != 0L
+                val groupedByOffsetDelta =
+                    groupFlags and
+                        RELOCATION_GROUPED_BY_OFFSET_DELTA_FLAG != 0L
+                val groupedByAddend =
+                    groupFlags and
+                        RELOCATION_GROUPED_BY_ADDEND_FLAG != 0L
+                val hasAddend =
+                    groupFlags and
+                        RELOCATION_GROUP_HAS_ADDEND_FLAG != 0L
+
+                val groupOffsetDelta =
+                    if (groupedByOffsetDelta) {
+                        reader.read()
+                    } else {
+                        0L
+                    }
+                var info =
+                    if (groupedByInfo) {
+                        reader.read()
+                    } else {
+                        0L
+                    }
+                if (hasAddend && groupedByAddend) {
+                    addend = safeSignedAdd(
+                        addend,
+                        reader.read(),
+                        "Android packed relocation addend overflow",
+                    )
+                }
+                if (!hasAddend) {
+                    addend = 0L
+                }
+
+                repeat(groupSize.toInt()) {
+                    relocationOffset = safeSignedAdd(
+                        relocationOffset,
+                        if (groupedByOffsetDelta) {
+                            groupOffsetDelta
                         } else {
-                            u32(raf, base + 4)
-                        }
+                            reader.read()
+                        },
+                        "Android packed relocation offset overflow",
+                    )
+                    require(relocationOffset >= 0L) {
+                        "Android packed relocation offset is negative"
+                    }
+
+                    if (!groupedByInfo) {
+                        info = reader.read()
+                    }
+                    if (hasAddend && !groupedByAddend) {
+                        addend = safeSignedAdd(
+                            addend,
+                            reader.read(),
+                            "Android packed relocation addend overflow",
+                        )
+                    }
+
                     val symbolIndex =
                         if (h.is64) {
                             info ushr 32
@@ -334,47 +649,137 @@ class ElfImage private constructor(
                         }
                     val relocationType =
                         if (h.is64) {
-                            (info and 0xffffffffL).toInt()
+                            (info and
+                                0xffffffffL).toInt()
                         } else {
                             (info and 0xffL).toInt()
                         }
                     if (
-                        symbolIndex != 0L ||
-                        !isRelativeRelocation(
+                        symbolIndex == 0L &&
+                        isRelativeRelocation(
                             machine = h.machine,
                             type = relocationType,
                         )
                     ) {
-                        return@repeat
-                    }
-
-                    val value =
-                        if (section.type == SHT_RELA) {
-                            if (h.is64) {
-                                u64(raf, base + 16)
+                        val value =
+                            if (
+                                section.type ==
+                                SHT_ANDROID_RELA
+                            ) {
+                                addend
                             } else {
-                                u32(raf, base + 8)
+                                rawPointerAtVa(
+                                    raf = raf,
+                                    h = h,
+                                    loadSegments =
+                                        loadSegments,
+                                    virtualAddress =
+                                        relocationOffset,
+                                )
                             }
-                        } else {
-                            rawPointerAtVa(
-                                raf = raf,
-                                h = h,
-                                loadSegments = loadSegments,
-                                virtualAddress = relocationOffset,
-                            ) ?: return@repeat
+                        if (value != null) {
+                            recordRelativeRelocation(
+                                out = out,
+                                offset =
+                                    relocationOffset,
+                                value = value,
+                            )
                         }
-                    if (value <= 0L) return@repeat
-
-                    require(
-                        out.size < MAX_RELATIVE_RELOCATIONS ||
-                            relocationOffset in out,
-                    ) {
-                        "ELF relative relocation inventory exceeds bounded limit"
                     }
-                    out[relocationOffset] = value
+                }
+                currentCount += groupSize
+            }
+            require(!reader.hasTrailingNonZeroBytes()) {
+                "Unexpected trailing Android packed relocation data"
+            }
+        }
+
+        private fun recordRelativeRelocation(
+            out: MutableMap<Long, Long>,
+            offset: Long,
+            value: Long,
+        ) {
+            if (offset < 0L || value <= 0L) return
+            require(
+                out.size < MAX_RELATIVE_RELOCATIONS ||
+                    offset in out,
+            ) {
+                "ELF relative relocation inventory exceeds bounded limit"
+            }
+            out[offset] = value
+        }
+
+        private fun safeAdd(
+            left: Long,
+            right: Long,
+            message: String,
+        ): Long {
+            require(left >= 0L && right >= 0L) { message }
+            require(left <= Long.MAX_VALUE - right) { message }
+            return left + right
+        }
+
+        private fun safeSignedAdd(
+            left: Long,
+            right: Long,
+            message: String,
+        ): Long {
+            if (right > 0L) {
+                require(left <= Long.MAX_VALUE - right) {
+                    message
+                }
+            } else if (right < 0L) {
+                require(left >= Long.MIN_VALUE - right) {
+                    message
                 }
             }
-            return out
+            return left + right
+        }
+
+        private class Sleb128Reader(
+            private val bytes: ByteArray,
+            start: Int,
+        ) {
+            private var offset = start
+
+            fun read(): Long {
+                var result = 0L
+                var shift = 0
+                var last = 0
+                while (true) {
+                    require(offset < bytes.size) {
+                        "Truncated Android APS2 relocation stream"
+                    }
+                    last = bytes[offset++].toInt() and 0xff
+                    val payload = last and 0x7f
+                    require(shift < 64) {
+                        "Android APS2 SLEB128 value is too wide"
+                    }
+                    result =
+                        result or
+                            (payload.toLong() shl shift)
+                    shift += 7
+                    if (last and 0x80 == 0) break
+                }
+                if (
+                    shift < 64 &&
+                    last and 0x40 != 0
+                ) {
+                    result =
+                        result or
+                            (-1L shl shift)
+                }
+                return result
+            }
+
+            fun hasTrailingNonZeroBytes(): Boolean {
+                while (offset < bytes.size) {
+                    if (bytes[offset++].toInt() != 0) {
+                        return true
+                    }
+                }
+                return false
+            }
         }
 
         private fun isRelativeRelocation(
