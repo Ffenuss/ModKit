@@ -150,6 +150,70 @@ class AndroidRootCommandRunner(
     }
 }
 
+/**
+ * Bounded privileged reader for a process' /proc/<pid>/mem.
+ *
+ * This is intentionally read-only. It is used to validate live mapped ELF
+ * images after an explicit root process connection. The command is assembled
+ * only from validated numeric PID/address/size values.
+ */
+class RootProcMemRuntimeMemoryReader(
+    private val pid: Int,
+    private val runner: RootCommandRunner =
+        AndroidRootCommandRunner(),
+) : RuntimeMemoryReader {
+    override fun read(
+        address: Long,
+        size: Int,
+        cancellation: CancellationSignal,
+    ): ByteArray? {
+        if (
+            pid <= 0 ||
+            address < 0L ||
+            size !in
+                1..
+                    ProcMemRuntimeMemoryReader
+                        .MAX_READ_BYTES
+        ) {
+            return null
+        }
+        if (cancellation.isCancelled()) {
+            throw AnalysisCancelledException()
+        }
+
+        val result =
+            try {
+                runner.run(
+                    command =
+                        "dd if=/proc/" +
+                            pid +
+                            "/mem bs=1 skip=" +
+                            address +
+                            " count=" +
+                            size +
+                            " status=none 2>/dev/null",
+                    maxOutputBytes = size,
+                    cancellation = cancellation,
+                )
+            } catch (
+                failure: AnalysisCancelledException,
+            ) {
+                throw failure
+            } catch (_: Throwable) {
+                return null
+            }
+
+        if (
+            result.exitCode != 0 ||
+            result.truncated ||
+            result.output.size != size
+        ) {
+            return null
+        }
+        return result.output
+    }
+}
+
 data class RootRuntimeCaptureResult(
     val packageName: String,
     val pid: Int,

@@ -238,6 +238,34 @@ fun ExpertLabScreen(onBack: () -> Unit) {
         }
     }
 
+    fun attachRootProcess() {
+        val current = session ?: return
+        val signal =
+            beginOperation(
+                "runtime.root-process-attach",
+            ) ?: return
+        scope.launch {
+            try {
+                session =
+                    ExpertLabSessionController
+                        .attachRootProcess(
+                            context = appContext,
+                            session = current,
+                            cancellation = signal,
+                        )
+            } catch (_: AnalysisCancelledException) {
+                error =
+                    "Root-подключение к процессу отменено."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
     fun integrateRootRuntime() {
         val current = session ?: return
         val signal = beginOperation("runtime.root-map") ?: return
@@ -1309,6 +1337,29 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         "Неоднозначный PID или недоступный maps блокирует подтверждение.",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
+                                Text(
+                                    "Root Process Lab",
+                                    fontWeight =
+                                        FontWeight.SemiBold,
+                                )
+                                Text(
+                                    "Явное root-подключение к запущенному основному процессу: " +
+                                        "ModKit подтверждает PID, читает /proc/<pid>/maps, " +
+                                        "определяет load bias модулей и проверяет mapped ELF " +
+                                        "через ограниченное чтение живой памяти процесса.",
+                                    style =
+                                        MaterialTheme.typography.bodySmall,
+                                )
+                                Button(
+                                    onClick = ::attachRootProcess,
+                                    enabled = !busy,
+                                    modifier =
+                                        Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        "Подключиться к процессу (root)",
+                                    )
+                                }
                             }
                             val rootDecision =
                                 RootRuntimeDecisionEngine.decide(
@@ -1342,7 +1393,9 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                             rootDecision.readyToRunRoot,
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
-                                    Text("Запустить root maps capture")
+                                    Text(
+                                        "Root-подтверждение оставшихся целей",
+                                    )
                                 }
                                 if (!rootDecision.readyToRunRoot) {
                                     rootDecision.blockers
@@ -1402,6 +1455,29 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         runtimeEvidence.processIdentityConfirmed,
                                     style = MaterialTheme.typography.bodySmall,
                                 )
+                                if (
+                                    runtimeEvidence.captureSource ==
+                                    ProcMapsCaptureSource.ROOT_PROCESS
+                                ) {
+                                    val validatedMemoryElf =
+                                        runtimeEvidence
+                                            .memoryElfEvidence
+                                            .count {
+                                                it.validated
+                                            }
+                                    Text(
+                                        "Root live-memory ELF: " +
+                                            validatedMemoryElf +
+                                            "/" +
+                                            runtimeEvidence
+                                                .memoryElfEvidence
+                                                .size +
+                                            " подтверждено.",
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                    )
+                                }
                                 runtimeEvidence.moduleMappings.forEach { mapping ->
                                     Text(
                                         mapping.moduleName +

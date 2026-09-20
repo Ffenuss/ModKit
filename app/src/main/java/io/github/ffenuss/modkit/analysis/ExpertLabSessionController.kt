@@ -25,6 +25,7 @@ import io.github.ffenuss.modkit.runtime.RuntimeEvidenceIntegrator
 import io.github.ffenuss.modkit.runtime.RuntimeModuleEvidenceCollector
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationPlanner
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationStage
+import io.github.ffenuss.modkit.runtime.RootProcMemRuntimeMemoryReader
 import io.github.ffenuss.modkit.runtime.RootRuntimeCaptureCoordinator
 import io.github.ffenuss.modkit.runtime.RootRuntimeDecisionEngine
 import io.github.ffenuss.modkit.runtime.RuntimeStageAttempt
@@ -377,6 +378,99 @@ object ExpertLabSessionController {
     }
 
     /**
+     * Explicit user-requested root process connection.
+     *
+     * Unlike escalation, this does not require the lower-privilege attempt
+     * ledger to justify root first. It is a diagnostic Expert Lab action:
+     * prove the exact main PID, capture maps, and validate mapped ELF headers
+     * through bounded live process-memory reads.
+     */
+    suspend fun attachRootProcess(
+        context: Context,
+        session: ExpertLabSession,
+        cancellation: CancellationSignal,
+    ): ExpertLabSession {
+        val packageName =
+            requireNotNull(session.packageName) {
+                "Root process connection is available only for an installed-app target."
+            }
+
+        val rootCapture =
+            withContext(Dispatchers.IO) {
+                RootRuntimeCaptureCoordinator
+                    .captureMaps(
+                        packageName = packageName,
+                        cancellation = cancellation,
+                    )
+            }
+        val module =
+            resolveIl2CppRuntimeModule(
+                context,
+                session.result,
+            )
+        val evidence =
+            withContext(Dispatchers.IO) {
+                val collected =
+                    RuntimeModuleEvidenceCollector
+                        .collect(
+                            artifactSha256 =
+                                session.result.index
+                                    .artifactSha256,
+                            moduleFile = module.file,
+                            moduleName =
+                                module.moduleName,
+                            capture =
+                                rootCapture.capture,
+                            cancellation =
+                                cancellation,
+                            artifactEntries =
+                                session.result.index
+                                    .entries,
+                        )
+                val memoryElf =
+                    if (
+                        collected
+                            .memoryMappingCandidates
+                            .isEmpty()
+                    ) {
+                        emptyList()
+                    } else {
+                        RuntimeMemoryElfValidator
+                            .validateCandidates(
+                                candidates =
+                                    collected
+                                        .memoryMappingCandidates,
+                                reader =
+                                    RootProcMemRuntimeMemoryReader(
+                                        rootCapture.pid,
+                                    ),
+                                cancellation =
+                                    cancellation,
+                            )
+                    }
+                collected.copy(
+                    memoryElfEvidence = memoryElf,
+                    processIdentity =
+                        packageName,
+                    processIdentityConfirmed = true,
+                )
+            }
+        val integrated =
+            RuntimeEvidenceIntegrator.integrate(
+                result = session.result,
+                evidence = evidence,
+                procMapsText =
+                    rootCapture.capture.text,
+            )
+        return persistRuntimeEvidence(
+            context = context,
+            session = session,
+            integrated = integrated,
+            fallbackEvidence = evidence,
+        )
+    }
+
+    /**
      * Explicit last-resort privileged maps capture.
      *
      * This method never auto-escalates. Root must already be justified by the
@@ -421,14 +515,40 @@ object ExpertLabSessionController {
             }
             val module = resolveIl2CppRuntimeModule(context, session.result)
             val evidence = withContext(Dispatchers.IO) {
-                RuntimeModuleEvidenceCollector.collect(
-                    artifactSha256 = session.result.index.artifactSha256,
-                    moduleFile = module.file,
-                    moduleName = module.moduleName,
-                    capture = rootCapture.capture,
-                    cancellation = cancellation,
-                    artifactEntries = session.result.index.entries,
-                ).copy(
+                val collected =
+                    RuntimeModuleEvidenceCollector.collect(
+                        artifactSha256 =
+                            session.result.index.artifactSha256,
+                        moduleFile = module.file,
+                        moduleName = module.moduleName,
+                        capture = rootCapture.capture,
+                        cancellation = cancellation,
+                        artifactEntries =
+                            session.result.index.entries,
+                    )
+                val memoryElf =
+                    if (
+                        collected
+                            .memoryMappingCandidates
+                            .isEmpty()
+                    ) {
+                        emptyList()
+                    } else {
+                        RuntimeMemoryElfValidator
+                            .validateCandidates(
+                                candidates =
+                                    collected
+                                        .memoryMappingCandidates,
+                                reader =
+                                    RootProcMemRuntimeMemoryReader(
+                                        rootCapture.pid,
+                                    ),
+                                cancellation =
+                                    cancellation,
+                            )
+                    }
+                collected.copy(
+                    memoryElfEvidence = memoryElf,
                     processIdentity = packageName,
                     processIdentityConfirmed = true,
                 )

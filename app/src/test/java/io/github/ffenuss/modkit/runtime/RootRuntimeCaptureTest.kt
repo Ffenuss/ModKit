@@ -104,6 +104,86 @@ class RootRuntimeCaptureTest {
     }
 
     @Test
+    fun rootMemoryReaderReadsExactBoundedRange() {
+        val expected =
+            byteArrayOf(
+                0x7f,
+                0x45,
+                0x4c,
+                0x46,
+            )
+        val runner =
+            RootCommandRunner {
+                    command,
+                    maxOutputBytes,
+                    _,
+                ->
+                assertEquals(
+                    "dd if=/proc/123/mem bs=1 skip=4096 count=4 status=none 2>/dev/null",
+                    command,
+                )
+                assertEquals(
+                    4,
+                    maxOutputBytes,
+                )
+                RootCommandResult(
+                    exitCode = 0,
+                    output = expected,
+                    truncated = false,
+                )
+            }
+
+        val actual =
+            RootProcMemRuntimeMemoryReader(
+                pid = 123,
+                runner = runner,
+            ).read(
+                address = 4096,
+                size = 4,
+                cancellation =
+                    AtomicCancellationSignal(),
+            )
+
+        assertEquals(
+            expected.toList(),
+            requireNotNull(actual).toList(),
+        )
+    }
+
+    @Test
+    fun rootMemoryReaderRejectsShortRead() {
+        val runner =
+            RootCommandRunner {
+                    _,
+                    _,
+                    _,
+                ->
+                RootCommandResult(
+                    exitCode = 0,
+                    output =
+                        byteArrayOf(
+                            1,
+                            2,
+                        ),
+                    truncated = false,
+                )
+            }
+
+        val actual =
+            RootProcMemRuntimeMemoryReader(
+                pid = 123,
+                runner = runner,
+            ).read(
+                address = 4096,
+                size = 4,
+                cancellation =
+                    AtomicCancellationSignal(),
+            )
+
+        assertEquals(null, actual)
+    }
+
+    @Test
     fun truncatedPrivilegedMapsNeverBecomeEvidence() {
         val runner = FakeRunner(
             pid = 777,
