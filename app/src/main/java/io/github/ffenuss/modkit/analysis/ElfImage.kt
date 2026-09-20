@@ -58,6 +58,44 @@ class ElfImage private constructor(
         return if (is64Bit) u64(offset) else u32(offset)
     }
 
+    internal fun forEachRelativeRelocation(
+        action: (offsetVirtualAddress: Long, valueVirtualAddress: Long) -> Boolean,
+    ) {
+        for ((offset, value) in relativeRelocations) {
+            if (!action(offset, value)) break
+        }
+    }
+
+    internal fun readFileWindowAtVa(
+        virtualAddress: Long,
+        maxBytes: Int,
+    ): ByteArray? {
+        require(maxBytes in 1..MAX_SCAN_WINDOW_BYTES) {
+            "ELF scan window exceeds bounded limit"
+        }
+        val segment =
+            loadSegments.firstOrNull { candidate ->
+                virtualAddress >= candidate.virtualAddress &&
+                    virtualAddress <
+                    candidate.virtualAddress + candidate.fileSize
+            } ?: return null
+        val relative =
+            virtualAddress - segment.virtualAddress
+        if (relative < 0L || relative >= segment.fileSize) {
+            return null
+        }
+        val available =
+            minOf(
+                maxBytes.toLong(),
+                segment.fileSize - relative,
+            ).toInt()
+        if (available <= 0) return null
+        val bytes = ByteArray(available)
+        raf.seek(segment.fileOffset + relative)
+        raf.readFully(bytes)
+        return bytes
+    }
+
     fun readCStringAtVa(virtualAddress: Long, maxBytes: Int = 512): String? {
         val offset = fileOffsetForVa(virtualAddress, 1) ?: return null
         raf.seek(offset)
@@ -124,6 +162,7 @@ class ElfImage private constructor(
         private const val RELOCATION_GROUP_KNOWN_FLAGS = 0x0fL
 
         private const val MAX_RELATIVE_RELOCATIONS = 1_000_000
+        private const val MAX_SCAN_WINDOW_BYTES = 1 * 1024 * 1024
         private const val MAX_PACKED_RELOCATION_BYTES =
             64 * 1024 * 1024
         private const val SHN_UNDEF = 0
