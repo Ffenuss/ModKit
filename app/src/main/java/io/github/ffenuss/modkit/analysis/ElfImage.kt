@@ -100,6 +100,7 @@ class ElfImage private constructor(
     companion object {
         private const val PT_LOAD = 1L
         private const val PF_X = 1L
+        private const val SHT_NOBITS = 8L
         private const val SHT_DYNSYM = 11L
         private const val SHN_UNDEF = 0
 
@@ -225,8 +226,16 @@ class ElfImage private constructor(
                 val size = if (h.is64) u64(raf, base + 32) else u32(raf, base + 20)
                 val link = if (h.is64) u32(raf, base + 40).toInt() else u32(raf, base + 24).toInt()
                 val entrySize = if (h.is64) u64(raf, base + 56) else u32(raf, base + 36)
-                require(offset >= 0L && size >= 0L && offset <= raf.length() && size <= raf.length() - offset) {
-                    "ELF section outside file"
+                require(offset >= 0L && size >= 0L) {
+                    "Invalid ELF section range"
+                }
+                if (type != SHT_NOBITS) {
+                    require(
+                        offset <= raf.length() &&
+                            size <= raf.length() - offset,
+                    ) {
+                        "ELF section outside file"
+                    }
                 }
                 out += Section(type, offset, size, link, entrySize)
             }
@@ -239,8 +248,18 @@ class ElfImage private constructor(
             sections: List<Section>,
             cancellation: CancellationSignal,
         ): List<ElfDynamicSymbol> {
-            val dynsym = sections.firstOrNull { it.type == SHT_DYNSYM } ?: return emptyList()
-            val strtab = sections.getOrNull(dynsym.link) ?: return emptyList()
+            val dynsym =
+                sections.firstOrNull { it.type == SHT_DYNSYM }
+                    ?: return emptyList()
+            val strtab =
+                sections.getOrNull(dynsym.link)
+                    ?: return emptyList()
+            if (
+                dynsym.type == SHT_NOBITS ||
+                strtab.type == SHT_NOBITS
+            ) {
+                return emptyList()
+            }
             val minEntrySize = if (h.is64) 24L else 16L
             val entrySize = dynsym.entrySize.takeIf { it >= minEntrySize } ?: minEntrySize
             val count = minOf(dynsym.size / entrySize, 100_000L).toInt()
