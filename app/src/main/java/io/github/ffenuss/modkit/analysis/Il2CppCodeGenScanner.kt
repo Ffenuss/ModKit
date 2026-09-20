@@ -890,20 +890,24 @@ object Il2CppCodeGenScanner {
             HashMap<Int, Il2CppImageDefinition>(
                 metadata.types.size * 2,
             )
+        val parsedTypeLimit =
+            (
+                metadata.types
+                    .maxOfOrNull { it.index }
+                    ?: -1
+                ) + 1
         metadata.images.forEach { imageDef ->
             if (
                 imageDef.typeStart >= 0 &&
+                imageDef.typeStart < parsedTypeLimit &&
                 imageDef.typeCount > 0
             ) {
                 val endExclusive =
-                    (
+                    minOf(
                         imageDef.typeStart.toLong() +
-                            imageDef.typeCount.toLong()
-                        )
-                        .coerceAtMost(
-                            Int.MAX_VALUE.toLong(),
-                        )
-                        .toInt()
+                            imageDef.typeCount.toLong(),
+                        parsedTypeLimit.toLong(),
+                    ).toInt()
                 for (
                     typeIndex in
                     imageDef.typeStart until endExclusive
