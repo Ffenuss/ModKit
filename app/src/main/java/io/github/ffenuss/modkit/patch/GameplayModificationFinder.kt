@@ -67,8 +67,10 @@ object GameplayModificationFinder {
         preparation: PatchPreparationPlan,
         projectCodeOnly: Boolean = true,
         limit: Int = 64,
+        perCategoryLimit: Int = 4,
     ): List<GameplayModificationOpportunity> {
         require(limit in 1..256) { "Gameplay modification result limit is out of bounds." }
+        require(perCategoryLimit in 1..32) { "Gameplay category result limit is out of bounds." }
 
         val bindingByArtifactToken =
             result.il2cppBinaryBinding
@@ -101,7 +103,7 @@ object GameplayModificationFinder {
             .groupingBy { it }
             .eachCount()
 
-        return eligible
+        val ranked = eligible
             .asSequence()
             .mapNotNull { prepared ->
                 val target = prepared.target
@@ -200,6 +202,26 @@ object GameplayModificationFinder {
                     .thenBy { it.category.priority }
                     .thenBy { it.targetDisplayName.lowercase() },
             )
+            .toList()
+
+        val categoryCounts =
+            mutableMapOf<GameplayModificationCategory, Int>()
+        return ranked
+            .asSequence()
+            .filter { opportunity ->
+                val count =
+                    categoryCounts[
+                        opportunity.category
+                    ] ?: 0
+                if (count >= perCategoryLimit) {
+                    false
+                } else {
+                    categoryCounts[
+                        opportunity.category
+                    ] = count + 1
+                    true
+                }
+            }
             .take(limit)
             .toList()
     }
@@ -245,6 +267,10 @@ object GameplayModificationFinder {
                         voidMovementLimitTerms.any { it in compactIdentity }
                     GameplayModificationCategory.COLLISION ->
                         voidCollisionTerms.any { it in compactIdentity }
+                    GameplayModificationCategory.INVENTORY ->
+                        voidInventoryTerms.any { it in compactIdentity }
+                    GameplayModificationCategory.PROGRESSION ->
+                        voidProgressionTerms.any { it in compactIdentity }
                     else -> false
                 }
             if (skippable) return GameplayMutationAction.SKIP_METHOD
@@ -349,6 +375,8 @@ object GameplayModificationFinder {
             "canuse",
             "hasstamina",
             "hasenergy",
+            "hasammo",
+            "hasitem",
             "ignorecollision",
             "canpassthrough",
             "noclip",
@@ -411,6 +439,26 @@ object GameplayModificationFinder {
             "applycollision",
             "resolvecollision",
             "blockbycollision",
+        )
+
+    private val voidInventoryTerms =
+        setOf(
+            "consumeammo",
+            "spendammo",
+            "removeammo",
+            "decrementammo",
+            "consumeitem",
+            "spenditem",
+            "removeitem",
+            "decrementitem",
+        )
+
+    private val voidProgressionTerms =
+        setOf(
+            "spendskillpoint",
+            "consumeskillpoint",
+            "spendtalentpoint",
+            "consumetalentpoint",
         )
 
     private val rules =
@@ -522,6 +570,9 @@ object GameplayModificationFinder {
                     "skillpoint",
                     "talentpoint",
                     "rank",
+                    "spendskillpoint",
+                    "consumeskillpoint",
+                    "spendtalentpoint",
                 ),
             ),
             Rule(
@@ -533,6 +584,9 @@ object GameplayModificationFinder {
                     "carryweight",
                     "backpack",
                     "ammo",
+                    "consumeitem",
+                    "removeitem",
+                    "hasitem",
                 ),
             ),
             Rule(

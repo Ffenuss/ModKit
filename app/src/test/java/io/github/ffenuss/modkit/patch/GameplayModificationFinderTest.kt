@@ -156,6 +156,130 @@ class GameplayModificationFinderTest {
     }
 
     @Test
+    fun ammoConsumptionCanBeOfferedAsConcreteSkipMutation() {
+        val target = target(
+            token = 0x06000007,
+            name = "ConsumeAmmo",
+            offset = 0x900,
+        )
+        val result = result(
+            target = target,
+            returnKind = Il2CppNativeReturnKind.VOID,
+        )
+
+        val opportunity = GameplayModificationFinder.find(
+            result = result,
+            preparation = preparation(target),
+        ).single()
+
+        assertEquals(
+            GameplayModificationCategory.INVENTORY,
+            opportunity.category,
+        )
+        assertEquals(
+            GameplayMutationAction.SKIP_METHOD,
+            opportunity.action,
+        )
+        assertTrue(opportunity.selectable)
+    }
+
+    @Test
+    fun categoryCapKeepsSuggestionListDiverse() {
+        val damageTargets =
+            (0 until 6).map { index ->
+                target(
+                    token = 0x06000100L + index,
+                    name = "TakeDamage" + index,
+                    offset = 0x1000L + index * 4L,
+                )
+            }
+        val movement =
+            target(
+                token = 0x06000200,
+                name = "get_MoveSpeed",
+                offset = 0x2000,
+            )
+        val allTargets = damageTargets + movement
+        val bindings =
+            allTargets.map { item ->
+                Il2CppMethodBinaryBinding(
+                    methodIndex = 0,
+                    managedIdentity = item.displayName,
+                    metadataToken = requireNotNull(item.metadataToken),
+                    imageName = "Assembly-CSharp.dll",
+                    moduleName = "Assembly-CSharp.dll",
+                    slotIndex = 0,
+                    functionVirtualAddress =
+                        0x100000 + requireNotNull(item.fileOffset),
+                    functionFileOffset = item.fileOffset,
+                    returnTypeIndex = 1,
+                    returnKind =
+                        if (item === movement) {
+                            Il2CppNativeReturnKind.FLOATING_POINT
+                        } else {
+                            Il2CppNativeReturnKind.VOID
+                        },
+                    returnTypeProof = "test",
+                )
+            }
+        val base = result(
+            target = damageTargets.first(),
+            returnKind = Il2CppNativeReturnKind.VOID,
+        )
+        val analysis =
+            base.copy(
+                il2cppBinaryBinding =
+                    Il2CppBinaryBindingResult(
+                        evidence =
+                            listOf(
+                                base.il2cppBinaryBinding!!
+                                    .evidence.single()
+                                    .copy(bindings = bindings),
+                            ),
+                        exactBindingCount =
+                            bindings.size,
+                        warnings = emptyList(),
+                    ),
+                evidenceGraph =
+                    EvidenceGraph(
+                        artifactSha256 = SHA,
+                        targets = allTargets,
+                    ),
+            )
+        val plan =
+            PatchPreparationPlan(
+                artifactSha256 = SHA,
+                sourceShaVerified = true,
+                preparedAtEpochMs = 1,
+                targets =
+                    allTargets.map(::prepared),
+                globalBlockers = emptyList(),
+            )
+
+        val opportunities =
+            GameplayModificationFinder.find(
+                result = analysis,
+                preparation = plan,
+                limit = 24,
+                perCategoryLimit = 2,
+            )
+
+        assertEquals(
+            2,
+            opportunities.count {
+                it.category ==
+                    GameplayModificationCategory.DAMAGE
+            },
+        )
+        assertTrue(
+            opportunities.any {
+                it.category ==
+                    GameplayModificationCategory.MOVEMENT
+            },
+        )
+    }
+
+    @Test
     fun purchaseAndPaymentSurfacesAreNotOfferedAsAutoMods() {
         val target = target(
             token = 0x06000006,
