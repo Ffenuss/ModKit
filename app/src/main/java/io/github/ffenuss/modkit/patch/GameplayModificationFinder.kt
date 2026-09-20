@@ -22,9 +22,11 @@ enum class GameplayModificationCategory(
     PROGRESSION("Уровень / опыт / навыки", 9),
     INVENTORY("Инвентарь / предметы", 10),
     DROPS("Дроп / награды", 11),
-    DIFFICULTY("Сложность / параметры врагов", 12),
-    WORLD("Прыжок / гравитация / время", 13),
-    CAMERA("Камера / FOV", 14),
+    ECONOMY("Валюта / ресурсы", 12),
+    RNG_REWARDS("Шанс / редкость / RNG", 13),
+    DIFFICULTY("Сложность / параметры врагов", 14),
+    WORLD("Прыжок / гравитация / время", 15),
+    CAMERA("Камера / FOV", 16),
     SENSITIVE_SURFACE("Billing / auth / anti-cheat", 90),
 }
 
@@ -1013,6 +1015,17 @@ object GameplayModificationFinder {
                     p("debugger detection"),
                     p("signature check"),
                 ),
+            "server reward / gacha" to
+                listOf(
+                    p("gacha"),
+                    p("summon result"),
+                    p("draw result"),
+                    p("loot box"),
+                    p("lootbox"),
+                    p("pity"),
+                    p("premium currency"),
+                    p("purchase currency"),
+                ),
             "persistent account data" to
                 listOf(
                     p("local storage"),
@@ -1305,6 +1318,34 @@ object GameplayModificationFinder {
                     p("loot multiplier"),
                     p("reward multiplier"),
                 ),
+            GameplayModificationCategory.ECONOMY to
+                listOf(
+                    p("currency"),
+                    p("soft currency"),
+                    p("hard currency"),
+                    p("gold"),
+                    p("coins"),
+                    p("coin count"),
+                    p("gems"),
+                    p("gem count"),
+                    p("credits"),
+                    p("money"),
+                    p("wallet"),
+                    p("resource count"),
+                ),
+            GameplayModificationCategory.RNG_REWARDS to
+                listOf(
+                    p("rarity"),
+                    p("rarity chance"),
+                    p("rare chance"),
+                    p("probability"),
+                    p("random chance"),
+                    p("reward chance"),
+                    p("summon chance"),
+                    p("draw chance"),
+                    p("roll chance"),
+                    p("pity"),
+                ),
             GameplayModificationCategory.DIFFICULTY to
                 listOf(
                     p("difficulty"),
@@ -1458,6 +1499,31 @@ object GameplayModificationFinder {
                     p("monster"),
                     p("battle"),
                 ),
+            GameplayModificationCategory.ECONOMY to
+                listOf(
+                    p("player"),
+                    p("hero"),
+                    p("profile"),
+                    p("inventory"),
+                    p("wallet"),
+                    p("currency"),
+                    p("economy"),
+                    p("resource"),
+                ),
+            GameplayModificationCategory.RNG_REWARDS to
+                listOf(
+                    p("reward"),
+                    p("drop"),
+                    p("loot"),
+                    p("random"),
+                    p("rng"),
+                    p("rarity"),
+                    p("summon"),
+                    p("draw"),
+                    p("roll"),
+                    p("hero"),
+                    p("character"),
+                ),
             GameplayModificationCategory.DIFFICULTY to
                 listOf(
                     p("difficulty"),
@@ -1602,6 +1668,21 @@ object GameplayModificationFinder {
                     p("loot chance"),
                     p("reward multiplier"),
                 ),
+            GameplayModificationCategory.ECONOMY to
+                listOf(
+                    p("player currency"),
+                    p("player gold"),
+                    p("coin count"),
+                    p("gem count"),
+                ),
+            GameplayModificationCategory.RNG_REWARDS to
+                listOf(
+                    p("rarity chance"),
+                    p("rare chance"),
+                    p("reward chance"),
+                    p("summon chance"),
+                    p("draw chance"),
+                ),
             GameplayModificationCategory.DIFFICULTY to
                 listOf(
                     p("enemy health"),
@@ -1652,6 +1733,7 @@ object GameplayModificationFinder {
                     p("max speed"),
                     p("speed multiplier"),
                     p("speed mutiplien"),
+                    p("speed mutiplier"),
                     p("run speed"),
                     p("walk speed"),
                     p("sprint speed"),
@@ -1709,6 +1791,34 @@ object GameplayModificationFinder {
                     p("loot multiplier"),
                     p("reward multiplier"),
                 ),
+            GameplayModificationCategory.ECONOMY to
+                listOf(
+                    p("currency"),
+                    p("soft currency"),
+                    p("hard currency"),
+                    p("gold"),
+                    p("coins"),
+                    p("coin count"),
+                    p("gems"),
+                    p("gem count"),
+                    p("credits"),
+                    p("money"),
+                    p("wallet"),
+                    p("resource count"),
+                ),
+            GameplayModificationCategory.RNG_REWARDS to
+                listOf(
+                    p("rarity"),
+                    p("rarity chance"),
+                    p("rare chance"),
+                    p("probability"),
+                    p("random chance"),
+                    p("reward chance"),
+                    p("summon chance"),
+                    p("draw chance"),
+                    p("roll chance"),
+                    p("pity"),
+                ),
             GameplayModificationCategory.DIFFICULTY to
                 listOf(
                     p("difficulty"),
@@ -1746,6 +1856,8 @@ object GameplayModificationFinder {
             GameplayModificationCategory.PROGRESSION,
             GameplayModificationCategory.INVENTORY,
             GameplayModificationCategory.DROPS,
+            GameplayModificationCategory.ECONOMY,
+            GameplayModificationCategory.RNG_REWARDS,
             GameplayModificationCategory.DIFFICULTY,
             GameplayModificationCategory.WORLD,
             GameplayModificationCategory.CAMERA,
