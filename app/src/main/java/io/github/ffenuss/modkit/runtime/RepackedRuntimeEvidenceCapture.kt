@@ -48,6 +48,12 @@ data class RepackedRuntimeNativeTraceStatus(
     val startedAtEpochMs: Long,
     val stoppedAtEpochMs: Long,
     val traceBytes: Int,
+    val producerKind: String,
+    val producerReady: Boolean,
+    val producerActive: Boolean,
+    val hookedSlotCount: Int,
+    val producerIncomplete: Boolean,
+    val producerRestoreFailed: Boolean,
 )
 
 data class RepackedRuntimeProbeCaptureResult(
@@ -402,6 +408,24 @@ class AndroidRepackedRuntimeProbeTransport(
                 ),
             traceBytes =
                 result.getInt("traceBytes", -1),
+            producerKind =
+                result.getString("producerKind").orEmpty(),
+            producerReady =
+                result.getBoolean("producerReady", false),
+            producerActive =
+                result.getBoolean("producerActive", false),
+            hookedSlotCount =
+                result.getInt("hookedSlotCount", -1),
+            producerIncomplete =
+                result.getBoolean(
+                    "producerIncomplete",
+                    true,
+                ),
+            producerRestoreFailed =
+                result.getBoolean(
+                    "producerRestoreFailed",
+                    true,
+                ),
         )
     }
 
