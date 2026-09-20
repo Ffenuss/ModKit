@@ -419,9 +419,96 @@ object AArch64Disassembler {
             )
         }
 
+        // Load/store register (unsigned immediate), scalar FP forms.
+        if (
+            (word and 0x3F000000L) ==
+            0x3D000000L
+        ) {
+            val size =
+                ((word ushr 30) and 0x3L)
+                    .toInt()
+            if (size == 2 || size == 3) {
+                val load =
+                    (word and 0x00400000L) != 0L
+                val imm12 =
+                    (word ushr 10) and 0xFFFL
+                val scale =
+                    1L shl size
+                val byteOffset =
+                    imm12 * scale
+                val rn =
+                    ((word ushr 5) and 0x1fL)
+                        .toInt()
+                val rt =
+                    (word and 0x1fL).toInt()
+                val fpRegister =
+                    if (size == 2) {
+                        "s" + rt
+                    } else {
+                        "d" + rt
+                    }
+                return row(
+                    address,
+                    word,
+                    if (load) "ldr" else "str",
+                    fpRegister +
+                        ", [" +
+                        xReg(
+                            rn,
+                            spAllowed = true,
+                        ) +
+                        (
+                            if (byteOffset == 0L) {
+                                "]"
+                            } else {
+                                ", #" +
+                                    byteOffset +
+                                    "]"
+                            }
+                            ),
+                )
+            }
+        }
+
+        // FMOV between general-purpose and scalar floating-point registers.
+        if (
+            (word and 0xFFFFFC00L) ==
+            0x1E270000L
+        ) {
+            val rn =
+                ((word ushr 5) and 0x1fL)
+                    .toInt()
+            val rd =
+                (word and 0x1fL).toInt()
+            return row(
+                address,
+                word,
+                "fmov",
+                "s" + rd +
+                    ", w" + rn,
+            )
+        }
+        if (
+            (word and 0xFFFFFC00L) ==
+            0x9E670000L
+        ) {
+            val rn =
+                ((word ushr 5) and 0x1fL)
+                    .toInt()
+            val rd =
+                (word and 0x1fL).toInt()
+            return row(
+                address,
+                word,
+                "fmov",
+                "d" + rd +
+                    ", x" + rn,
+            )
+        }
+
         // Load/store register (unsigned immediate), integer GPR forms.
         if (
-            (word and 0x3B000000L) ==
+            (word and 0x3F000000L) ==
             0x39000000L
         ) {
             val size =

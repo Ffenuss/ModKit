@@ -112,4 +112,30 @@ class AArch64DisassemblerTest {
             result.instructions.single().operands,
         )
     }
+
+    @Test
+    fun decodesScalarFloatingLoadAndRegisterMove() {
+        val load =
+            AArch64Disassembler.decode(
+                word = 0xBD401000L,
+                address = 0x4000,
+            )
+        val fmov =
+            AArch64Disassembler.decode(
+                word = 0x1E270200L,
+                address = 0x4004,
+            )
+
+        assertEquals("ldr", load.mnemonic)
+        assertEquals(
+            "s0, [x0, #16]",
+            load.operands,
+        )
+        assertEquals("fmov", fmov.mnemonic)
+        assertEquals(
+            "s0, w16",
+            fmov.operands,
+        )
+    }
+
 }

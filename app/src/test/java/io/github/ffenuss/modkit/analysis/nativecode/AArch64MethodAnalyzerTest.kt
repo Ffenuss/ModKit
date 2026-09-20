@@ -124,4 +124,68 @@ class AArch64MethodAnalyzerTest {
                         (word ushr 24).toByte()
                 }
             }
+
+    @Test
+    fun recognizesFloatFieldGetter() {
+        val disassembly =
+            AArch64Disassembler.disassemble(
+                code =
+                    words(
+                        0xBD401000L,
+                        0xD65F03C0L,
+                    ),
+                startAddress = 0x4000,
+            )
+
+        val analysis =
+            AArch64MethodAnalyzer.analyze(
+                disassembly,
+            )
+
+        assertEquals(
+            AArch64MethodShape.INSTANCE_FIELD_GETTER,
+            analysis.shape,
+        )
+        assertEquals(0x10L, analysis.fieldOffset)
+        assertTrue(
+            analysis.facts.any {
+                it.contains("float")
+            },
+        )
+        assertTrue(
+            analysis.facts.any {
+                it.contains("S0/D0")
+            },
+        )
+    }
+
+    @Test
+    fun recognizesFloatFieldSetter() {
+        val disassembly =
+            AArch64Disassembler.disassemble(
+                code =
+                    words(
+                        0xBD001000L,
+                        0xD65F03C0L,
+                    ),
+                startAddress = 0x5000,
+            )
+
+        val analysis =
+            AArch64MethodAnalyzer.analyze(
+                disassembly,
+            )
+
+        assertEquals(
+            AArch64MethodShape.INSTANCE_FIELD_SETTER,
+            analysis.shape,
+        )
+        assertEquals(0x10L, analysis.fieldOffset)
+        assertTrue(
+            analysis.facts.any {
+                it.contains("FP-аргумент")
+            },
+        )
+    }
+
 }

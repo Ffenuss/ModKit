@@ -214,13 +214,7 @@ object AArch64MethodAnalyzer {
         }
 
         val type =
-            when (memory.byteWidth) {
-                1 -> "byte/bool"
-                2 -> "uint16"
-                4 -> "uint32/float bits"
-                8 -> "uint64/reference"
-                else -> "value"
-            }
+            memoryTypeLabel(memory)
         return AArch64MethodAnalysis(
             shape =
                 AArch64MethodShape
@@ -238,7 +232,11 @@ object AArch64MethodAnalyzer {
                         memory.byteOffset
                             .toString(16) +
                         "].",
-                    "Значение возвращается через W0/X0 и сразу RET.",
+                    if (memory.floating) {
+                        "Значение возвращается через S0/D0 и сразу RET."
+                    } else {
+                        "Значение возвращается через W0/X0 и сразу RET."
+                    },
                 ),
             fieldOffset =
                 memory.byteOffset,
@@ -260,22 +258,23 @@ object AArch64MethodAnalyzer {
             decodeUnsignedLoadStore(
                 instructions[0].word,
             ) ?: return null
+        val expectedArgumentRegister =
+            if (memory.floating) {
+                0
+            } else {
+                1
+            }
         if (
             memory.load ||
             memory.baseRegister != 0 ||
-            memory.targetRegister != 1
+            memory.targetRegister !=
+                expectedArgumentRegister
         ) {
             return null
         }
 
         val type =
-            when (memory.byteWidth) {
-                1 -> "byte/bool"
-                2 -> "uint16"
-                4 -> "uint32/float bits"
-                8 -> "uint64/reference"
-                else -> "value"
-            }
+            memoryTypeLabel(memory)
         return AArch64MethodAnalysis(
             shape =
                 AArch64MethodShape
@@ -288,7 +287,11 @@ object AArch64MethodAnalyzer {
                     " = arg0;",
             facts =
                 listOf(
-                    "this приходит через X0, первый scalar/reference аргумент — через W1/X1.",
+                    if (memory.floating) {
+                        "this приходит через X0, первый FP-аргумент — через S0/D0."
+                    } else {
+                        "this приходит через X0, первый scalar/reference аргумент — через W1/X1."
+                    },
                     "Запись $type в [X0 + 0x" +
                         memory.byteOffset
                             .toString(16) +
@@ -414,24 +417,55 @@ object AArch64MethodAnalyzer {
 
     private data class UnsignedLoadStore(
         val load: Boolean,
+        val floating: Boolean,
         val byteWidth: Int,
         val targetRegister: Int,
         val baseRegister: Int,
         val byteOffset: Long,
     )
 
+    private fun memoryTypeLabel(
+        memory: UnsignedLoadStore,
+    ): String =
+        if (memory.floating) {
+            if (memory.byteWidth == 4) {
+                "float"
+            } else {
+                "double"
+            }
+        } else {
+            when (memory.byteWidth) {
+                1 -> "byte/bool"
+                2 -> "uint16"
+                4 -> "uint32"
+                8 -> "uint64/reference"
+                else -> "value"
+            }
+        }
+
     private fun decodeUnsignedLoadStore(
         word: Long,
     ): UnsignedLoadStore? {
-        if (
-            (word and 0x3B000000L) !=
-            0x39000000L
-        ) {
-            return null
-        }
+        val memoryClass =
+            word and 0x3F000000L
+        val floating =
+            when (memoryClass) {
+                0x39000000L ->
+                    false
+                0x3D000000L ->
+                    true
+                else ->
+                    return null
+            }
         val size =
             ((word ushr 30) and
                 0x3L).toInt()
+        if (
+            floating &&
+            size !in setOf(2, 3)
+        ) {
+            return null
+        }
         val byteWidth =
             1 shl size
         val load =
@@ -442,6 +476,7 @@ object AArch64MethodAnalyzer {
                 0xfffL
         return UnsignedLoadStore(
             load = load,
+            floating = floating,
             byteWidth = byteWidth,
             targetRegister =
                 (word and 0x1fL)
