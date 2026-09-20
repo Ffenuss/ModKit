@@ -110,6 +110,21 @@ fun ManualNativePatchSection(
             ?.let(NativePatchPresetCatalog::forAbi)
             .orEmpty()
 
+    val selectedSharedBodyCount = remember(
+        key,
+        selectedTargetId,
+    ) {
+        selectedPrepared?.target?.let { selected ->
+            preparation.targets.count {
+                it.target.runtimeId == "unity_il2cpp" &&
+                    it.target.artifact ==
+                    selected.artifact &&
+                    it.target.fileOffset ==
+                    selected.fileOffset
+            }
+        } ?: 0
+    }
+
     Card(Modifier.fillMaxWidth()) {
         Column(
             Modifier.padding(16.dp),
@@ -210,7 +225,21 @@ fun ManualNativePatchSection(
                     style = MaterialTheme.typography.bodySmall,
                 )
 
-                if (presets.isNotEmpty()) {
+                if (selectedSharedBodyCount > 1) {
+                    Text(
+                        "Этот native body используется " +
+                            selectedSharedBodyCount +
+                            " IL2CPP-методами. Patch одной metadata-цели " +
+                            "заблокирован; выберите метод с уникальным executable offset.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
+                if (
+                    presets.isNotEmpty() &&
+                    selectedSharedBodyCount == 1
+                ) {
                     Text(
                         "Готовые шаблоны для " +
                             selectedAbi,
@@ -301,6 +330,7 @@ fun ManualNativePatchSection(
                 },
                 enabled = !busy &&
                     selectedTargetId != null &&
+                    selectedSharedBodyCount == 1 &&
                     replacementHex.isNotBlank(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
