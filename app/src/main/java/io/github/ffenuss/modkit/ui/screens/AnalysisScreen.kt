@@ -23,6 +23,7 @@ import io.github.ffenuss.modkit.analysis.DetectionStatus
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.UserFindingStatus
 import io.github.ffenuss.modkit.domain.EngineProgress
+import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
 
 @Composable
 fun AnalysisScreen(
@@ -258,26 +259,90 @@ fun AnalysisScreen(
                             }
                         }
 
-                        items(graph.targets.take(8), key = { it.id }) { target ->
+                        item {
+                            val exactIl2Cpp =
+                                graph.targets.filter {
+                                    it.runtimeId ==
+                                        "unity_il2cpp" &&
+                                        it.fileOffset != null &&
+                                        (
+                                            it.userStatus ==
+                                                UserFindingStatus.CONFIRMED ||
+                                                it.userStatus ==
+                                                UserFindingStatus.READY
+                                            )
+                                }
+                            val projectMethods =
+                                exactIl2Cpp.filter {
+                                    Il2CppPatchTargetBrowser
+                                        .isAssemblyCSharp(it)
+                                }
                             Card(Modifier.fillMaxWidth()) {
                                 Column(
                                     Modifier.padding(14.dp),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    verticalArrangement =
+                                        Arrangement.spacedBy(5.dp),
                                 ) {
-                                    Text(target.displayName, fontWeight = FontWeight.SemiBold)
                                     Text(
-                                        findingStatusLabel(target.userStatus),
-                                        style = MaterialTheme.typography.bodySmall,
+                                        "Что это значит",
+                                        fontWeight =
+                                            FontWeight.SemiBold,
                                     )
-                                    target.abi?.let {
-                                        Text("ABI: " + it, style = MaterialTheme.typography.bodySmall)
-                                    }
-                                    target.blockers.firstOrNull()?.let { blocker ->
+                                    if (projectMethods.isNotEmpty()) {
                                         Text(
-                                            "Следующий шаг: " + blocker.message,
-                                            style = MaterialTheme.typography.bodySmall,
+                                            "Подтверждён код проекта " +
+                                                "(Assembly-CSharp): " +
+                                                projectMethods.size +
+                                                " методов. Именно с него " +
+                                                "Patch Lab начинает выбор изменений.",
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .bodySmall,
+                                        )
+                                        Text(
+                                            "Примеры: " +
+                                                projectMethods
+                                                    .take(4)
+                                                    .joinToString {
+                                                        it.displayName
+                                                    },
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .bodySmall,
+                                        )
+                                    } else if (exactIl2Cpp.isNotEmpty()) {
+                                        Text(
+                                            "Точные IL2CPP-методы найдены: " +
+                                                exactIl2Cpp.size +
+                                                ", но среди них пока не выделен " +
+                                                "Assembly-CSharp как код проекта.",
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .bodySmall,
+                                        )
+                                    } else {
+                                        Text(
+                                            "Точных IL2CPP-методов для изменения " +
+                                                "пока нет. Найденные runtime ниже " +
+                                                "показывают технологии, а не готовые патчи.",
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .bodySmall,
                                         )
                                     }
+                                    Text(
+                                        "Тысячи технических методов Unity/.NET " +
+                                            "здесь больше не выводятся списком. " +
+                                            "Полный поиск доступен в Patch Lab.",
+                                        style =
+                                            MaterialTheme
+                                                .typography
+                                                .bodySmall,
+                                    )
                                 }
                             }
                         }
@@ -466,15 +531,37 @@ fun AnalysisScreen(
                                                     MaterialTheme.typography.bodySmall,
                                             )
                                         }
-                                    binary.evidence
-                                        .flatMap { it.bindings }
-                                        .take(5)
-                                        .forEach { binding ->
-                                            Text(
-                                                "• " + binding.managedIdentity + " · подтверждено",
-                                                style = MaterialTheme.typography.bodySmall,
-                                            )
-                                        }
+                                    val projectExamples =
+                                        result.evidenceGraph
+                                            ?.targets
+                                            .orEmpty()
+                                            .asSequence()
+                                            .filter {
+                                                it.runtimeId ==
+                                                    "unity_il2cpp" &&
+                                                    it.fileOffset != null &&
+                                                    Il2CppPatchTargetBrowser
+                                                        .isAssemblyCSharp(
+                                                            it,
+                                                        )
+                                            }
+                                            .map {
+                                                it.displayName
+                                            }
+                                            .distinct()
+                                            .take(5)
+                                            .toList()
+                                    if (projectExamples.isNotEmpty()) {
+                                        Text(
+                                            "Примеры кода проекта: " +
+                                                projectExamples
+                                                    .joinToString(),
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .bodySmall,
+                                        )
+                                    }
                                     binary.warnings.take(4).forEach {
                                         Text("• " + it, style = MaterialTheme.typography.bodySmall)
                                     }
