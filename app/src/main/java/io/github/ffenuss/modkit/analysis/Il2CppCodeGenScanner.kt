@@ -442,8 +442,7 @@ object Il2CppCodeGenScanner {
                         typeVa = typeVa,
                     )
                         ?: return@all false
-                raw in MIN_KNOWN_IL2CPP_TYPE_CODE..
-                    MAX_KNOWN_IL2CPP_TYPE_CODE
+                raw in VALID_IL2CPP_TYPE_CODES
             }
         }
     }
@@ -1312,6 +1311,12 @@ object Il2CppCodeGenScanner {
     private const val METADATA_REGISTRATION_TYPE_SIZES_PAIR_INDEX = 6
     private const val MAX_METADATA_TYPES = 10_000_000L
     private const val MAX_RETURN_TYPE_SAMPLES = 12
-    private const val MIN_KNOWN_IL2CPP_TYPE_CODE = 0x01
-    private const val MAX_KNOWN_IL2CPP_TYPE_CODE = 0x1d
+    private val VALID_IL2CPP_TYPE_CODES =
+        setOf(
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x18, 0x19,
+            0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20, 0x21, 0x40,
+            0x41, 0x45, 0x55,
+        )
 }
