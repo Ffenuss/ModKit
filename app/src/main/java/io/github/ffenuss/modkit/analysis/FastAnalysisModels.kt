@@ -42,6 +42,7 @@ data class FastAnalysisResult(
     val index: ArtifactIndex,
     val routingPlan: EngineRoutingPlan,
     val elapsedMs: Long,
+    val dexInventory: DexInventoryResult? = null,
     val elfInventory: UniversalElfInventoryResult? = null,
     val il2cppFastDump: Il2CppFastDumpResult? = null,
     val il2cppBinaryBinding: Il2CppBinaryBindingResult? = null,
