@@ -667,7 +667,7 @@ class GameplayModificationFinderTest {
     }
 
     @Test
-    fun purchaseAndPaymentSurfacesAreNotOfferedAsAutoMods() {
+    fun purchaseAndPaymentSurfacesAreVisibleButNotAutoPatched() {
         val target = target(
             token = 0x06000006,
             name = "ValidatePurchaseReceipt",
@@ -678,11 +678,88 @@ class GameplayModificationFinderTest {
             returnKind = Il2CppNativeReturnKind.BOOLEAN,
         )
 
-        assertTrue(
+        val opportunity =
             GameplayModificationFinder.find(
                 result = result,
                 preparation = preparation(target),
-            ).isEmpty(),
+            ).single()
+
+        assertEquals(
+            GameplayModificationCategory.SENSITIVE_SURFACE,
+            opportunity.category,
+        )
+        assertEquals(
+            GameplayModificationConfidence.SENSITIVE_SURFACE_SIGNAL,
+            opportunity.confidence,
+        )
+        assertEquals(
+            GameplayMutationAction.DISCOVERY_ONLY,
+            opportunity.action,
+        )
+        assertFalse(opportunity.selectable)
+        assertTrue(
+            opportunity.title.contains(
+                "receipt",
+                ignoreCase = true,
+            ),
+        )
+    }
+
+    @Test
+    fun antiCheatAndAuthenticationSurfacesAreReportedAsSensitive() {
+        val first =
+            target(
+                token = 0x06000016,
+                name = "IntegrityCheck",
+                offset = 0x810,
+                declaringType = "Game.Security.AntiCheatManager",
+            )
+        val second =
+            target(
+                token = 0x06000017,
+                name = "AuthenticateSessionToken",
+                offset = 0x820,
+                declaringType = "Game.Network.AuthService",
+            )
+        val base =
+            result(
+                target = first,
+                returnKind = Il2CppNativeReturnKind.BOOLEAN,
+                extraTarget = second,
+            )
+
+        val opportunities =
+            GameplayModificationFinder.find(
+                result = base,
+                preparation =
+                    PatchPreparationPlan(
+                        artifactSha256 = SHA,
+                        sourceShaVerified = true,
+                        preparedAtEpochMs = 1,
+                        targets =
+                            listOf(
+                                prepared(first),
+                                prepared(second),
+                            ),
+                        globalBlockers = emptyList(),
+                    ),
+            )
+
+        assertEquals(2, opportunities.size)
+        assertTrue(
+            opportunities.all {
+                it.category ==
+                    GameplayModificationCategory
+                        .SENSITIVE_SURFACE
+            },
+        )
+        assertTrue(
+            opportunities.all {
+                !it.selectable &&
+                    it.action ==
+                    GameplayMutationAction
+                        .DISCOVERY_ONLY
+            },
         )
     }
 
