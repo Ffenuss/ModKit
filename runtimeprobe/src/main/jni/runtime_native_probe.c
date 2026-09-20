@@ -1192,9 +1192,10 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeStartPassiv
     const int register_hooked =
             patch_register_natives_slot(env);
     dl_iterate_phdr(patch_art_runtime_module, NULL);
-    const int onload_hooked =
-            g_jni_onload_slot_count > 0;
-    if (!register_hooked || !onload_hooked ||
+    if (g_jni_onload_slot_count == 0) {
+        atomic_store(&g_jni_incomplete, 1);
+    }
+    if (!register_hooked ||
             atomic_load(&g_jni_restore_failed)) {
         restore_jni_hooks_locked();
         pthread_mutex_unlock(&g_jni_hook_lock);
