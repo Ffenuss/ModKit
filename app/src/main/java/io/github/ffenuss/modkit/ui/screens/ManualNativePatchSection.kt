@@ -39,6 +39,7 @@ import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.analysis.nativecode.AArch64Disassembler
 import io.github.ffenuss.modkit.domain.EngineProgress
+import io.github.ffenuss.modkit.patch.GameplayModificationCategory
 import io.github.ffenuss.modkit.patch.GameplayModificationFinder
 import io.github.ffenuss.modkit.patch.GameplayModificationOpportunity
 import io.github.ffenuss.modkit.patch.Il2CppNativeMutationDraftBuilder
@@ -84,6 +85,9 @@ fun ManualNativePatchSection(
         mutableStateOf(false)
     }
     var projectCodeOnly by remember(key) { mutableStateOf(true) }
+    var includeSensitiveSurfaces by remember(key) {
+        mutableStateOf(false)
+    }
     var selectedOpportunityIds by remember(key) {
         mutableStateOf<Set<String>>(emptySet())
     }
@@ -202,10 +206,20 @@ fun ManualNativePatchSection(
         }
     }
 
+    val displayedOpportunities =
+        if (includeSensitiveSurfaces) {
+            opportunities
+        } else {
+            opportunities.filterNot {
+                it.category ==
+                    GameplayModificationCategory
+                        .SENSITIVE_SURFACE
+            }
+        }
     val actionableOpportunities =
-        opportunities.filter { it.selectable }
+        displayedOpportunities.filter { it.selectable }
     val deferredOpportunities =
-        opportunities.filterNot { it.selectable }
+        displayedOpportunities.filterNot { it.selectable }
     val selectedOpportunities =
         actionableOpportunities.filter {
             it.id in selectedOpportunityIds
@@ -215,6 +229,7 @@ fun ManualNativePatchSection(
         key,
         normalizedFilter,
         effectiveProjectCodeOnly,
+        includeSensitiveSurfaces,
     ) {
         preparation.targets
             .asSequence()
@@ -224,6 +239,13 @@ fun ManualNativePatchSection(
                     Il2CppPatchTargetBrowser.isAssemblyCSharp(
                         prepared.target,
                     )
+            }
+            .filter { prepared ->
+                includeSensitiveSurfaces ||
+                    GameplayModificationFinder
+                        .sensitiveSurfaceLabel(
+                            prepared.target,
+                        ) == null
             }
             .filter { prepared ->
                 Il2CppPatchTargetBrowser.matches(
@@ -259,8 +281,18 @@ fun ManualNativePatchSection(
     val selectedReturnKind =
         selectedBinding?.returnKind
             ?: Il2CppNativeReturnKind.UNKNOWN
-    val presets =
+    val selectedSensitiveLabel =
         selectedPrepared
+            ?.target
+            ?.let {
+                GameplayModificationFinder
+                    .sensitiveSurfaceLabel(it)
+            }
+    val presets =
+        if (selectedSensitiveLabel != null) {
+            emptyList()
+        } else {
+            selectedPrepared
             ?.target
             ?.abi
             ?.let { abi ->
@@ -270,6 +302,7 @@ fun ManualNativePatchSection(
                 )
             }
             .orEmpty()
+        }
 
     val selectedSharedBodyCount = remember(
         key,
@@ -396,6 +429,14 @@ fun ManualNativePatchSection(
                             fontWeight =
                                 FontWeight.SemiBold,
                         )
+                        selectedSensitiveLabel?.let { label ->
+                            Text(
+                                "Sensitive surface: " + label +
+                                    ". Этот экран работает только как инспектор; редактирование и сохранение отключены.",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         Text(
                             "Редактор открыт поверх списка найденного — " +
                                 "после сохранения или закрытия вы вернётесь " +
@@ -533,6 +574,7 @@ fun ManualNativePatchSection(
                         }
 
                         if (
+                            selectedSensitiveLabel == null &&
                             presets.isNotEmpty() &&
                             selectedSharedBodyCount == 1
                         ) {
@@ -602,39 +644,61 @@ fun ManualNativePatchSection(
                         }
 
                         if (showRawHex) {
-                            OutlinedTextField(
-                                value = replacementHex,
-                                onValueChange = {
-                                    replacementHex = it
-                                    draft = null
-                                    preflight = null
-                                    applyOutcome = null
-                                },
-                                label = {
-                                    Text(
-                                        "Точный ARM64 body (hex)",
-                                    )
-                                },
-                                supportingText = {
-                                    Text(
-                                        "Это машинный код. Используйте его только " +
-                                            "для точной ручной правки; ARM64 — полными " +
-                                            "4-байтовыми инструкциями.",
-                                    )
-                                },
-                                singleLine = false,
-                                minLines = 6,
-                                maxLines = 14,
-                                textStyle =
-                                    MaterialTheme.typography
-                                        .bodyMedium
-                                        .copy(
-                                            fontFamily =
-                                                FontFamily.Monospace,
-                                        ),
-                                modifier =
+                            if (selectedSensitiveLabel != null) {
+                                Card(
                                     Modifier.fillMaxWidth(),
-                            )
+                                ) {
+                                    Text(
+                                        window.originalHex,
+                                        modifier =
+                                            Modifier.padding(14.dp),
+                                        fontFamily =
+                                            FontFamily.Monospace,
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                    )
+                                }
+                                Text(
+                                    "HEX показан только для исследования. Редактирование sensitive surface отключено.",
+                                    style =
+                                        MaterialTheme.typography.bodySmall,
+                                )
+                            } else {
+                                OutlinedTextField(
+                                    value = replacementHex,
+                                    onValueChange = {
+                                        replacementHex = it
+                                        draft = null
+                                        preflight = null
+                                        applyOutcome = null
+                                    },
+                                    label = {
+                                        Text(
+                                            "Точный ARM64 body (hex)",
+                                        )
+                                    },
+                                    supportingText = {
+                                        Text(
+                                            "Это машинный код. Используйте его только " +
+                                                "для точной ручной правки; ARM64 — полными " +
+                                                "4-байтовыми инструкциями.",
+                                        )
+                                    },
+                                    singleLine = false,
+                                    minLines = 6,
+                                    maxLines = 14,
+                                    textStyle =
+                                        MaterialTheme.typography
+                                            .bodyMedium
+                                            .copy(
+                                                fontFamily =
+                                                    FontFamily.Monospace,
+                                            ),
+                                    modifier =
+                                        Modifier.fillMaxWidth(),
+                                )
+                            }
                         }
 
                         if (
@@ -753,6 +817,7 @@ fun ManualNativePatchSection(
                             },
                             enabled =
                                 !busy &&
+                                    selectedSensitiveLabel == null &&
                                     evidenceTarget != null &&
                                     selectedSharedBodyCount == 1 &&
                                     replacementHex.isNotBlank(),
@@ -760,7 +825,13 @@ fun ManualNativePatchSection(
                                 Modifier.fillMaxWidth(),
                         ) {
                             Text(
-                                "Сохранить изменение и закрыть",
+                                if (
+                                    selectedSensitiveLabel != null
+                                ) {
+                                    "Сохранение отключено для sensitive surface"
+                                } else {
+                                    "Сохранить изменение и закрыть"
+                                },
                             )
                         }
 
@@ -817,6 +888,35 @@ fun ManualNativePatchSection(
                     "показываются отдельно как подсказки и не патчатся вслепую.",
                 style = MaterialTheme.typography.bodySmall,
             )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    checked = includeSensitiveSurfaces,
+                    onCheckedChange = { checked ->
+                        includeSensitiveSurfaces = checked
+                        selectedOpportunityIds = emptySet()
+                        selectedTargetId = null
+                        replacementHex = ""
+                        codeWindow = null
+                        draft = null
+                        preflight = null
+                        applyOutcome = null
+                        error = null
+                    },
+                )
+                Column {
+                    Text(
+                        "Показывать billing / purchase / auth / anti-cheat",
+                    )
+                    Text(
+                        "Опциональный режим анализа: код, сигнатуры, связи и runtime-evidence. " +
+                            "Для этих поверхностей автопатчи и сохранение изменений отключены.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
             if (findingOpportunities) {
                 LinearProgressIndicator(
                     Modifier.fillMaxWidth(),
@@ -1082,7 +1182,17 @@ fun ManualNativePatchSection(
                                 modifier =
                                     Modifier.fillMaxWidth(),
                             ) {
-                                Text("Открыть код / ручное изменение")
+                                Text(
+                                    if (
+                                        opportunity.category ==
+                                        GameplayModificationCategory
+                                            .SENSITIVE_SURFACE
+                                    ) {
+                                        "Открыть код (только анализ)"
+                                    } else {
+                                        "Открыть код / ручное изменение"
+                                    },
+                                )
                             }
                         }
                     }
@@ -1285,6 +1395,15 @@ fun ManualNativePatchSection(
                     style = MaterialTheme.typography.bodySmall,
                 )
 
+                selectedSensitiveLabel?.let { label ->
+                    Text(
+                        "Sensitive surface: " + label +
+                            ". Режим только для анализа; изменение/обход этой поверхности не сохраняется.",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+
                 Text(
                     "Return type: " +
                         Il2CppPatchTargetBrowser.returnKindLabel(
@@ -1326,6 +1445,10 @@ fun ManualNativePatchSection(
                             evidenceTarget.id
                         ) {
                             "Перечитать код метода"
+                        } else if (
+                            selectedSensitiveLabel != null
+                        ) {
+                            "Открыть код метода (только анализ)"
                         } else {
                             "Открыть код метода"
                         },
@@ -1348,6 +1471,7 @@ fun ManualNativePatchSection(
                 }
 
                 if (
+                    selectedSensitiveLabel == null &&
                     presets.isNotEmpty() &&
                     selectedSharedBodyCount == 1
                 ) {
@@ -1400,6 +1524,7 @@ fun ManualNativePatchSection(
                     }
                 }
                 if (
+                    selectedSensitiveLabel == null &&
                     presets.isEmpty() &&
                     selectedSharedBodyCount == 1
                 ) {
@@ -1425,6 +1550,7 @@ fun ManualNativePatchSection(
 
             if (
                 selectedPrepared != null &&
+                selectedSensitiveLabel == null &&
                 codeWindow == null &&
                 replacementHex.isNotBlank()
             ) {

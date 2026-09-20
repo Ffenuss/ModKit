@@ -698,16 +698,21 @@ object GameplayModificationFinder {
         }
     }
 
-    private fun isSensitiveTarget(
+    fun sensitiveSurfaceLabel(
         target: EvidenceTarget,
-    ): Boolean =
+    ): String? =
         sensitiveSurfaceKind(
             target = target,
             methodTokens =
                 semanticMethodTokens(
                     target.memberName.orEmpty(),
                 ),
-        ) != null
+        )
+
+    private fun isSensitiveTarget(
+        target: EvidenceTarget,
+    ): Boolean =
+        sensitiveSurfaceLabel(target) != null
 
     private fun sensitiveSurfaceKind(
         target: EvidenceTarget,
