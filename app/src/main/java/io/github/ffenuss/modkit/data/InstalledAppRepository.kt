@@ -14,6 +14,8 @@ data class InstalledAppTarget(
     val versionCode: Long,
     val apkFiles: List<File>,
     val isSystemApp: Boolean,
+    val isGame: Boolean,
+    val hasLauncherActivity: Boolean,
 )
 
 class InstalledAppRepository(private val context: Context) {
@@ -22,7 +24,17 @@ class InstalledAppRepository(private val context: Context) {
     fun load(): List<InstalledAppTarget> =
         installedPackages()
             .mapNotNull(::toTarget)
-            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.label })
+            .sortedWith(
+                compareBy<InstalledAppTarget> {
+                    it.isSystemApp
+                }.thenBy {
+                    !it.hasLauncherActivity
+                }.thenBy(
+                    String.CASE_INSENSITIVE_ORDER,
+                ) {
+                    it.label
+                },
+            )
 
     fun find(packageName: String): InstalledAppTarget? {
         val info = runCatching {
@@ -72,7 +84,16 @@ class InstalledAppRepository(private val context: Context) {
                 info.versionCode.toLong()
             },
             apkFiles = distinctFiles,
-            isSystemApp = applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0,
+            isSystemApp =
+                applicationInfo.flags and
+                    ApplicationInfo.FLAG_SYSTEM != 0,
+            isGame =
+                applicationInfo.category ==
+                    ApplicationInfo.CATEGORY_GAME,
+            hasLauncherActivity =
+                pm.getLaunchIntentForPackage(
+                    info.packageName,
+                ) != null,
         )
     }
 }
