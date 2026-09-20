@@ -145,7 +145,27 @@ class ElfImage private constructor(
 
     companion object {
         private const val PT_LOAD = 1L
+        private const val PT_DYNAMIC = 2L
         private const val PF_X = 1L
+
+        private const val DT_NULL = 0L
+        private const val DT_RELA = 7L
+        private const val DT_RELASZ = 8L
+        private const val DT_RELAENT = 9L
+        private const val DT_REL = 17L
+        private const val DT_RELSZ = 18L
+        private const val DT_RELENT = 19L
+        private const val DT_RELRSZ = 35L
+        private const val DT_RELR = 36L
+        private const val DT_RELRENT = 37L
+
+        private const val DT_ANDROID_REL = 0x6000000fL
+        private const val DT_ANDROID_RELSZ = 0x60000010L
+        private const val DT_ANDROID_RELA = 0x60000011L
+        private const val DT_ANDROID_RELASZ = 0x60000012L
+        private const val DT_ANDROID_RELR = 0x6fffe000L
+        private const val DT_ANDROID_RELRSZ = 0x6fffe001L
+        private const val DT_ANDROID_RELRENT = 0x6fffe003L
         private const val SHT_RELA = 4L
         private const val SHT_NOBITS = 8L
         private const val SHT_REL = 9L
@@ -162,6 +182,7 @@ class ElfImage private constructor(
         private const val RELOCATION_GROUP_KNOWN_FLAGS = 0x0fL
 
         private const val MAX_RELATIVE_RELOCATIONS = 1_000_000
+        private const val MAX_DYNAMIC_ENTRIES = 16_384
         private const val MAX_SCAN_WINDOW_BYTES = 1 * 1024 * 1024
         private const val MAX_PACKED_RELOCATION_BYTES =
             64 * 1024 * 1024
@@ -212,10 +233,19 @@ class ElfImage private constructor(
                     )
                 val relativeRelocations =
                     if (resolveRelativeRelocations) {
+                        val dynamicRelocationSections =
+                            readDynamicRelocationSections(
+                                raf = raf,
+                                h = header,
+                                loadSegments = segments,
+                                cancellation = cancellation,
+                            )
                         readRelativeRelocations(
                             raf = raf,
                             h = header,
-                            sections = sections,
+                            sections =
+                                sections +
+                                    dynamicRelocationSections,
                             loadSegments = segments,
                             cancellation = cancellation,
                         )
