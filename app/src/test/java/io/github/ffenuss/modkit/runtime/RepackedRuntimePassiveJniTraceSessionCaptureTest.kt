@@ -46,9 +46,10 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
         assertTrue(parsed.blockers.isEmpty())
         assertEquals(2, parsed.events.size)
         assertEquals(
-            RuntimeNativeLookupKind.JNI_ON_LOAD,
+            RuntimeNativeLookupKind.DLSYM,
             parsed.events[0].kind,
         )
+        assertEquals("JNI_OnLoad", parsed.events[0].symbolName)
         assertEquals(
             RuntimeNativeLookupKind.JNI_REGISTER_NATIVE,
             parsed.events[1].kind,
@@ -237,10 +238,10 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
             startedAtEpochMs = STARTED,
             stoppedAtEpochMs = 0,
             traceBytes = 0,
-            producerKind = "ART_DLSYM_JNI_TABLE",
+            producerKind = "ART_JNI_ONLOAD_LOOKUP_JNI_TABLE",
             producerReady = true,
             producerActive = true,
-            jniOnLoadHookedSlotCount = 1,
+            jniOnLoadLookupHookedSlotCount = 1,
             registerNativesHooked = true,
             producerIncomplete = false,
             producerRestoreFailed = false,
@@ -259,10 +260,10 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
             startedAtEpochMs = STARTED,
             stoppedAtEpochMs = STOPPED,
             traceBytes = TRACE_BYTES,
-            producerKind = "ART_DLSYM_JNI_TABLE",
+            producerKind = "ART_JNI_ONLOAD_LOOKUP_JNI_TABLE",
             producerReady = true,
             producerActive = false,
-            jniOnLoadHookedSlotCount = 1,
+            jniOnLoadLookupHookedSlotCount = 1,
             registerNativesHooked = true,
             producerIncomplete = false,
             producerRestoreFailed = false,
@@ -289,8 +290,8 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
             )
             appendLine("traceBytes=" + traceBytes.size)
             appendLine("truncated=false")
-            appendLine("producerKind=ART_DLSYM_JNI_TABLE")
-            appendLine("jniOnLoadHookedSlotCount=1")
+            appendLine("producerKind=ART_JNI_ONLOAD_LOOKUP_JNI_TABLE")
+            appendLine("jniOnLoadLookupHookedSlotCount=1")
             appendLine("registerNativesHooked=true")
             appendLine(
                 "producerIncomplete=$producerIncomplete",
@@ -359,7 +360,7 @@ class RepackedRuntimePassiveJniTraceSessionCaptureTest {
         private const val STARTED = 1000L
         private const val STOPPED = 2000L
         private const val TRACE =
-            "JNI_ON_LOAD\tlibsample.so\tJNI_OnLoad\t0x70020200\n" +
+            "DLSYM\tlibsample.so\tJNI_OnLoad\t0x70020200\n" +
                 "JNI_REGISTER_NATIVE\tlibsample.so\tcom/example/Foo\tbar\t(I)V\t0x70020300\n"
         private val TRACE_BYTES =
             TRACE.toByteArray(Charsets.UTF_8).size
