@@ -187,7 +187,8 @@ object RepackedRuntimeProbeIdentityVerifier {
 
 class AndroidRepackedRuntimeProbeTransport(
     private val context: Context,
-) : RepackedRuntimePassiveTraceTransport {
+) : RepackedRuntimePassiveTraceTransport,
+    RepackedRuntimePassiveJniTraceTransport {
     override fun inspectInstalled(
         packageName: String,
         authority: String,
@@ -363,6 +364,62 @@ class AndroidRepackedRuntimeProbeTransport(
         }
     }
 
+    override fun startPassiveJniTrace(
+        authority: String,
+    ): RepackedRuntimePassiveJniTraceStatus =
+        passiveJniTraceControl(
+            authority = authority,
+            method = "nativeJniTraceStart",
+        )
+
+    override fun stopPassiveJniTrace(
+        authority: String,
+    ): RepackedRuntimePassiveJniTraceStatus =
+        passiveJniTraceControl(
+            authority = authority,
+            method = "nativeJniTraceStop",
+        )
+
+    override fun passiveJniTraceStatus(
+        authority: String,
+    ): RepackedRuntimePassiveJniTraceStatus =
+        passiveJniTraceControl(
+            authority = authority,
+            method = "nativeJniTraceStatus",
+        )
+
+    override fun readPassiveJniTrace(
+        authority: String,
+        cancellation: CancellationSignal,
+        maxBytes: Int,
+    ): ByteArray {
+        require(
+            maxBytes in 1..
+                RepackedRuntimePassiveJniTraceExportProtocol
+                    .MAX_EXPORT_BYTES,
+        ) {
+            "Runtime passive JNI trace read limit is invalid."
+        }
+        val uri = Uri.parse(
+            "content://" + authority + "/" +
+                RuntimeEvidenceProviderContract
+                    .PATH_NATIVE_JNI_TRACE,
+        )
+        val descriptor = requireNotNull(
+            context.contentResolver
+                .openFileDescriptor(uri, "r"),
+        ) {
+            "Runtime probe did not return a passive JNI trace descriptor."
+        }
+        return descriptor.use {
+            readBounded(
+                descriptor = it,
+                cancellation = cancellation,
+                maxBytes = maxBytes,
+            )
+        }
+    }
+
     private fun nativeTraceControl(
         authority: String,
         method: String,
@@ -416,6 +473,80 @@ class AndroidRepackedRuntimeProbeTransport(
                 result.getBoolean("producerActive", false),
             hookedSlotCount =
                 result.getInt("hookedSlotCount", -1),
+            producerIncomplete =
+                result.getBoolean(
+                    "producerIncomplete",
+                    true,
+                ),
+            producerRestoreFailed =
+                result.getBoolean(
+                    "producerRestoreFailed",
+                    true,
+                ),
+        )
+    }
+
+    private fun passiveJniTraceControl(
+        authority: String,
+        method: String,
+    ): RepackedRuntimePassiveJniTraceStatus {
+        val uri = Uri.parse(
+            "content://" + authority + "/" +
+                RuntimeEvidenceProviderContract
+                    .PATH_NATIVE_JNI_TRACE,
+        )
+        val result = requireNotNull(
+            context.contentResolver.call(
+                uri,
+                method,
+                null,
+                null,
+            ),
+        ) {
+            "Runtime probe passive JNI trace control returned no result."
+        }
+        return RepackedRuntimePassiveJniTraceStatus(
+            schemaVersion =
+                result.getInt("schemaVersion", -1),
+            packageName =
+                result.getString("packageName").orEmpty(),
+            pid = result.getInt("pid", -1),
+            sessionId =
+                result.getString("sessionId").orEmpty(),
+            active =
+                result.getBoolean("active", false),
+            truncated =
+                result.getBoolean("truncated", false),
+            eventCount =
+                result.getInt("eventCount", -1),
+            startedAtEpochMs =
+                result.getLong(
+                    "startedAtEpochMs",
+                    -1L,
+                ),
+            stoppedAtEpochMs =
+                result.getLong(
+                    "stoppedAtEpochMs",
+                    -1L,
+                ),
+            traceBytes =
+                result.getInt("traceBytes", -1),
+            producerKind =
+                result.getString("producerKind").orEmpty(),
+            producerReady =
+                result.getBoolean("producerReady", false),
+            producerActive =
+                result.getBoolean("producerActive", false),
+            jniOnLoadHookedSlotCount =
+                result.getInt(
+                    "jniOnLoadHookedSlotCount",
+                    -1,
+                ),
+            registerNativesHooked =
+                result.getBoolean(
+                    "registerNativesHooked",
+                    false,
+                ),
             producerIncomplete =
                 result.getBoolean(
                     "producerIncomplete",
@@ -494,6 +625,7 @@ object RuntimeEvidenceProviderContract {
     const val SCHEMA_VERSION = 1
     const val PATH_EVIDENCE = "evidence"
     const val PATH_NATIVE_TRACE = "native-trace"
+    const val PATH_NATIVE_JNI_TRACE = "native-jni-trace"
     const val HEADER_MAGIC = "MODKIT_RUNTIME_EVIDENCE_V1"
     val MAPS_DELIMITER: ByteArray =
         "\n---MAPS---\n".toByteArray(Charsets.UTF_8)
