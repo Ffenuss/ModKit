@@ -419,6 +419,7 @@ enum class RuntimeNativeTraceCapability {
     NON_ROOT_TRACE_CAPTURE,
     ROOT_TRACE_CAPTURE,
     REPACKED_TARGETED_DLSYM_PROBE,
+    REPACKED_PASSIVE_DLSYM_CAPTURE,
 }
 
 object RuntimeNativeTraceCapabilityRegistry {
@@ -427,6 +428,7 @@ object RuntimeNativeTraceCapabilityRegistry {
             RuntimeNativeTraceCapability.TRACE_PARSER,
             RuntimeNativeTraceCapability.EXECUTABLE_ADDRESS_VALIDATOR,
             RuntimeNativeTraceCapability.REPACKED_TARGETED_DLSYM_PROBE,
+            RuntimeNativeTraceCapability.REPACKED_PASSIVE_DLSYM_CAPTURE,
         )
 
     fun captureAvailable(
@@ -446,5 +448,13 @@ object RuntimeNativeTraceCapabilityRegistry {
     ): Boolean =
         source == RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME &&
             RuntimeNativeTraceCapability.REPACKED_TARGETED_DLSYM_PROBE in
+            registered
+
+
+    fun passiveDlsymCaptureAvailable(
+        source: RuntimeNativeTraceSource,
+    ): Boolean =
+        source == RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME &&
+            RuntimeNativeTraceCapability.REPACKED_PASSIVE_DLSYM_CAPTURE in
             registered
 }
