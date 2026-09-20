@@ -445,6 +445,13 @@ fun AnalysisScreen(
                                         "Проверено библиотек: " + binary.evidence.size,
                                         style = MaterialTheme.typography.bodySmall,
                                     )
+                                    Text(
+                                        "Учтено relative relocations: " +
+                                            binary.evidence.sumOf {
+                                                it.relativeRelocationCount
+                                            },
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
                                     binary.evidence
                                         .flatMap { it.blockers }
                                         .distinct()
