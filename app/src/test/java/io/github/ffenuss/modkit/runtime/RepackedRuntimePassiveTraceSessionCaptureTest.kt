@@ -76,6 +76,101 @@ class RepackedRuntimePassiveTraceSessionCaptureTest {
     }
 
     @Test
+    fun producerStartFailureBlocksSession() {
+        val transport = FakeTransport(
+            installed = installedProbe(),
+            query = query(),
+            startStatus = startStatus().copy(
+                active = false,
+                producerReady = false,
+                producerActive = false,
+            ),
+            stopStatus = stopStatus(),
+            traceBytes = exportBytes(),
+        )
+
+        val failure = runCatching {
+            RepackedRuntimePassiveTraceSessionCapture.start(
+                build = buildResult(),
+                transport = transport,
+                cancellation = AtomicCancellationSignal(),
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertTrue(
+            failure?.message.orEmpty().contains(
+                "producer failed to start",
+                ignoreCase = true,
+            ),
+        )
+    }
+
+    @Test
+    fun restoreFailureBlocksTraceExport() {
+        val transport = FakeTransport(
+            installed = installedProbe(),
+            query = query(),
+            startStatus = startStatus(),
+            stopStatus = stopStatus(
+                producerReady = false,
+                producerRestoreFailed = true,
+            ),
+            traceBytes = exportBytes(),
+        )
+        val session =
+            RepackedRuntimePassiveTraceSessionCapture.start(
+                build = buildResult(),
+                transport = transport,
+                cancellation = AtomicCancellationSignal(),
+            )
+
+        val failure = runCatching {
+            RepackedRuntimePassiveTraceSessionCapture.stopAndRead(
+                build = buildResult(),
+                session = session,
+                transport = transport,
+                cancellation = AtomicCancellationSignal(),
+            )
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        assertEquals(0, transport.readCalls)
+    }
+
+    @Test
+    fun incompleteProducerCanReturnPositiveTraceButNeverProvesCompleteness() {
+        val transport = FakeTransport(
+            installed = installedProbe(),
+            query = query(),
+            startStatus = startStatus().copy(
+                producerIncomplete = true,
+            ),
+            stopStatus = stopStatus(
+                producerIncomplete = true,
+            ),
+            traceBytes = exportBytes(),
+        )
+        val session =
+            RepackedRuntimePassiveTraceSessionCapture.start(
+                build = buildResult(),
+                transport = transport,
+                cancellation = AtomicCancellationSignal(),
+            )
+        val result =
+            RepackedRuntimePassiveTraceSessionCapture.stopAndRead(
+                build = buildResult(),
+                session = session,
+                transport = transport,
+                cancellation = AtomicCancellationSignal(),
+            )
+
+        assertTrue(result.status.producerIncomplete)
+        assertEquals(1, result.export.eventCount)
+        assertFalse(result.capture.truncated)
+    }
+
+    @Test
     fun pidRestartBeforeStopFailsClosedWithoutExport() {
         val transport = FakeTransport(
             installed = installedProbe(),
