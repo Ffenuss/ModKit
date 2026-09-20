@@ -430,6 +430,7 @@ enum class RuntimeNativeTraceCapability {
     REPACKED_TARGETED_DLSYM_PROBE,
     REPACKED_PASSIVE_DLSYM_CAPTURE,
     REPACKED_PASSIVE_JNI_REGISTRATION_CAPTURE,
+    REPACKED_PASSIVE_JNI_ONLOAD_INVOCATION_CAPTURE,
 }
 
 object RuntimeNativeTraceCapabilityRegistry {
@@ -440,6 +441,9 @@ object RuntimeNativeTraceCapabilityRegistry {
             RuntimeNativeTraceCapability.REPACKED_TARGETED_DLSYM_PROBE,
             RuntimeNativeTraceCapability.REPACKED_PASSIVE_DLSYM_CAPTURE,
             RuntimeNativeTraceCapability.REPACKED_PASSIVE_JNI_REGISTRATION_CAPTURE,
+            RuntimeNativeTraceCapability
+                .REPACKED_PASSIVE_JNI_ONLOAD_INVOCATION_CAPTURE,
+            RuntimeNativeTraceCapability.REPACKED_TRACE_CAPTURE,
         )
 
     fun captureAvailable(
@@ -475,5 +479,13 @@ object RuntimeNativeTraceCapabilityRegistry {
         source == RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME &&
             RuntimeNativeTraceCapability
                 .REPACKED_PASSIVE_JNI_REGISTRATION_CAPTURE in
+            registered
+
+    fun passiveJniOnLoadInvocationCaptureAvailable(
+        source: RuntimeNativeTraceSource,
+    ): Boolean =
+        source == RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME &&
+            RuntimeNativeTraceCapability
+                .REPACKED_PASSIVE_JNI_ONLOAD_INVOCATION_CAPTURE in
             registered
 }
