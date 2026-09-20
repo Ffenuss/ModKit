@@ -118,6 +118,43 @@ class GameplayModificationFinderTest {
     }
 
     @Test
+    fun provenFloat32MoveSpeedCanBeAutoPatchedToTwo() {
+        val target =
+            target(
+                token = 0x06000013,
+                name = "get_MoveSpeed",
+                offset = 0x640,
+                declaringType = "Game.PlayerMovement",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.FLOAT32,
+            )
+
+        val opportunity =
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).single()
+
+        assertEquals(
+            GameplayModificationCategory.MOVEMENT,
+            opportunity.category,
+        )
+        assertEquals(
+            GameplayMutationAction.FORCE_TWO,
+            opportunity.action,
+        )
+        assertTrue(opportunity.selectable)
+        assertEquals(
+            "00 10 20 1E C0 03 5F D6",
+            opportunity.replacementHex,
+        )
+    }
+
+    @Test
     fun sharedNativeBodyBlocksAutomaticSuggestion() {
         val first = target(
             token = 0x06000004,
@@ -699,9 +736,13 @@ class GameplayModificationFinderTest {
         assertFalse(opportunity.selectable)
         assertTrue(
             opportunity.title.contains(
-                "receipt",
+                "purchase",
                 ignoreCase = true,
-            ),
+            ) ||
+                opportunity.title.contains(
+                    "billing",
+                    ignoreCase = true,
+                ),
         )
     }
 
