@@ -406,6 +406,54 @@ fun ExpertLabScreen(onBack: () -> Unit) {
         }
     }
 
+    fun startRepackedPassiveDlsymTrace() {
+        val current = session ?: return
+        val signal =
+            beginOperation("runtime.passive-dlsym-start") ?: return
+        scope.launch {
+            try {
+                session =
+                    ExpertLabSessionController
+                        .startRepackedPassiveDlsymTrace(
+                            context = appContext,
+                            session = current,
+                            cancellation = signal,
+                        )
+            } catch (_: AnalysisCancelledException) {
+                error = "Запуск passive dlsym trace отменён."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun stopRepackedPassiveDlsymTrace() {
+        val current = session ?: return
+        val signal =
+            beginOperation("runtime.passive-dlsym-stop") ?: return
+        scope.launch {
+            try {
+                session =
+                    ExpertLabSessionController
+                        .stopRepackedPassiveDlsymTrace(
+                            context = appContext,
+                            session = current,
+                            cancellation = signal,
+                        )
+            } catch (_: AnalysisCancelledException) {
+                error = "Остановка passive dlsym trace отменена."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
     fun integrateRepackedNativeLookup() {
         val current = session ?: return
         val signal =
@@ -1171,8 +1219,9 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                "Активный self-process dlsym probe для уже загруженного модуля. " +
-                                    "Это не пассивный trace вызовов приложения и не подтверждение исполнения функции.",
+                                "Targeted probe проверяет один symbol через RTLD_NOLOAD. " +
+                                    "Passive trace отдельно наблюдает реальные успешные dlsym-вызовы app-owned .so; " +
+                                    "ни один из режимов сам по себе не подтверждает исполнение функции.",
                                 style =
                                     MaterialTheme.typography.bodySmall,
                             )
@@ -1290,6 +1339,41 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                     Text(
                                         "Запустить test-копию",
                                     )
+                                }
+
+                                if (
+                                    current.repackedPassiveTraceSession == null
+                                ) {
+                                    Button(
+                                        onClick =
+                                            ::startRepackedPassiveDlsymTrace,
+                                        enabled = !busy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(
+                                            "Начать passive dlsym trace",
+                                        )
+                                    }
+                                } else {
+                                    Text(
+                                        "Passive trace активен · PID " +
+                                            current.repackedPassiveTraceSession.pid +
+                                            " · session " +
+                                            current.repackedPassiveTraceSession
+                                                .sessionId,
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                    )
+                                    Button(
+                                        onClick =
+                                            ::stopRepackedPassiveDlsymTrace,
+                                        enabled = !busy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(
+                                            "Остановить и проверить trace",
+                                        )
+                                    }
                                 }
                             }
 
