@@ -59,6 +59,64 @@ class Il2CppPatchTargetBrowserTest {
     }
 
     @Test
+    fun classifiesProjectAndFrameworkOrigins() {
+        val project =
+            target(
+                id =
+                    "il2cpp:method:Assembly-CSharp.dll:" +
+                        "6000001:Assembly-CSharp.dll",
+            )
+        val framework =
+            target(
+                id =
+                    "il2cpp:method:System.Runtime.dll:" +
+                        "6000002:System.Runtime.dll",
+            )
+
+        assertEquals(
+            "Код проекта",
+            Il2CppPatchTargetBrowser.originLabel(
+                project,
+            ),
+        )
+        assertEquals(
+            ".NET / системная библиотека",
+            Il2CppPatchTargetBrowser.originLabel(
+                framework,
+            ),
+        )
+    }
+
+    @Test
+    fun givesConservativePresetAdviceFromMethodConvention() {
+        val lifecycle =
+            target(
+                id =
+                    "il2cpp:method:Assembly-CSharp.dll:" +
+                        "6000001:Assembly-CSharp.dll",
+                memberName = memberName,
+            )
+        val predicate =
+            target(
+                id =
+                    "il2cpp:method:Assembly-CSharp.dll:" +
+                        "6000002:Assembly-CSharp.dll",
+                memberName = "IsReady",
+            )
+
+        assertTrue(
+            Il2CppPatchTargetBrowser
+                .presetAdvice(lifecycle)
+                .contains("обычно void"),
+        )
+        assertTrue(
+            Il2CppPatchTargetBrowser
+                .presetAdvice(predicate)
+                .contains("0 обычно означает"),
+        )
+    }
+
+    @Test
     fun nonMethodIdHasNoImageName() {
         val target =
             target(id = "runtime:unity_il2cpp")
@@ -77,6 +135,7 @@ class Il2CppPatchTargetBrowserTest {
     private fun target(
         id: String,
         displayName: String = "Game.Player.Update",
+        memberName: String = "Update",
     ) =
         EvidenceTarget(
             id = id,
