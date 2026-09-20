@@ -38,7 +38,9 @@ import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.analysis.nativecode.AArch64Disassembler
+import io.github.ffenuss.modkit.analysis.nativecode.AArch64MethodAnalyzer
 import io.github.ffenuss.modkit.domain.EngineProgress
+import io.github.ffenuss.modkit.patch.AArch64ScalarReturnEncoder
 import io.github.ffenuss.modkit.patch.GameplayModificationCategory
 import io.github.ffenuss.modkit.patch.GameplayModificationFinder
 import io.github.ffenuss.modkit.patch.GameplayModificationOpportunity
@@ -83,6 +85,9 @@ fun ManualNativePatchSection(
     }
     var showRawHex by remember(key) {
         mutableStateOf(false)
+    }
+    var customReturnValue by remember(key) {
+        mutableStateOf("")
     }
     var projectCodeOnly by remember(key) { mutableStateOf(true) }
     var includeSensitiveSurfaces by remember(key) {
@@ -142,6 +147,7 @@ fun ManualNativePatchSection(
         replacementHex = ""
         codeWindow = null
         showRawHex = false
+        customReturnValue = ""
         draft = null
         preflight = null
         applyOutcome = null
@@ -405,6 +411,23 @@ fun ManualNativePatchSection(
                                 null
                             }
                         }
+                    val arm64MethodAnalysis =
+                        arm64Disassembly?.let {
+                            AArch64MethodAnalyzer
+                                .analyze(it)
+                        }
+                    val runtimeAddress =
+                        evidenceTarget?.let {
+                            target ->
+                            analysis.runtimeEvidence
+                                ?.addressConfirmations
+                                .orEmpty()
+                                .firstOrNull {
+                                    it.targetId ==
+                                        target.id
+                                }
+                                ?.runtimeVirtualAddress
+                        }
                     Column(
                         modifier =
                             Modifier
@@ -494,12 +517,68 @@ fun ManualNativePatchSection(
                                         }
                                         .orEmpty()
                                     ) +
+                                (
+                                    runtimeAddress
+                                        ?.let {
+                                            " · runtime 0x" +
+                                                it.toString(16)
+                                        }
+                                        .orEmpty()
+                                    ) +
                                 " · " +
                                 window.byteLength +
                                 " байт",
                             style =
                                 MaterialTheme.typography.bodySmall,
                         )
+
+                        arm64MethodAnalysis?.let {
+                            methodAnalysis ->
+                            Card(
+                                Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    Modifier.padding(14.dp),
+                                    verticalArrangement =
+                                        Arrangement.spacedBy(
+                                            7.dp,
+                                        ),
+                                ) {
+                                    Text(
+                                        "Распознанная логика",
+                                        fontWeight =
+                                            FontWeight.SemiBold,
+                                    )
+                                    Text(
+                                        methodAnalysis.shape.title +
+                                            " · уверенность: " +
+                                            methodAnalysis.confidence,
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                    )
+                                    Text(
+                                        methodAnalysis.pseudoCode,
+                                        fontFamily =
+                                            FontFamily.Monospace,
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                    )
+                                    methodAnalysis.facts
+                                        .forEach {
+                                            fact ->
+                                            Text(
+                                                "• " + fact,
+                                                style =
+                                                    MaterialTheme
+                                                        .typography
+                                                        .bodySmall,
+                                            )
+                                        }
+                                }
+                            }
+                        }
 
                         arm64Disassembly?.let {
                             disassembly ->
@@ -623,6 +702,125 @@ fun ManualNativePatchSection(
                                         )
                                     }
                                 }
+                            }
+                        }
+
+                        if (
+                            selectedSensitiveLabel == null &&
+                            selectedReturnKind in
+                                setOf(
+                                    Il2CppNativeReturnKind.INTEGER,
+                                    Il2CppNativeReturnKind.FLOAT32,
+                                    Il2CppNativeReturnKind.FLOAT64,
+                                )
+                        ) {
+                            Text(
+                                "Произвольное возвращаемое значение",
+                                fontWeight =
+                                    FontWeight.SemiBold,
+                            )
+                            OutlinedTextField(
+                                value =
+                                    customReturnValue,
+                                onValueChange = {
+                                    customReturnValue = it
+                                },
+                                label = {
+                                    Text(
+                                        when (
+                                            selectedReturnKind
+                                        ) {
+                                            Il2CppNativeReturnKind.INTEGER ->
+                                                "Integer"
+                                            Il2CppNativeReturnKind.FLOAT32 ->
+                                                "Float"
+                                            else ->
+                                                "Double"
+                                        },
+                                    )
+                                },
+                                supportingText = {
+                                    Text(
+                                        "ModKit сам соберёт короткий ARM64 return-body; " +
+                                            "граница метода и preflight всё равно проверяются перед сохранением.",
+                                    )
+                                },
+                                singleLine = true,
+                                modifier =
+                                    Modifier.fillMaxWidth(),
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    runCatching {
+                                        AArch64ScalarReturnEncoder
+                                            .encodeHex(
+                                                returnKind =
+                                                    selectedReturnKind,
+                                                valueText =
+                                                    customReturnValue,
+                                            )
+                                    }.onSuccess {
+                                        encoded ->
+                                        val encodedSize =
+                                            Il2CppNativeMutationDraftBuilder
+                                                .parseHex(
+                                                    encoded,
+                                                )
+                                                .size
+                                        val provenSpan =
+                                            window
+                                                .nextMethodFileOffset
+                                                ?.minus(
+                                                    window.fileOffset,
+                                                )
+                                        require(
+                                            if (
+                                                provenSpan != null
+                                            ) {
+                                                encodedSize
+                                                    .toLong() <=
+                                                    provenSpan
+                                            } else {
+                                                encodedSize <= 4
+                                            },
+                                        ) {
+                                            if (
+                                                provenSpan != null
+                                            ) {
+                                                "Новый return-body занимает " +
+                                                    encodedSize +
+                                                    " байт, а доказанная граница метода — " +
+                                                    provenSpan +
+                                                    " байт."
+                                            } else {
+                                                "Следующая граница метода не доказана; " +
+                                                    "многословный ARM64 return-body заблокирован."
+                                            }
+                                        }
+                                        replacementHex =
+                                            encoded
+                                        draft = null
+                                        preflight = null
+                                        applyOutcome = null
+                                        error = null
+                                    }.onFailure {
+                                        failure ->
+                                        error =
+                                            failure.message
+                                                ?: failure
+                                                    .javaClass
+                                                    .simpleName
+                                    }
+                                },
+                                enabled =
+                                    customReturnValue
+                                        .isNotBlank(),
+                                modifier =
+                                    Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    "Сформировать ARM64 return",
+                                )
                             }
                         }
 
@@ -800,6 +998,7 @@ fun ManualNativePatchSection(
                                     onStagingInvalidated()
                                     codeWindow = null
                                     showRawHex = false
+                                    customReturnValue = ""
                                     replacementHex = ""
                                     selectedTargetId = null
                                     draft = null
@@ -839,6 +1038,7 @@ fun ManualNativePatchSection(
                             onClick = {
                                 codeWindow = null
                                 showRawHex = false
+                                customReturnValue = ""
                                 replacementHex = ""
                                 selectedTargetId = null
                                 draft = null

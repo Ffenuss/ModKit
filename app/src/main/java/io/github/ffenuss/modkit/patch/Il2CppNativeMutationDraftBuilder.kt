@@ -234,6 +234,39 @@ object Il2CppNativeMutationDraftBuilder {
             "Размер in-place patch превышает внутренний лимит."
         }
 
+        val nextMethodOffset =
+            result.evidenceGraph
+                ?.targets
+                .orEmpty()
+                .asSequence()
+                .filter {
+                    it.runtimeId == "unity_il2cpp" &&
+                        it.kind == EvidenceTargetKind.METHOD &&
+                        it.artifact == target.artifact &&
+                        it.abi == abi &&
+                        it.fileOffset != null &&
+                        requireNotNull(it.fileOffset) > offset
+                }
+                .mapNotNull { it.fileOffset }
+                .minOrNull()
+        if (nextMethodOffset != null) {
+            val provenSpan =
+                nextMethodOffset - offset
+            require(
+                replacementBytes.size.toLong() <=
+                    provenSpan,
+            ) {
+                "In-place patch пересекает следующую подтверждённую IL2CPP-функцию: " +
+                    "доступно " + provenSpan +
+                    " байт, требуется " + replacementBytes.size + "."
+            }
+        } else {
+            require(replacementBytes.size <= 4) {
+                "Граница следующего метода не доказана. Безопасно разрешена только одна " +
+                    "4-байтовая ARM64-инструкция; более длинный patch заблокирован."
+            }
+        }
+
         val safeAbi = abi.replace(Regex("[^A-Za-z0-9._-]"), "_")
         val extracted = File(
             analysisResultsRoot,

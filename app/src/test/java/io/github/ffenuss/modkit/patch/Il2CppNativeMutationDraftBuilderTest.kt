@@ -248,6 +248,123 @@ class Il2CppNativeMutationDraftBuilderTest {
     }
 
     @Test
+    fun refusesMultiInstructionPatchWithoutProvenNextBoundary() {
+        val root =
+            Files.createTempDirectory(
+                "modkit-native-draft-boundary-",
+            ).toFile()
+        try {
+            val analysisRoot =
+                File(root, "analysis-results")
+            val nativeDir =
+                File(
+                    analysisRoot,
+                    SHA + "/il2cpp/native",
+                ).apply { mkdirs() }
+            File(
+                nativeDir,
+                "arm64-v8a-libil2cpp.so",
+            ).writeBytes(
+                ByteArray(64) {
+                    it.toByte()
+                },
+            )
+
+            val failure =
+                runCatching {
+                    Il2CppNativeMutationDraftBuilder
+                        .build(
+                            result =
+                                analysisResult(
+                                    proof =
+                                        ProofLevel.EXACT_BINARY,
+                                    status =
+                                        UserFindingStatus.CONFIRMED,
+                                ),
+                            targetId = TARGET_ID,
+                            replacementHex =
+                                "20 00 80 D2 C0 03 5F D6",
+                            analysisResultsRoot =
+                                analysisRoot,
+                            stagingRoot =
+                                File(
+                                    root,
+                                    "staging",
+                                ),
+                        )
+                }.exceptionOrNull()
+
+            assertTrue(
+                failure is IllegalArgumentException,
+            )
+            assertTrue(
+                failure?.message.orEmpty()
+                    .contains(
+                        "Граница следующего метода",
+                    ),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun allowsMultiInstructionPatchWithinProvenNextBoundary() {
+        val root =
+            Files.createTempDirectory(
+                "modkit-native-draft-boundary-ok-",
+            ).toFile()
+        try {
+            val analysisRoot =
+                File(root, "analysis-results")
+            val nativeDir =
+                File(
+                    analysisRoot,
+                    SHA + "/il2cpp/native",
+                ).apply { mkdirs() }
+            File(
+                nativeDir,
+                "arm64-v8a-libil2cpp.so",
+            ).writeBytes(
+                ByteArray(64) {
+                    it.toByte()
+                },
+            )
+
+            val draft =
+                Il2CppNativeMutationDraftBuilder
+                    .build(
+                        result =
+                            analysisResult(
+                                proof =
+                                    ProofLevel.EXACT_BINARY,
+                                status =
+                                    UserFindingStatus.CONFIRMED,
+                                includeNextMethod = true,
+                            ),
+                        targetId = TARGET_ID,
+                        replacementHex =
+                            "20 00 80 D2 C0 03 5F D6",
+                        analysisResultsRoot =
+                            analysisRoot,
+                        stagingRoot =
+                            File(
+                                root,
+                                "staging",
+                            ),
+                    )
+
+            assertEquals(
+                8L,
+                draft.request
+                    .expectedOriginalSize,
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun refusesNoOpReplacement() {
         val root =
             Files.createTempDirectory(
@@ -303,6 +420,7 @@ class Il2CppNativeMutationDraftBuilderTest {
         proof: ProofLevel,
         status: UserFindingStatus,
         includeSharedAlias: Boolean = false,
+        includeNextMethod: Boolean = false,
     ): FastAnalysisResult {
         val source = ArtifactSource("base.apk", 1, SHA)
         val index = ArtifactIndex(
@@ -330,18 +448,37 @@ class Il2CppNativeMutationDraftBuilderTest {
             facts = emptyList(),
         )
         val targets =
-            if (includeSharedAlias) {
-                listOf(
-                    target,
-                    target.copy(
-                        id = "target-2",
-                        displayName = "Game.Player.Shared",
-                        memberName = "Shared",
-                        metadataToken = 0x06000002,
-                    ),
-                )
-            } else {
-                listOf(target)
+            when {
+                includeSharedAlias ->
+                    listOf(
+                        target,
+                        target.copy(
+                            id = "target-2",
+                            displayName =
+                                "Game.Player.Shared",
+                            memberName = "Shared",
+                            metadataToken =
+                                0x06000002,
+                        ),
+                    )
+                includeNextMethod ->
+                    listOf(
+                        target,
+                        target.copy(
+                            id = "target-next",
+                            displayName =
+                                "Game.Player.Next",
+                            memberName = "Next",
+                            metadataToken =
+                                0x06000003,
+                            fileOffset = 24,
+                            binaryVirtualAddress =
+                                0x70001010,
+                            rva = 0x1010,
+                        ),
+                    )
+                else ->
+                    listOf(target)
             }
         return FastAnalysisResult(
             index = index,
