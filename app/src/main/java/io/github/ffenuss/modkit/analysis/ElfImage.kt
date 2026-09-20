@@ -361,6 +361,223 @@ class ElfImage private constructor(
             return out
         }
 
+        private fun readDynamicRelocationSections(
+            raf: RandomAccessFile,
+            h: Header,
+            loadSegments: List<ElfLoadSegment>,
+            cancellation: CancellationSignal,
+        ): List<Section> {
+            val out = mutableListOf<Section>()
+            repeat(h.phnum) { index ->
+                if (index % 64 == 0) {
+                    checkCancelled(cancellation)
+                }
+                val base =
+                    h.phoff +
+                        index.toLong() * h.phentsize
+                val type = u32(raf, base)
+                if (type != PT_DYNAMIC) {
+                    return@repeat
+                }
+
+                val fileOffset =
+                    if (h.is64) {
+                        u64(raf, base + 8)
+                    } else {
+                        u32(raf, base + 4)
+                    }
+                val fileSize =
+                    if (h.is64) {
+                        u64(raf, base + 32)
+                    } else {
+                        u32(raf, base + 16)
+                    }
+                require(
+                    fileOffset >= 0L &&
+                        fileSize >= 0L &&
+                        fileOffset <= raf.length() &&
+                        fileSize <= raf.length() - fileOffset
+                ) {
+                    "PT_DYNAMIC file range outside ELF"
+                }
+
+                val entrySize =
+                    if (h.is64) 16L else 8L
+                require(fileSize % entrySize == 0L) {
+                    "PT_DYNAMIC size is not entry aligned"
+                }
+                val count = fileSize / entrySize
+                require(count <= MAX_DYNAMIC_ENTRIES.toLong()) {
+                    "PT_DYNAMIC entry count exceeds bounded limit"
+                }
+
+                val tags = LinkedHashMap<Long, Long>()
+                var sawNull = false
+                for (entryIndex in 0 until count.toInt()) {
+                    if (entryIndex % 256 == 0) {
+                        checkCancelled(cancellation)
+                    }
+                    val entryOffset =
+                        fileOffset +
+                            entryIndex.toLong() * entrySize
+                    val tag =
+                        if (h.is64) {
+                            u64(raf, entryOffset)
+                        } else {
+                            u32(raf, entryOffset)
+                        }
+                    val value =
+                        if (h.is64) {
+                            u64(raf, entryOffset + 8)
+                        } else {
+                            u32(raf, entryOffset + 4)
+                        }
+                    if (tag == DT_NULL) {
+                        sawNull = true
+                        break
+                    }
+                    if (tag >= 0L && value >= 0L) {
+                        tags.putIfAbsent(tag, value)
+                    }
+                }
+                require(sawNull || count == 0L) {
+                    "PT_DYNAMIC is missing DT_NULL terminator"
+                }
+
+                fun addTable(
+                    addressTag: Long,
+                    sizeTag: Long,
+                    entryTag: Long?,
+                    sectionType: Long,
+                    defaultEntrySize: Long,
+                ) {
+                    val address =
+                        tags[addressTag] ?: return
+                    val size =
+                        tags[sizeTag] ?: return
+                    if (size == 0L) return
+                    require(address > 0L && size > 0L) {
+                        "Invalid dynamic relocation table range"
+                    }
+                    val tableOffset =
+                        fileOffsetForVa(
+                            loadSegments = loadSegments,
+                            virtualAddress = address,
+                            size = size,
+                        )
+                            ?: error(
+                                "Dynamic relocation table is outside file-backed PT_LOAD",
+                            )
+                    val tableEntrySize =
+                        entryTag
+                            ?.let { tags[it] }
+                            ?.takeIf { it > 0L }
+                            ?: defaultEntrySize
+                    out +=
+                        Section(
+                            type = sectionType,
+                            offset = tableOffset,
+                            size = size,
+                            link = 0,
+                            entrySize = tableEntrySize,
+                        )
+                }
+
+                addTable(
+                    addressTag = DT_RELA,
+                    sizeTag = DT_RELASZ,
+                    entryTag = DT_RELAENT,
+                    sectionType = SHT_RELA,
+                    defaultEntrySize =
+                        if (h.is64) 24L else 12L,
+                )
+                addTable(
+                    addressTag = DT_REL,
+                    sizeTag = DT_RELSZ,
+                    entryTag = DT_RELENT,
+                    sectionType = SHT_REL,
+                    defaultEntrySize =
+                        if (h.is64) 16L else 8L,
+                )
+                addTable(
+                    addressTag = DT_RELR,
+                    sizeTag = DT_RELRSZ,
+                    entryTag = DT_RELRENT,
+                    sectionType = SHT_RELR,
+                    defaultEntrySize =
+                        if (h.is64) 8L else 4L,
+                )
+                addTable(
+                    addressTag = DT_ANDROID_REL,
+                    sizeTag = DT_ANDROID_RELSZ,
+                    entryTag = null,
+                    sectionType = SHT_ANDROID_REL,
+                    defaultEntrySize = 0L,
+                )
+                addTable(
+                    addressTag = DT_ANDROID_RELA,
+                    sizeTag = DT_ANDROID_RELASZ,
+                    entryTag = null,
+                    sectionType = SHT_ANDROID_RELA,
+                    defaultEntrySize = 0L,
+                )
+                addTable(
+                    addressTag = DT_ANDROID_RELR,
+                    sizeTag = DT_ANDROID_RELRSZ,
+                    entryTag = DT_ANDROID_RELRENT,
+                    sectionType = SHT_ANDROID_RELR,
+                    defaultEntrySize =
+                        if (h.is64) 8L else 4L,
+                )
+            }
+            return out.distinctBy {
+                listOf(
+                    it.type,
+                    it.offset,
+                    it.size,
+                    it.entrySize,
+                )
+            }
+        }
+
+        private fun fileOffsetForVa(
+            loadSegments: List<ElfLoadSegment>,
+            virtualAddress: Long,
+            size: Long,
+        ): Long? {
+            if (
+                virtualAddress < 0L ||
+                size < 0L
+            ) {
+                return null
+            }
+            for (segment in loadSegments) {
+                if (
+                    virtualAddress <
+                    segment.virtualAddress
+                ) {
+                    continue
+                }
+                val relative =
+                    virtualAddress -
+                        segment.virtualAddress
+                if (
+                    relative < 0L ||
+                    relative > segment.fileSize
+                ) {
+                    continue
+                }
+                if (
+                    size >
+                    segment.fileSize - relative
+                ) {
+                    continue
+                }
+                return segment.fileOffset + relative
+            }
+            return null
+        }
+
         private fun readRelativeRelocations(
             raf: RandomAccessFile,
             h: Header,
