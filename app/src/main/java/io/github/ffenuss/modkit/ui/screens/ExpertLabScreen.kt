@@ -454,6 +454,54 @@ fun ExpertLabScreen(onBack: () -> Unit) {
         }
     }
 
+    fun startRepackedPassiveJniTrace() {
+        val current = session ?: return
+        val signal =
+            beginOperation("runtime.passive-jni-start") ?: return
+        scope.launch {
+            try {
+                session =
+                    ExpertLabSessionController
+                        .startRepackedPassiveJniTrace(
+                            context = appContext,
+                            session = current,
+                            cancellation = signal,
+                        )
+            } catch (_: AnalysisCancelledException) {
+                error = "Запуск passive JNI trace отменён."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun stopRepackedPassiveJniTrace() {
+        val current = session ?: return
+        val signal =
+            beginOperation("runtime.passive-jni-stop") ?: return
+        scope.launch {
+            try {
+                session =
+                    ExpertLabSessionController
+                        .stopRepackedPassiveJniTrace(
+                            context = appContext,
+                            session = current,
+                            cancellation = signal,
+                        )
+            } catch (_: AnalysisCancelledException) {
+                error = "Остановка passive JNI trace отменена."
+            } catch (failure: Throwable) {
+                error =
+                    failure.message ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
     fun integrateRepackedNativeLookup() {
         val current = session ?: return
         val signal =
@@ -1342,7 +1390,8 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                 }
 
                                 if (
-                                    current.repackedPassiveTraceSession == null
+                                    current.repackedPassiveTraceSession == null &&
+                                    current.repackedPassiveJniTraceSession == null
                                 ) {
                                     Button(
                                         onClick =
@@ -1354,9 +1403,21 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                             "Начать passive dlsym trace",
                                         )
                                     }
-                                } else {
+                                    Button(
+                                        onClick =
+                                            ::startRepackedPassiveJniTrace,
+                                        enabled = !busy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(
+                                            "Начать passive JNI trace",
+                                        )
+                                    }
+                                } else if (
+                                    current.repackedPassiveTraceSession != null
+                                ) {
                                     Text(
-                                        "Passive trace активен · PID " +
+                                        "Passive dlsym trace активен · PID " +
                                             current.repackedPassiveTraceSession.pid +
                                             " · session " +
                                             current.repackedPassiveTraceSession
@@ -1371,7 +1432,36 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         modifier = Modifier.fillMaxWidth(),
                                     ) {
                                         Text(
-                                            "Остановить и проверить trace",
+                                            "Остановить и проверить dlsym trace",
+                                        )
+                                    }
+                                } else {
+                                    val jniSession =
+                                        requireNotNull(
+                                            current.repackedPassiveJniTraceSession,
+                                        )
+                                    Text(
+                                        "Passive JNI trace активен · PID " +
+                                            jniSession.pid +
+                                            " · session " +
+                                            jniSession.sessionId,
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                    )
+                                    Text(
+                                        "JNI_OnLoad фиксируется только при фактическом вызове; " +
+                                            "RegisterNatives — только после успешной регистрации.",
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                    )
+                                    Button(
+                                        onClick =
+                                            ::stopRepackedPassiveJniTrace,
+                                        enabled = !busy,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text(
+                                            "Остановить и проверить JNI trace",
                                         )
                                     }
                                 }
