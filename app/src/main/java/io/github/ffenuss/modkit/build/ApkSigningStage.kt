@@ -52,7 +52,7 @@ object ApkSigningStage {
                 .setV2SigningEnabled(true)
                 .setV3SigningEnabled(true)
                 .setV4SigningEnabled(false)
-                .setCreatedBy("ModKit 0.0.1")
+                .setCreatedBy("ModKit 0.0.2")
                 .build()
                 .sign()
 
