@@ -12,9 +12,17 @@
 #include <unistd.h>
 
 #define MAX_PATCHED_SLOTS 8192
+#define MAX_JNI_ONLOAD_DLSYM_SLOTS 16
+#define MAX_REGISTER_NATIVE_METHODS 4096
 #define SCAN_INTERVAL_US 250000
 
 typedef void* (*dlsym_fn)(void*, const char*);
+typedef jint (JNICALL *register_natives_fn)(
+        JNIEnv*,
+        jclass,
+        const JNINativeMethod*,
+        jint);
+typedef jint (JNICALL *jni_onload_fn)(JavaVM*, void*);
 
 typedef struct {
     void** slot;
@@ -22,9 +30,19 @@ typedef struct {
     int original_prot;
 } patched_slot;
 
+typedef struct {
+    jni_onload_fn original;
+    void* address;
+    char module[256];
+    unsigned long generation;
+    int armed;
+} pending_jni_onload;
+
 static JavaVM* g_vm = NULL;
 static jclass g_trace_buffer_class = NULL;
 static jmethodID g_append_dlsym = NULL;
+static jmethodID g_append_jni_onload = NULL;
+static jmethodID g_append_register_native_class = NULL;
 
 static pthread_mutex_t g_hook_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_t g_scan_thread;
@@ -37,6 +55,21 @@ static patched_slot g_slots[MAX_PATCHED_SLOTS];
 static size_t g_slot_count = 0;
 static _Atomic(dlsym_fn) g_real_dlsym = NULL;
 static _Thread_local int g_in_dlsym_wrapper = 0;
+
+static pthread_mutex_t g_jni_hook_lock = PTHREAD_MUTEX_INITIALIZER;
+static atomic_int g_jni_trace_active = 0;
+static atomic_int g_jni_inflight = 0;
+static atomic_int g_jni_incomplete = 0;
+static atomic_int g_jni_restore_failed = 0;
+static atomic_ulong g_jni_generation = 0;
+static patched_slot g_jni_onload_slots[MAX_JNI_ONLOAD_DLSYM_SLOTS];
+static size_t g_jni_onload_slot_count = 0;
+static register_natives_fn* g_register_natives_slot = NULL;
+static _Atomic(register_natives_fn) g_real_register_natives = NULL;
+static int g_register_natives_original_prot = 0;
+static _Thread_local int g_in_art_dlsym_wrapper = 0;
+static _Thread_local int g_in_register_natives_wrapper = 0;
+static _Thread_local pending_jni_onload g_pending_jni_onload = {0};
 
 static const char* base_name(const char* path) {
     if (path == NULL) return NULL;
@@ -67,10 +100,23 @@ static int valid_symbol(const char* value) {
 
 static int app_owned_path(const char* path) {
     if (path == NULL || path[0] == '\0') return 0;
-    if (strstr(path, "libmodkit_runtime_probe.so") != NULL) return 0;
+    const char* name = base_name(path);
+    if (name != NULL &&
+            strcmp(name, "libmodkit_runtime_probe.so") == 0) {
+        return 0;
+    }
     return strncmp(path, "/data/app/", 10) == 0 ||
             strncmp(path, "/data/user/", 11) == 0 ||
             strncmp(path, "/data/data/", 11) == 0;
+}
+
+static int art_runtime_path(const char* path) {
+    if (path == NULL || path[0] == '\0') return 0;
+    const char* name = base_name(path);
+    if (name == NULL || strcmp(name, "libart.so") != 0) return 0;
+    return strncmp(path, "/apex/", 6) == 0 ||
+            strncmp(path, "/system/", 8) == 0 ||
+            strncmp(path, "/system_ext/", 12) == 0;
 }
 
 static uintptr_t runtime_address(uintptr_t base, uintptr_t value) {
@@ -135,6 +181,12 @@ static int slot_already_patched(void** slot) {
 }
 
 static void* wrapper_pointer(void);
+static void* art_dlsym_wrapper_pointer(void);
+static jint JNICALL modkit_trace_register_natives(
+        JNIEnv* env,
+        jclass clazz,
+        const JNINativeMethod* methods,
+        jint method_count);
 
 static int ensure_real_dlsym(void) {
     if (atomic_load(&g_real_dlsym) != NULL) return 1;
@@ -198,6 +250,105 @@ static int patch_slot(void** slot) {
     g_slots[g_slot_count].original = original;
     g_slots[g_slot_count].original_prot = original_prot;
     g_slot_count++;
+    return 1;
+}
+
+static int jni_onload_slot_already_patched(void** slot) {
+    for (size_t index = 0; index < g_jni_onload_slot_count; index++) {
+        if (g_jni_onload_slots[index].slot == slot) return 1;
+    }
+    return 0;
+}
+
+static int patch_jni_onload_dlsym_slot(void** slot) {
+    if (slot == NULL) {
+        atomic_store(&g_jni_incomplete, 1);
+        return 0;
+    }
+    if (jni_onload_slot_already_patched(slot)) return 1;
+    if (g_jni_onload_slot_count >= MAX_JNI_ONLOAD_DLSYM_SLOTS) {
+        atomic_store(&g_jni_incomplete, 1);
+        return 0;
+    }
+
+    void* original = __atomic_load_n(slot, __ATOMIC_SEQ_CST);
+    if (original == NULL || original == art_dlsym_wrapper_pointer()) {
+        atomic_store(&g_jni_incomplete, 1);
+        return 0;
+    }
+
+    const int original_prot = query_protection(slot);
+    if (original_prot == 0 ||
+            !change_page_protection(
+                    slot,
+                    original_prot | PROT_WRITE)) {
+        atomic_store(&g_jni_incomplete, 1);
+        return 0;
+    }
+
+    __atomic_store_n(
+            slot,
+            art_dlsym_wrapper_pointer(),
+            __ATOMIC_SEQ_CST);
+    if (!change_page_protection(slot, original_prot)) {
+        __atomic_store_n(slot, original, __ATOMIC_SEQ_CST);
+        atomic_store(&g_jni_incomplete, 1);
+        if (!change_page_protection(slot, original_prot)) {
+            atomic_store(&g_jni_restore_failed, 1);
+        }
+        return 0;
+    }
+
+    g_jni_onload_slots[g_jni_onload_slot_count].slot = slot;
+    g_jni_onload_slots[g_jni_onload_slot_count].original = original;
+    g_jni_onload_slots[g_jni_onload_slot_count].original_prot =
+            original_prot;
+    g_jni_onload_slot_count++;
+    return 1;
+}
+
+static int patch_register_natives_slot(JNIEnv* env) {
+    if (env == NULL || *env == NULL) {
+        atomic_store(&g_jni_incomplete, 1);
+        return 0;
+    }
+
+    struct JNINativeInterface* table =
+            (struct JNINativeInterface*)(uintptr_t)(*env);
+    register_natives_fn* slot = &table->RegisterNatives;
+    register_natives_fn original =
+            __atomic_load_n(slot, __ATOMIC_SEQ_CST);
+    if (original == NULL ||
+            original == modkit_trace_register_natives) {
+        atomic_store(&g_jni_incomplete, 1);
+        return 0;
+    }
+
+    const int original_prot = query_protection((void*)slot);
+    if (original_prot == 0 ||
+            !change_page_protection(
+                    (void*)slot,
+                    original_prot | PROT_WRITE)) {
+        atomic_store(&g_jni_incomplete, 1);
+        return 0;
+    }
+
+    __atomic_store_n(
+            slot,
+            modkit_trace_register_natives,
+            __ATOMIC_SEQ_CST);
+    if (!change_page_protection((void*)slot, original_prot)) {
+        __atomic_store_n(slot, original, __ATOMIC_SEQ_CST);
+        atomic_store(&g_jni_incomplete, 1);
+        if (!change_page_protection((void*)slot, original_prot)) {
+            atomic_store(&g_jni_restore_failed, 1);
+        }
+        return 0;
+    }
+
+    g_register_natives_slot = slot;
+    atomic_store(&g_real_register_natives, original);
+    g_register_natives_original_prot = original_prot;
     return 1;
 }
 
@@ -359,6 +510,169 @@ static int patch_module(
     return 0;
 }
 
+static int patch_jni_onload_relocations(
+        uintptr_t base,
+        const ElfW(Sym)* symtab,
+        const char* strtab,
+        size_t strsz,
+        const void* relocations,
+        size_t relocation_bytes,
+        int use_rela) {
+    if (symtab == NULL || strtab == NULL || relocations == NULL) return 0;
+    const size_t relocation_size =
+            use_rela ? sizeof(ElfW(Rela)) : sizeof(ElfW(Rel));
+    if (relocation_size == 0 ||
+            relocation_bytes % relocation_size != 0) {
+        atomic_store(&g_jni_incomplete, 1);
+        return 0;
+    }
+
+    int patched = 0;
+    if (use_rela) {
+        const size_t count = relocation_bytes / sizeof(ElfW(Rela));
+        const ElfW(Rela)* entries = (const ElfW(Rela)*)relocations;
+        for (size_t index = 0; index < count; index++) {
+            if (!is_jump_slot_relocation(
+                    (uint64_t)entries[index].r_info)) {
+                continue;
+            }
+#if defined(__LP64__)
+            const size_t symbol_index =
+                    ELF64_R_SYM(entries[index].r_info);
+#else
+            const size_t symbol_index =
+                    ELF32_R_SYM(entries[index].r_info);
+#endif
+            const ElfW(Sym)* symbol = &symtab[symbol_index];
+            if ((size_t)symbol->st_name >= strsz) continue;
+            const char* name = strtab + symbol->st_name;
+            if (strcmp(name, "dlsym") != 0) continue;
+            void** slot = (void**)runtime_address(
+                    base,
+                    (uintptr_t)entries[index].r_offset);
+            if (patch_jni_onload_dlsym_slot(slot)) patched++;
+        }
+    } else {
+        const size_t count = relocation_bytes / sizeof(ElfW(Rel));
+        const ElfW(Rel)* entries = (const ElfW(Rel)*)relocations;
+        for (size_t index = 0; index < count; index++) {
+            if (!is_jump_slot_relocation(
+                    (uint64_t)entries[index].r_info)) {
+                continue;
+            }
+#if defined(__LP64__)
+            const size_t symbol_index =
+                    ELF64_R_SYM(entries[index].r_info);
+#else
+            const size_t symbol_index =
+                    ELF32_R_SYM(entries[index].r_info);
+#endif
+            const ElfW(Sym)* symbol = &symtab[symbol_index];
+            if ((size_t)symbol->st_name >= strsz) continue;
+            const char* name = strtab + symbol->st_name;
+            if (strcmp(name, "dlsym") != 0) continue;
+            void** slot = (void**)runtime_address(
+                    base,
+                    (uintptr_t)entries[index].r_offset);
+            if (patch_jni_onload_dlsym_slot(slot)) patched++;
+        }
+    }
+    return patched;
+}
+
+static int patch_art_runtime_module(
+        struct dl_phdr_info* info,
+        size_t size,
+        void* data) {
+    (void)size;
+    (void)data;
+    if (info == NULL || !art_runtime_path(info->dlpi_name)) return 0;
+
+    const uintptr_t base = (uintptr_t)info->dlpi_addr;
+    const ElfW(Dyn)* dynamic = NULL;
+    size_t dynamic_count = 0;
+    for (ElfW(Half) index = 0; index < info->dlpi_phnum; index++) {
+        const ElfW(Phdr)* phdr = &info->dlpi_phdr[index];
+        if (phdr->p_type != PT_DYNAMIC) continue;
+        dynamic = (const ElfW(Dyn)*)runtime_address(
+                base,
+                (uintptr_t)phdr->p_vaddr);
+        dynamic_count =
+                (size_t)(phdr->p_memsz / sizeof(ElfW(Dyn)));
+        break;
+    }
+    if (dynamic == NULL || dynamic_count == 0) {
+        atomic_store(&g_jni_incomplete, 1);
+        return 1;
+    }
+
+    const ElfW(Sym)* symtab = NULL;
+    const char* strtab = NULL;
+    size_t strsz = 0;
+    const void* jmprel = NULL;
+    size_t pltrelsz = 0;
+    int use_rela = 0;
+    int have_pltrel = 0;
+
+    for (size_t index = 0; index < dynamic_count; index++) {
+        const ElfW(Dyn)* entry = &dynamic[index];
+        if (entry->d_tag == DT_NULL) break;
+        switch (entry->d_tag) {
+            case DT_SYMTAB:
+                symtab = (const ElfW(Sym)*)runtime_address(
+                        base,
+                        (uintptr_t)entry->d_un.d_ptr);
+                break;
+            case DT_STRTAB:
+                strtab = (const char*)runtime_address(
+                        base,
+                        (uintptr_t)entry->d_un.d_ptr);
+                break;
+            case DT_STRSZ:
+                strsz = (size_t)entry->d_un.d_val;
+                break;
+            case DT_JMPREL:
+                jmprel = (const void*)runtime_address(
+                        base,
+                        (uintptr_t)entry->d_un.d_ptr);
+                break;
+            case DT_PLTRELSZ:
+                pltrelsz = (size_t)entry->d_un.d_val;
+                break;
+            case DT_PLTREL:
+                if (entry->d_un.d_val == DT_RELA) {
+                    have_pltrel = 1;
+                    use_rela = 1;
+                } else if (entry->d_un.d_val == DT_REL) {
+                    have_pltrel = 1;
+                    use_rela = 0;
+                } else {
+                    atomic_store(&g_jni_incomplete, 1);
+                    return 1;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    if (symtab == NULL || strtab == NULL || strsz == 0 ||
+            jmprel == NULL || pltrelsz == 0 || !have_pltrel) {
+        atomic_store(&g_jni_incomplete, 1);
+        return 1;
+    }
+
+    patch_jni_onload_relocations(
+            base,
+            symtab,
+            strtab,
+            strsz,
+            jmprel,
+            pltrelsz,
+            use_rela);
+    return 1;
+}
+
 static void scan_loaded_modules(void) {
     pthread_mutex_lock(&g_hook_lock);
     if (atomic_load(&g_trace_active)) {
@@ -431,6 +745,278 @@ static void emit_dlsym_event(
     }
 }
 
+static void emit_jni_onload_event(
+        const char* module,
+        void* address) {
+    if (g_vm == NULL || g_trace_buffer_class == NULL ||
+            g_append_jni_onload == NULL || module == NULL ||
+            address == NULL) {
+        atomic_store(&g_jni_incomplete, 1);
+        return;
+    }
+
+    JNIEnv* env = NULL;
+    int attached = 0;
+    const jint state = (*g_vm)->GetEnv(
+            g_vm,
+            (void**)&env,
+            JNI_VERSION_1_6);
+    if (state == JNI_EDETACHED) {
+        if ((*g_vm)->AttachCurrentThread(
+                g_vm,
+                &env,
+                NULL) != JNI_OK) {
+            atomic_store(&g_jni_incomplete, 1);
+            return;
+        }
+        attached = 1;
+    } else if (state != JNI_OK || env == NULL) {
+        atomic_store(&g_jni_incomplete, 1);
+        return;
+    }
+
+    if ((*env)->ExceptionCheck(env)) {
+        atomic_store(&g_jni_incomplete, 1);
+        if (attached) {
+            (*g_vm)->DetachCurrentThread(g_vm);
+        }
+        return;
+    }
+
+    jstring module_string = (*env)->NewStringUTF(env, module);
+    if (module_string != NULL) {
+        (*env)->CallStaticBooleanMethod(
+                env,
+                g_trace_buffer_class,
+                g_append_jni_onload,
+                module_string,
+                (jlong)(uintptr_t)address);
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        atomic_store(&g_jni_incomplete, 1);
+    }
+    if (module_string != NULL) {
+        (*env)->DeleteLocalRef(env, module_string);
+    } else {
+        atomic_store(&g_jni_incomplete, 1);
+    }
+
+    if (attached) {
+        (*g_vm)->DetachCurrentThread(g_vm);
+    }
+}
+
+static void emit_register_native_event(
+        JNIEnv* env,
+        jclass clazz,
+        const char* module,
+        const char* method,
+        const char* signature,
+        void* address) {
+    if (env == NULL || clazz == NULL ||
+            g_trace_buffer_class == NULL ||
+            g_append_register_native_class == NULL ||
+            module == NULL || method == NULL ||
+            signature == NULL || address == NULL) {
+        atomic_store(&g_jni_incomplete, 1);
+        return;
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        atomic_store(&g_jni_incomplete, 1);
+        return;
+    }
+
+    jstring module_string = (*env)->NewStringUTF(env, module);
+    jstring method_string = (*env)->NewStringUTF(env, method);
+    jstring signature_string =
+            (*env)->NewStringUTF(env, signature);
+    if (module_string != NULL &&
+            method_string != NULL &&
+            signature_string != NULL) {
+        (*env)->CallStaticBooleanMethod(
+                env,
+                g_trace_buffer_class,
+                g_append_register_native_class,
+                clazz,
+                module_string,
+                method_string,
+                signature_string,
+                (jlong)(uintptr_t)address);
+    }
+
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        atomic_store(&g_jni_incomplete, 1);
+    }
+    if (signature_string != NULL) {
+        (*env)->DeleteLocalRef(env, signature_string);
+    }
+    if (method_string != NULL) {
+        (*env)->DeleteLocalRef(env, method_string);
+    }
+    if (module_string != NULL) {
+        (*env)->DeleteLocalRef(env, module_string);
+    }
+    if (module_string == NULL ||
+            method_string == NULL ||
+            signature_string == NULL) {
+        atomic_store(&g_jni_incomplete, 1);
+    }
+}
+
+static jint JNICALL modkit_trace_jni_onload(
+        JavaVM* vm,
+        void* reserved) {
+    pending_jni_onload pending = g_pending_jni_onload;
+    g_pending_jni_onload.armed = 0;
+    if (!pending.armed || pending.original == NULL) {
+        atomic_store(&g_jni_incomplete, 1);
+        return JNI_ERR;
+    }
+
+    atomic_fetch_add(&g_jni_inflight, 1);
+    const jint result = pending.original(vm, reserved);
+    if (atomic_load(&g_jni_trace_active) &&
+            pending.generation ==
+                    atomic_load(&g_jni_generation)) {
+        emit_jni_onload_event(
+                pending.module,
+                pending.address);
+    }
+    atomic_fetch_sub(&g_jni_inflight, 1);
+    return result;
+}
+
+static void* modkit_trace_art_dlsym(
+        void* handle,
+        const char* symbol) {
+    dlsym_fn real = atomic_load(&g_real_dlsym);
+    if (real == NULL) return NULL;
+    if (g_in_art_dlsym_wrapper) {
+        return real(handle, symbol);
+    }
+
+    g_in_art_dlsym_wrapper = 1;
+    void* result = real(handle, symbol);
+    if (atomic_load(&g_jni_trace_active) &&
+            result != NULL && symbol != NULL &&
+            strcmp(symbol, "JNI_OnLoad") == 0) {
+        Dl_info info;
+        memset(&info, 0, sizeof(info));
+        if (dladdr(result, &info) != 0 &&
+                app_owned_path(info.dli_fname)) {
+            const char* module = base_name(info.dli_fname);
+            if (valid_module(module)) {
+                if (g_pending_jni_onload.armed) {
+                    atomic_store(&g_jni_incomplete, 1);
+                } else {
+                    union {
+                        void* object;
+                        jni_onload_fn function;
+                    } conversion;
+                    conversion.object = result;
+                    const size_t module_length = strlen(module);
+                    if (conversion.function != NULL &&
+                            module_length <
+                                    sizeof(g_pending_jni_onload.module)) {
+                        g_pending_jni_onload.original =
+                                conversion.function;
+                        g_pending_jni_onload.address = result;
+                        memcpy(
+                                g_pending_jni_onload.module,
+                                module,
+                                module_length + 1);
+                        g_pending_jni_onload.generation =
+                                atomic_load(&g_jni_generation);
+                        g_pending_jni_onload.armed = 1;
+                        union {
+                            jni_onload_fn function;
+                            void* object;
+                        } wrapper;
+                        wrapper.function = modkit_trace_jni_onload;
+                        result = wrapper.object;
+                    } else {
+                        atomic_store(&g_jni_incomplete, 1);
+                    }
+                }
+            }
+        }
+    }
+    g_in_art_dlsym_wrapper = 0;
+    return result;
+}
+
+static jint JNICALL modkit_trace_register_natives(
+        JNIEnv* env,
+        jclass clazz,
+        const JNINativeMethod* methods,
+        jint method_count) {
+    register_natives_fn real =
+            atomic_load(&g_real_register_natives);
+    if (real == NULL) return JNI_ERR;
+    if (g_in_register_natives_wrapper) {
+        return real(env, clazz, methods, method_count);
+    }
+
+    g_in_register_natives_wrapper = 1;
+    const unsigned long generation =
+            atomic_load(&g_jni_generation);
+    const int had_exception =
+            env != NULL && (*env)->ExceptionCheck(env);
+    atomic_fetch_add(&g_jni_inflight, 1);
+    const jint result =
+            real(env, clazz, methods, method_count);
+
+    if (atomic_load(&g_jni_trace_active) &&
+            generation == atomic_load(&g_jni_generation) &&
+            result == JNI_OK && !had_exception &&
+            env != NULL && !(*env)->ExceptionCheck(env)) {
+        if (method_count > MAX_REGISTER_NATIVE_METHODS) {
+            atomic_store(&g_jni_incomplete, 1);
+        }
+        const jint retained =
+                method_count < 0 ? 0 :
+                (method_count > MAX_REGISTER_NATIVE_METHODS
+                        ? MAX_REGISTER_NATIVE_METHODS
+                        : method_count);
+        for (jint index = 0; index < retained; index++) {
+            const JNINativeMethod* method = &methods[index];
+            if (method->name == NULL ||
+                    method->signature == NULL ||
+                    method->fnPtr == NULL) {
+                atomic_store(&g_jni_incomplete, 1);
+                continue;
+            }
+            Dl_info info;
+            memset(&info, 0, sizeof(info));
+            if (dladdr(method->fnPtr, &info) == 0 ||
+                    !app_owned_path(info.dli_fname)) {
+                continue;
+            }
+            const char* module = base_name(info.dli_fname);
+            if (!valid_module(module)) {
+                atomic_store(&g_jni_incomplete, 1);
+                continue;
+            }
+            emit_register_native_event(
+                    env,
+                    clazz,
+                    module,
+                    method->name,
+                    method->signature,
+                    method->fnPtr);
+        }
+    } else if (result == JNI_OK &&
+            atomic_load(&g_jni_trace_active)) {
+        atomic_store(&g_jni_incomplete, 1);
+    }
+
+    atomic_fetch_sub(&g_jni_inflight, 1);
+    g_in_register_natives_wrapper = 0;
+    return result;
+}
+
 static void* modkit_trace_dlsym(void* handle, const char* symbol) {
     dlsym_fn real = atomic_load(&g_real_dlsym);
     if (real == NULL) return NULL;
@@ -469,6 +1055,15 @@ static void* wrapper_pointer(void) {
     return conversion.object;
 }
 
+static void* art_dlsym_wrapper_pointer(void) {
+    union {
+        dlsym_fn function;
+        void* object;
+    } conversion;
+    conversion.function = modkit_trace_art_dlsym;
+    return conversion.object;
+}
+
 static int restore_all_slots(void) {
     int ok = 1;
     pthread_mutex_lock(&g_hook_lock);
@@ -492,6 +1087,57 @@ static int restore_all_slots(void) {
     }
     pthread_mutex_unlock(&g_hook_lock);
     if (!ok) atomic_store(&g_restore_failed, 1);
+    return ok;
+}
+
+static int restore_jni_hooks_locked(void) {
+    int ok = 1;
+    for (size_t index = 0;
+            index < g_jni_onload_slot_count;
+            index++) {
+        patched_slot* patch = &g_jni_onload_slots[index];
+        if (!change_page_protection(
+                patch->slot,
+                patch->original_prot | PROT_WRITE)) {
+            ok = 0;
+            continue;
+        }
+        __atomic_store_n(
+                patch->slot,
+                patch->original,
+                __ATOMIC_SEQ_CST);
+        if (!change_page_protection(
+                patch->slot,
+                patch->original_prot)) {
+            ok = 0;
+        }
+    }
+
+    if (g_register_natives_slot != NULL) {
+        register_natives_fn original =
+                atomic_load(&g_real_register_natives);
+        if (original == NULL ||
+                !change_page_protection(
+                        (void*)g_register_natives_slot,
+                        g_register_natives_original_prot |
+                                PROT_WRITE)) {
+            ok = 0;
+        } else {
+            __atomic_store_n(
+                    g_register_natives_slot,
+                    original,
+                    __ATOMIC_SEQ_CST);
+            if (!change_page_protection(
+                    (void*)g_register_natives_slot,
+                    g_register_natives_original_prot)) {
+                ok = 0;
+            }
+        }
+    }
+
+    if (!ok) {
+        atomic_store(&g_jni_restore_failed, 1);
+    }
     return ok;
 }
 
@@ -522,6 +1168,24 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
             "appendDlsym",
             "(Ljava/lang/String;Ljava/lang/String;J)Z");
     if (g_append_dlsym == NULL) {
+        (*env)->ExceptionClear(env);
+        return JNI_ERR;
+    }
+    g_append_jni_onload = (*env)->GetStaticMethodID(
+            env,
+            g_trace_buffer_class,
+            "appendJniOnLoad",
+            "(Ljava/lang/String;J)Z");
+    if (g_append_jni_onload == NULL) {
+        (*env)->ExceptionClear(env);
+        return JNI_ERR;
+    }
+    g_append_register_native_class = (*env)->GetStaticMethodID(
+            env,
+            g_trace_buffer_class,
+            "appendRegisterNativeClass",
+            "(Ljava/lang/Class;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;J)Z");
+    if (g_append_register_native_class == NULL) {
         (*env)->ExceptionClear(env);
         return JNI_ERR;
     }
@@ -634,6 +1298,132 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveDlsy
     (void)env;
     (void)clazz;
     return atomic_load(&g_restore_failed) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeStartPassiveJniTrace(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)clazz;
+    if (!ensure_real_dlsym()) return JNI_FALSE;
+
+    pthread_mutex_lock(&g_jni_hook_lock);
+    if (atomic_load(&g_jni_trace_active)) {
+        pthread_mutex_unlock(&g_jni_hook_lock);
+        return JNI_TRUE;
+    }
+    if (atomic_load(&g_jni_restore_failed) ||
+            atomic_load(&g_jni_inflight) != 0) {
+        pthread_mutex_unlock(&g_jni_hook_lock);
+        return JNI_FALSE;
+    }
+
+    g_jni_onload_slot_count = 0;
+    g_register_natives_slot = NULL;
+    atomic_store(&g_real_register_natives, NULL);
+    g_register_natives_original_prot = 0;
+    atomic_store(&g_jni_incomplete, 0);
+    atomic_fetch_add(&g_jni_generation, 1);
+
+    const int register_hooked =
+            patch_register_natives_slot(env);
+    dl_iterate_phdr(patch_art_runtime_module, NULL);
+    const int onload_hooked =
+            g_jni_onload_slot_count > 0;
+    if (!register_hooked || !onload_hooked ||
+            atomic_load(&g_jni_restore_failed)) {
+        restore_jni_hooks_locked();
+        pthread_mutex_unlock(&g_jni_hook_lock);
+        return JNI_FALSE;
+    }
+
+    atomic_store(&g_jni_trace_active, 1);
+    pthread_mutex_unlock(&g_jni_hook_lock);
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeStopPassiveJniTrace(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+
+    pthread_mutex_lock(&g_jni_hook_lock);
+    atomic_store(&g_jni_trace_active, 0);
+    atomic_fetch_add(&g_jni_generation, 1);
+    const int restored = restore_jni_hooks_locked();
+    pthread_mutex_unlock(&g_jni_hook_lock);
+
+    for (int spin = 0;
+            spin < 200 && atomic_load(&g_jni_inflight) > 0;
+            spin++) {
+        usleep(1000);
+    }
+    if (atomic_load(&g_jni_inflight) > 0) {
+        atomic_store(&g_jni_incomplete, 1);
+        return JNI_FALSE;
+    }
+    return restored ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveJniTraceActive(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+    return atomic_load(&g_jni_trace_active)
+            ? JNI_TRUE
+            : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveJniOnLoadHookedSlotCount(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+    pthread_mutex_lock(&g_jni_hook_lock);
+    const size_t count = g_jni_onload_slot_count;
+    pthread_mutex_unlock(&g_jni_hook_lock);
+    return count > (size_t)INT32_MAX
+            ? INT32_MAX
+            : (jint)count;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveRegisterNativesHooked(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+    pthread_mutex_lock(&g_jni_hook_lock);
+    const int hooked = g_register_natives_slot != NULL;
+    pthread_mutex_unlock(&g_jni_hook_lock);
+    return hooked ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveJniIncomplete(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+    return atomic_load(&g_jni_incomplete)
+            ? JNI_TRUE
+            : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveJniRestoreFailed(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+    return atomic_load(&g_jni_restore_failed)
+            ? JNI_TRUE
+            : JNI_FALSE;
 }
 
 JNIEXPORT jlong JNICALL
