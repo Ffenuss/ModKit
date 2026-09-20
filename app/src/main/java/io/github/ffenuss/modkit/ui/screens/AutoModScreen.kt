@@ -34,9 +34,14 @@ import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.AutoModPreparationCoordinator
 import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
 import io.github.ffenuss.modkit.patch.MutationApplyOutcome
+import io.github.ffenuss.modkit.patch.PatchLabDiagnosticReportExporter
+import io.github.ffenuss.modkit.patch.PatchLabDiagnosticReportWriter
 import io.github.ffenuss.modkit.patch.PatchPreparationPlan
 import io.github.ffenuss.modkit.patch.PreparationTargetStatus
+import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun AutoModScreen(
@@ -61,6 +66,9 @@ fun AutoModScreen(
         mutableStateOf<VerifiedBuildResult?>(null)
     }
     var error by remember(result.index.artifactSha256) { mutableStateOf<String?>(null) }
+    var exportingReport by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
+    }
     var cancellation by remember(result.index.artifactSha256) {
         mutableStateOf<AtomicCancellationSignal?>(null)
     }
@@ -102,6 +110,39 @@ fun AutoModScreen(
             } finally {
                 preparing = false
                 cancellation = null
+            }
+        }
+    }
+
+    fun exportDiagnosticReport() {
+        if (exportingReport || preparing || building) return
+        exportingReport = true
+        error = null
+        scope.launch {
+            try {
+                val report =
+                    withContext(Dispatchers.IO) {
+                        PatchLabDiagnosticReportWriter.write(
+                            outputDir =
+                                File(
+                                    context.filesDir,
+                                    "expert-lab-export",
+                                ),
+                            label = target.label,
+                            result = analysisResult,
+                            preparation = plan,
+                        )
+                    }
+                PatchLabDiagnosticReportExporter.share(
+                    context = context,
+                    report = report,
+                )
+            } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass.simpleName
+            } finally {
+                exportingReport = false
             }
         }
     }
@@ -218,6 +259,31 @@ fun AutoModScreen(
                             style =
                                 MaterialTheme.typography
                                     .bodySmall,
+                        )
+                    }
+                    if (hasIl2Cpp) {
+                        OutlinedButton(
+                            onClick = ::exportDiagnosticReport,
+                            enabled =
+                                !exportingReport &&
+                                    !preparing &&
+                                    !building,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (exportingReport) {
+                                    "Формирование отчёта…"
+                                } else {
+                                    "Экспортировать полный отчёт с dump"
+                                },
+                            )
+                        }
+                        Text(
+                            "ZIP содержит dump.cs, metadata methods/types/fields, " +
+                                "exact binary bindings, return types, file offsets, " +
+                                "shared bodies и снимок AutoMod. Его можно прислать сюда для разбора.",
+                            style =
+                                MaterialTheme.typography.bodySmall,
                         )
                     }
                 }
