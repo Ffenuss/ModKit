@@ -82,7 +82,17 @@ object Il2CppCodeGenScanner {
         ).use { image ->
             val blockers = mutableListOf<String>()
             val codeRegistration = uniqueDefinedSymbol(image, "coderegistration")
-            val metadataRegistration = uniqueDefinedSymbol(image, "metadataregistration")
+            val metadataRegistrationSymbol =
+                uniqueDefinedSymbol(image, "metadataregistration")
+            val metadataRegistration =
+                metadataRegistrationSymbol
+                    ?: recoverMetadataRegistrationByRelocations(
+                        image = image,
+                        metadata = metadata,
+                        cancellation = cancellation,
+                        progress = progress,
+                        libraryEntry = libraryEntry,
+                    )
             val codegenRegister = uniqueDefinedSymbol(image, "il2cpp_codegen_register")
 
             if (metadata.images.isEmpty()) {
@@ -204,6 +214,207 @@ object Il2CppCodeGenScanner {
             .take(2)
             .toList()
         return candidates.singleOrNull()
+    }
+
+    private fun recoverMetadataRegistrationByRelocations(
+        image: ElfImage,
+        metadata: Il2CppMetadataModel,
+        cancellation: CancellationSignal,
+        progress: ProgressSink,
+        libraryEntry: String,
+    ): Long? {
+        if (
+            image.relativeRelocationCount <= 0 ||
+            metadata.truncated ||
+            !metadata.structuredSupported
+        ) {
+            return null
+        }
+
+        val typeDefinitionCount =
+            metadata.declaredTypeCount
+                ?.takeIf {
+                    it > 0 &&
+                        metadata.types.size == it
+                }
+                ?: return null
+        val maxReturnTypeIndex =
+            metadata.methods
+                .asSequence()
+                .map { it.returnTypeIndex }
+                .filter { it >= 0 }
+                .maxOrNull()
+                ?: return null
+
+        val pointerSize = image.pointerSize
+        val pairStride = pointerSize * 2L
+        val candidateBases = LinkedHashSet<Long>()
+        var inspected = 0L
+        var lastHeartbeat = 0L
+
+        image.forEachRelativeRelocation { pointerFieldVa, _ ->
+            inspected++
+            if (inspected % 4096L == 0L) {
+                if (cancellation.isCancelled()) {
+                    throw AnalysisCancelledException()
+                }
+                val now = System.currentTimeMillis()
+                if (now - lastHeartbeat >= HEARTBEAT_MS) {
+                    lastHeartbeat = now
+                    progress.publish(
+                        EngineProgress(
+                            engineId = "il2cpp.codegen-bind",
+                            scheduleClass =
+                                EngineScheduleClass.CONFIRMATION,
+                            state = RunState.RUNNING,
+                            currentTask =
+                                "IL2CPP: relocation-guided MetadataRegistration recovery",
+                            currentArtifact = libraryEntry,
+                            processed = inspected,
+                            total =
+                                image.relativeRelocationCount
+                                    .toLong(),
+                            lastHeartbeatEpochMs = now,
+                        ),
+                    )
+                }
+            }
+
+            for (
+                pairIndex in
+                intArrayOf(
+                    METADATA_REGISTRATION_FIELD_OFFSETS_PAIR_INDEX,
+                    METADATA_REGISTRATION_TYPE_SIZES_PAIR_INDEX,
+                )
+            ) {
+                val base =
+                    pointerFieldVa -
+                        pairIndex * pairStride -
+                        pointerSize
+                if (base <= 0L) continue
+                if (
+                    validateMetadataRegistrationCandidate(
+                        image = image,
+                        baseVa = base,
+                        typeDefinitionCount =
+                            typeDefinitionCount,
+                        maxReturnTypeIndex =
+                            maxReturnTypeIndex,
+                        sampleReturnTypeIndices =
+                            metadata.methods
+                                .asSequence()
+                                .map { it.returnTypeIndex }
+                                .filter { it >= 0 }
+                                .distinct()
+                                .take(MAX_RETURN_TYPE_SAMPLES)
+                                .toList(),
+                    )
+                ) {
+                    candidateBases += base
+                    if (candidateBases.size > 1) {
+                        return@forEachRelativeRelocation false
+                    }
+                }
+            }
+            true
+        }
+
+        return candidateBases.singleOrNull()
+    }
+
+    private fun validateMetadataRegistrationCandidate(
+        image: ElfImage,
+        baseVa: Long,
+        typeDefinitionCount: Int,
+        maxReturnTypeIndex: Int,
+        sampleReturnTypeIndices: List<Int>,
+    ): Boolean {
+        val pointerSize = image.pointerSize
+        val pairStride = pointerSize * 2L
+
+        fun count(pairIndex: Int): Long? =
+            image.readU32AtVa(
+                baseVa + pairIndex * pairStride,
+            )
+
+        fun pointer(pairIndex: Int): Long? =
+            image.readPointerAtVa(
+                baseVa +
+                    pairIndex * pairStride +
+                    pointerSize,
+            )
+
+        val typesCount =
+            count(METADATA_REGISTRATION_TYPES_PAIR_INDEX)
+                ?: return false
+        if (
+            typesCount <= maxReturnTypeIndex.toLong() ||
+            typesCount > MAX_METADATA_TYPES
+        ) {
+            return false
+        }
+        if (
+            count(
+                METADATA_REGISTRATION_FIELD_OFFSETS_PAIR_INDEX,
+            ) != typeDefinitionCount.toLong() ||
+            count(
+                METADATA_REGISTRATION_TYPE_SIZES_PAIR_INDEX,
+            ) != typeDefinitionCount.toLong()
+        ) {
+            return false
+        }
+
+        val typesArray =
+            pointer(METADATA_REGISTRATION_TYPES_PAIR_INDEX)
+                ?: return false
+        val fieldOffsets =
+            pointer(
+                METADATA_REGISTRATION_FIELD_OFFSETS_PAIR_INDEX,
+            ) ?: return false
+        val typeSizes =
+            pointer(
+                METADATA_REGISTRATION_TYPE_SIZES_PAIR_INDEX,
+            ) ?: return false
+        if (
+            typesArray <= 0L ||
+            fieldOffsets <= 0L ||
+            typeSizes <= 0L ||
+            !image.isFileBackedVa(
+                fieldOffsets,
+                pointerSize.toLong(),
+            ) ||
+            !image.isFileBackedVa(
+                typeSizes,
+                pointerSize.toLong(),
+            )
+        ) {
+            return false
+        }
+
+        if (sampleReturnTypeIndices.isEmpty()) {
+            return false
+        }
+        return sampleReturnTypeIndices.all { typeIndex ->
+            if (typeIndex.toLong() >= typesCount) {
+                false
+            } else {
+                val typeVa =
+                    image.readPointerAtVa(
+                        typesArray +
+                            typeIndex.toLong() *
+                            pointerSize,
+                    )
+                        ?: return@all false
+                val raw =
+                    readIl2CppTypeCode(
+                        image = image,
+                        typeVa = typeVa,
+                    )
+                        ?: return@all false
+                raw in MIN_KNOWN_IL2CPP_TYPE_CODE..
+                    MAX_KNOWN_IL2CPP_TYPE_CODE
+            }
+        }
     }
 
     private fun recoverFromCodeRegistration(
@@ -1016,7 +1227,9 @@ object Il2CppCodeGenScanner {
         }
 
         val pairStride = image.pointerSize * 2L
-        val typesPairVa = metadataRegistrationVa + METADATA_REGISTRATION_TYPES_PAIR_INDEX * pairStride
+        val typesPairVa =
+            metadataRegistrationVa +
+                METADATA_REGISTRATION_TYPES_PAIR_INDEX * pairStride
         val typeCount = image.readU32AtVa(typesPairVa)?.toLong()
             ?: return Il2CppNativeReturnKind.UNKNOWN
         if (returnTypeIndex.toLong() >= typeCount || typeCount <= 0L || typeCount > MAX_METADATA_TYPES) {
@@ -1032,11 +1245,12 @@ object Il2CppCodeGenScanner {
         ) ?: return Il2CppNativeReturnKind.UNKNOWN
         if (typeVa <= 0L) return Il2CppNativeReturnKind.UNKNOWN
 
-        val raw = image.readFileWindowAtVa(
-            typeVa + image.pointerSize + 2L,
-            1,
-        )?.firstOrNull()?.toInt()?.and(0xff)
-            ?: return Il2CppNativeReturnKind.UNKNOWN
+        val raw =
+            readIl2CppTypeCode(
+                image = image,
+                typeVa = typeVa,
+            )
+                ?: return Il2CppNativeReturnKind.UNKNOWN
 
         return when (raw) {
             0x01 -> Il2CppNativeReturnKind.VOID
@@ -1050,6 +1264,23 @@ object Il2CppCodeGenScanner {
         }
     }
 
-    private const val METADATA_REGISTRATION_TYPES_PAIR_INDEX = 3L
+    private fun readIl2CppTypeCode(
+        image: ElfImage,
+        typeVa: Long,
+    ): Int? =
+        image.readFileWindowAtVa(
+            typeVa + image.pointerSize + 2L,
+            1,
+        )
+            ?.firstOrNull()
+            ?.toInt()
+            ?.and(0xff)
+
+    private const val METADATA_REGISTRATION_TYPES_PAIR_INDEX = 3
+    private const val METADATA_REGISTRATION_FIELD_OFFSETS_PAIR_INDEX = 5
+    private const val METADATA_REGISTRATION_TYPE_SIZES_PAIR_INDEX = 6
     private const val MAX_METADATA_TYPES = 10_000_000L
+    private const val MAX_RETURN_TYPE_SAMPLES = 12
+    private const val MIN_KNOWN_IL2CPP_TYPE_CODE = 0x01
+    private const val MAX_KNOWN_IL2CPP_TYPE_CODE = 0x1d
 }

@@ -59,6 +59,32 @@ class Il2CppCodeGenScannerTest {
     }
 
     @Test
+    fun strippedMetadataRegistrationRecoversReturnKindThroughRelativeRelocations() {
+        val result = scanFixture(
+            includeCodeRegistrationSymbol = false,
+            includeMetadataRegistrationSymbol = false,
+            includeRelativeRelocations = true,
+            includeMetadataRegistrationRelocations = true,
+        )
+
+        assertEquals(
+            0x200500L,
+            result.metadataRegistrationVirtualAddress,
+        )
+        val binding = result.bindings.single()
+        assertEquals(7, binding.returnTypeIndex)
+        assertEquals(
+            Il2CppNativeReturnKind.VOID,
+            binding.returnKind,
+        )
+        assertTrue(
+            binding.returnTypeProof
+                .orEmpty()
+                .contains("types[7]"),
+        )
+    }
+
+    @Test
     fun strippedBinaryRecoversCodegenPointersThroughAndroidAps2() {
         val result = scanFixture(
             includeCodeRegistrationSymbol = false,
@@ -115,8 +141,10 @@ class Il2CppCodeGenScannerTest {
 
     private fun scanFixture(
         includeCodeRegistrationSymbol: Boolean,
+        includeMetadataRegistrationSymbol: Boolean = true,
         includeOutsideFileNobits: Boolean = false,
         includeRelativeRelocations: Boolean = false,
+        includeMetadataRegistrationRelocations: Boolean = false,
         includeAndroidPackedRelocations: Boolean = false,
         androidPackedRelocationsInDynamicOnly: Boolean = false,
         codeRegistrationPairCount: Int = 1,
@@ -125,8 +153,10 @@ class Il2CppCodeGenScannerTest {
         file.writeBytes(
             elfFixture(
                 includeCodeRegistrationSymbol,
+                includeMetadataRegistrationSymbol,
                 includeOutsideFileNobits,
                 includeRelativeRelocations,
+                includeMetadataRegistrationRelocations,
                 includeAndroidPackedRelocations,
                 androidPackedRelocationsInDynamicOnly,
                 codeRegistrationPairCount,
@@ -196,6 +226,7 @@ class Il2CppCodeGenScannerTest {
                 parameterCount = 0,
                 token = 0x06000001,
                 flags = 6,
+                returnTypeIndex = 7,
             ),
         ),
         fields = emptyList(),
@@ -206,8 +237,10 @@ class Il2CppCodeGenScannerTest {
 
     private fun elfFixture(
         includeCodeRegistrationSymbol: Boolean,
+        includeMetadataRegistrationSymbol: Boolean,
         includeOutsideFileNobits: Boolean,
         includeRelativeRelocations: Boolean,
+        includeMetadataRegistrationRelocations: Boolean,
         includeAndroidPackedRelocations: Boolean,
         androidPackedRelocationsInDynamicOnly: Boolean,
         codeRegistrationPairCount: Int,
@@ -301,10 +334,15 @@ class Il2CppCodeGenScannerTest {
             buffer.putLong(ph2 + 48, 8)
         }
 
-        val dynstrText = if (includeCodeRegistrationSymbol) {
-            "\u0000g_CodeRegistration\u0000g_MetadataRegistration\u0000il2cpp_codegen_register\u0000"
-        } else {
-            "\u0000g_MetadataRegistration\u0000il2cpp_codegen_register\u0000"
+        val dynstrText = buildString {
+            append('\u0000')
+            if (includeCodeRegistrationSymbol) {
+                append("g_CodeRegistration\u0000")
+            }
+            if (includeMetadataRegistrationSymbol) {
+                append("g_MetadataRegistration\u0000")
+            }
+            append("il2cpp_codegen_register\u0000")
         }
         val dynstr = dynstrText.toByteArray(Charsets.US_ASCII)
         dynstr.copyInto(bytes, 0x300)
@@ -317,7 +355,11 @@ class Il2CppCodeGenScannerTest {
         buffer.putLong(strSection + 24, 0x300)
         buffer.putLong(strSection + 32, dynstr.size.toLong())
 
-        val symbolCount = if (includeCodeRegistrationSymbol) 4 else 3
+        val symbolCount =
+            1 +
+                (if (includeCodeRegistrationSymbol) 1 else 0) +
+                (if (includeMetadataRegistrationSymbol) 1 else 0) +
+                1
         val symSection = 0x2200 + 128
         buffer.putInt(symSection + 4, 11)
         buffer.putLong(symSection + 24, 0x400)
@@ -361,7 +403,14 @@ class Il2CppCodeGenScannerTest {
                 )
                 buffer.putLong(
                     relocationSection + 32,
-                    aps2?.size?.toLong() ?: 5L * 24L,
+                    aps2?.size?.toLong()
+                        ?: (
+                            if (includeMetadataRegistrationRelocations) {
+                                9L
+                            } else {
+                                5L
+                            }
+                            ) * 24L,
                 )
                 if (includeRelativeRelocations) {
                     buffer.putLong(
@@ -395,14 +444,14 @@ class Il2CppCodeGenScannerTest {
             buffer.putLong(base + 16, 8)
         }
 
+        var symbolIndex = 1
         if (includeCodeRegistrationSymbol) {
-            symbol(1, codeName, 0x200100)
-            symbol(2, metadataName, 0x200180)
-            symbol(3, registerName, 0x100950, 0x12)
-        } else {
-            symbol(1, metadataName, 0x200180)
-            symbol(2, registerName, 0x100950, 0x12)
+            symbol(symbolIndex++, codeName, 0x200100)
         }
+        if (includeMetadataRegistrationSymbol) {
+            symbol(symbolIndex++, metadataName, 0x200180)
+        }
+        symbol(symbolIndex, registerName, 0x100950, 0x12)
 
         // CodeRegistration candidate pair #0 at VA 0x200100.
         buffer.putInt(
@@ -433,6 +482,12 @@ class Il2CppCodeGenScannerTest {
                 rela(2, 0x200250, 0x200300)
                 rela(3, 0x200260, 0x200380)
                 rela(4, 0x200380, 0x100900)
+                if (includeMetadataRegistrationRelocations) {
+                    rela(5, 0x200538, 0x200600)
+                    rela(6, 0x200558, 0x200680)
+                    rela(7, 0x200568, 0x200700)
+                    rela(8, 0x200638, 0x200780)
+                }
             }
         } else {
             buffer.putLong(0x1108, 0x200200)
@@ -440,6 +495,19 @@ class Il2CppCodeGenScannerTest {
             buffer.putLong(0x1250, 0x200300)
             buffer.putLong(0x1260, 0x200380)
             buffer.putLong(0x1380, 0x100900)
+        }
+
+        if (includeMetadataRegistrationRelocations) {
+            // Il2CppMetadataRegistration @ VA 0x200500.
+            // Pair #3 = runtime types, #5/#6 both match exact TypeDef count.
+            buffer.putInt(0x1530, 8)
+            buffer.putInt(0x1550, 1)
+            buffer.putInt(0x1560, 1)
+            // Minimal file-backed array data used by candidate validation.
+            buffer.putLong(0x1680, 0x200800)
+            buffer.putLong(0x1700, 0x200880)
+            // Il2CppType @ VA 0x200780: type byte at pointerSize + 2.
+            bytes[0x178a] = 0x01
         }
 
         // Il2CppCodeGenModule: methodPointerCount remains scalar data.
