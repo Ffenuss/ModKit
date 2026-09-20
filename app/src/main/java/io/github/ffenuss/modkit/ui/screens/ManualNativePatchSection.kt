@@ -490,8 +490,136 @@ fun ManualNativePatchSection(
             if (preflight?.readyForApply == true && draft != null) {
                 Button(
                     onClick = {
-                        val currentDraft = draft ?: return@Button
-                        val signal = AtomicCancellationSignal()
+                        val currentDraft =
+                            draft ?: return@Button
+                        val candidate =
+                            queuedDrafts
+                                .filterNot {
+                                    it.request.targetId ==
+                                        currentDraft.request.targetId
+                                } +
+                                currentDraft
+                        val combined =
+                            MutationPreflightEngine.validate(
+                                preparation = preparation,
+                                requests =
+                                    candidate.map {
+                                        it.request
+                                    },
+                            )
+                        if (combined.readyForApply) {
+                            queuedDrafts = candidate
+                            draft = null
+                            preflight = null
+                            replacementHex = ""
+                            selectedTargetId = null
+                            applyOutcome = null
+                            error = null
+                        } else {
+                            error =
+                                (
+                                    combined.globalBlockers +
+                                        combined.blockedItems
+                                            .flatMap {
+                                                it.blockers
+                                            }
+                                    )
+                                    .distinct()
+                                    .firstOrNull()
+                                    ?: "Набор изменений не прошёл preflight."
+                        }
+                    },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "Добавить в список изменений",
+                    )
+                }
+            }
+
+            if (queuedDrafts.isNotEmpty()) {
+                Text(
+                    "Список изменений (" +
+                        queuedDrafts.size +
+                        ")",
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Можно добавить несколько разных методов. " +
+                        "Перед staging весь набор проверяется вместе " +
+                        "на SHA, пересечения диапазонов и конфликты.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                queuedDrafts.forEach { queued ->
+                    Card(
+                        Modifier.fillMaxWidth(),
+                    ) {
+                        Column(
+                            Modifier.padding(12.dp),
+                            verticalArrangement =
+                                Arrangement.spacedBy(
+                                    5.dp,
+                                ),
+                        ) {
+                            Text(
+                                queued.targetDisplayName,
+                                fontWeight =
+                                    FontWeight.SemiBold,
+                            )
+                            Text(
+                                "Новые байты: " +
+                                    queued.replacementHex,
+                                style =
+                                    MaterialTheme
+                                        .typography
+                                        .bodySmall,
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    queuedDrafts =
+                                        queuedDrafts.filterNot {
+                                            it.request.id ==
+                                                queued.request.id
+                                        }
+                                    applyOutcome = null
+                                },
+                                modifier =
+                                    Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Удалить из списка")
+                            }
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        val combined =
+                            MutationPreflightEngine.validate(
+                                preparation = preparation,
+                                requests =
+                                    queuedDrafts.map {
+                                        it.request
+                                    },
+                            )
+                        if (!combined.readyForApply) {
+                            error =
+                                (
+                                    combined.globalBlockers +
+                                        combined.blockedItems
+                                            .flatMap {
+                                                it.blockers
+                                            }
+                                    )
+                                    .distinct()
+                                    .firstOrNull()
+                                    ?: "Набор изменений не прошёл preflight."
+                            return@Button
+                        }
+
+                        val signal =
+                            AtomicCancellationSignal()
                         cancellation = signal
                         busy = true
                         error = null
@@ -500,28 +628,49 @@ fun ManualNativePatchSection(
 
                         scope.launch {
                             try {
-                                val outcome = MutationApplyCoordinator.apply(
-                                    context = context,
-                                    target = target,
-                                    analysis = analysis,
-                                    preparation = preparation,
-                                    requests = listOf(currentDraft.request),
-                                    cancellation = signal,
-                                    progress = ProgressSink { update ->
-                                        scope.launch { progress = update }
-                                    },
-                                )
+                                val outcome =
+                                    MutationApplyCoordinator.apply(
+                                        context = context,
+                                        target = target,
+                                        analysis = analysis,
+                                        preparation =
+                                            preparation,
+                                        requests =
+                                            queuedDrafts.map {
+                                                it.request
+                                            },
+                                        cancellation =
+                                            signal,
+                                        progress =
+                                            ProgressSink {
+                                                update ->
+                                                scope.launch {
+                                                    progress =
+                                                        update
+                                                }
+                                            },
+                                    )
                                 applyOutcome = outcome
                                 if (outcome.applied) {
                                     onStagingReady(outcome)
                                 } else {
-                                    error = outcome.blockers.firstOrNull()
-                                        ?: "Staging не выполнен."
+                                    error =
+                                        outcome.blockers
+                                            .firstOrNull()
+                                            ?: "Staging не выполнен."
                                 }
-                            } catch (_: AnalysisCancelledException) {
-                                error = "Применение изменения отменено."
-                            } catch (failure: Throwable) {
-                                error = failure.message ?: failure.javaClass.simpleName
+                            } catch (
+                                _: AnalysisCancelledException,
+                            ) {
+                                error =
+                                    "Применение изменений отменено."
+                            } catch (
+                                failure: Throwable,
+                            ) {
+                                error =
+                                    failure.message
+                                        ?: failure.javaClass
+                                            .simpleName
                             } finally {
                                 busy = false
                                 cancellation = null
@@ -531,7 +680,11 @@ fun ManualNativePatchSection(
                     enabled = !busy,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("Применить в staging APK")
+                    Text(
+                        "Применить " +
+                            queuedDrafts.size +
+                            " изменений в staging APK",
+                    )
                 }
             }
 
