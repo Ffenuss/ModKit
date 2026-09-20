@@ -63,6 +63,9 @@ import io.github.ffenuss.modkit.runtime.RuntimeValueRefinement
 import io.github.ffenuss.modkit.runtime.RuntimeValueType
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -108,6 +111,12 @@ fun ExpertLabScreen(onBack: () -> Unit) {
     var runtimeWriteMessage by remember {
         mutableStateOf<String?>(null)
     }
+    var runtimeFreezeJob by remember {
+        mutableStateOf<Job?>(null)
+    }
+    var runtimeFreezeAddress by remember {
+        mutableStateOf<Long?>(null)
+    }
     var installReadiness by remember {
         mutableStateOf<RepackedRuntimeInstallReadiness?>(null)
     }
@@ -119,9 +128,12 @@ fun ExpertLabScreen(onBack: () -> Unit) {
     var installedApps by remember { mutableStateOf<List<InstalledAppTarget>>(emptyList()) }
 
     val latestSession by rememberUpdatedState(session)
+    val latestFreezeJob by
+        rememberUpdatedState(runtimeFreezeJob)
     DisposableEffect(Unit) {
         onDispose {
             cancellation?.cancel()
+            latestFreezeJob?.cancel()
             latestSession?.close()
         }
     }
@@ -166,6 +178,9 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                         scope.launch { progress = update }
                     },
                 )
+                runtimeFreezeJob?.cancel()
+                runtimeFreezeJob = null
+                runtimeFreezeAddress = null
                 session?.close()
                 session = opened
                 runtimeValueScan = null
@@ -197,6 +212,9 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                         scope.launch { progress = update }
                     },
                 )
+                runtimeFreezeJob?.cancel()
+                runtimeFreezeJob = null
+                runtimeFreezeAddress = null
                 session?.close()
                 session = opened
                 runtimeValueScan = null
@@ -519,6 +537,102 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 finishOperation()
             }
         }
+    }
+
+    fun toggleFreezeRootRuntimeHit(
+        address: Long,
+    ) {
+        if (
+            runtimeFreezeAddress ==
+            address
+        ) {
+            runtimeFreezeJob?.cancel()
+            runtimeFreezeJob = null
+            runtimeFreezeAddress = null
+            runtimeWriteMessage =
+                "Freeze остановлен для 0x" +
+                    address.toString(16)
+            return
+        }
+
+        val initialScan =
+            runtimeValueScan ?: return
+        if (
+            !runtimeWritesEnabled ||
+            runtimeWriteValue.isBlank()
+        ) {
+            error =
+                "Для freeze сначала включите запись и задайте значение."
+            return
+        }
+
+        runtimeFreezeJob?.cancel()
+        val frozenValue =
+            runtimeWriteValue
+        runtimeFreezeAddress =
+            address
+        runtimeFreezeJob =
+            scope.launch {
+                var currentScan =
+                    initialScan
+                while (isActive) {
+                    try {
+                        val signal =
+                            AtomicCancellationSignal()
+                        val result =
+                            withContext(
+                                Dispatchers.IO,
+                            ) {
+                                RootRuntimeValueWriteCoordinator
+                                    .writeHit(
+                                        previous =
+                                            currentScan,
+                                        address =
+                                            address,
+                                        valueText =
+                                            frozenValue,
+                                        cancellation =
+                                            signal,
+                                    )
+                            }
+                        currentScan =
+                            result.updatedScan
+                        runtimeValueScan =
+                            result.updatedScan
+                        runtimeWriteMessage =
+                            "Freeze 0x" +
+                                address.toString(16) +
+                                " = " +
+                                result.newValue +
+                                " · verified"
+                    } catch (
+                        failure:
+                            AnalysisCancelledException,
+                    ) {
+                        break
+                    } catch (failure: Throwable) {
+                        error =
+                            "Freeze остановлен: " +
+                                (
+                                    failure.message
+                                        ?: failure
+                                            .javaClass
+                                            .simpleName
+                                    )
+                        break
+                    }
+                    delay(750L)
+                }
+                if (
+                    runtimeFreezeAddress ==
+                    address
+                ) {
+                    runtimeFreezeAddress =
+                        null
+                    runtimeFreezeJob =
+                        null
+                }
+            }
     }
 
     fun findPointersToRuntimeAddress(
@@ -1866,6 +1980,12 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                                 runtimeWriteMessage =
                                                     null
                                                 if (!enabled) {
+                                                    runtimeFreezeJob
+                                                        ?.cancel()
+                                                    runtimeFreezeJob =
+                                                        null
+                                                    runtimeFreezeAddress =
+                                                        null
                                                     runtimeWriteValue =
                                                         ""
                                                 }
@@ -1982,6 +2102,33 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                                     ) {
                                                         Text(
                                                             "Записать новое значение",
+                                                        )
+                                                    }
+                                                }
+                                                if (
+                                                    runtimeWritesEnabled &&
+                                                    runtimeWriteValue
+                                                        .isNotBlank() &&
+                                                    index < 8
+                                                ) {
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            toggleFreezeRootRuntimeHit(
+                                                                hit.address,
+                                                            )
+                                                        },
+                                                        enabled =
+                                                            !busy,
+                                                    ) {
+                                                        Text(
+                                                            if (
+                                                                runtimeFreezeAddress ==
+                                                                hit.address
+                                                            ) {
+                                                                "Остановить freeze"
+                                                            } else {
+                                                                "Freeze этого значения"
+                                                            },
                                                         )
                                                     }
                                                 }
