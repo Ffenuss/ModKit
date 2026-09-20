@@ -68,6 +68,14 @@ object Il2CppNativeMutationDraftBuilder {
             "Для метода не определён ABI."
         }
         val replacementBytes = parseHex(replacementHex)
+        if (abi.equals("arm64-v8a", ignoreCase = true)) {
+            require(offset % 4L == 0L) {
+                "ARM64 method file offset должен быть выровнен по 4 байта."
+            }
+            require(replacementBytes.size % 4 == 0) {
+                "ARM64 in-place patch должен содержать целое число 4-байтовых инструкций."
+            }
+        }
         require(replacementBytes.isNotEmpty()) { "Новые байты не заданы." }
         require(replacementBytes.size <= MAX_PATCH_BYTES) {
             "Размер in-place patch превышает внутренний лимит."
@@ -90,6 +98,9 @@ object Il2CppNativeMutationDraftBuilder {
         RandomAccessFile(extracted, "r").use { raf ->
             raf.seek(offset)
             raf.readFully(original)
+        }
+        require(!original.contentEquals(replacementBytes)) {
+            "Новые байты совпадают с исходными; изменение отсутствует."
         }
 
         val replacementSha = sha256(replacementBytes)
