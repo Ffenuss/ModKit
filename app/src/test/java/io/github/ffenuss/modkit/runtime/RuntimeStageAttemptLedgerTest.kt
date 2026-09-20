@@ -46,6 +46,23 @@ class RuntimeStageAttemptLedgerTest {
     }
 
     @Test
+    fun deniedRootManagerAccessIsTargetEnvironment() {
+        val attempt = RuntimeStageAttemptRecorder.blockedAttempt(
+            stage = RuntimeEscalationStage.ROOT_RUNTIME,
+            requestedTargetIds = setOf("target"),
+            failure = IllegalArgumentException(
+                "Root access was not granted by the device root manager.",
+            ),
+            attemptedAtEpochMs = 1234,
+        )
+
+        assertEquals(
+            RuntimeStageBlockerCategory.TARGET_ENVIRONMENT,
+            attempt.blockers.single().category,
+        )
+    }
+
+    @Test
     fun missingExecutorIsRecordedAsImplementationGap() {
         val attempt = RuntimeStageAttemptRecorder.blockedAttempt(
             stage = RuntimeEscalationStage.REPACKED_TEST_RUNTIME,
