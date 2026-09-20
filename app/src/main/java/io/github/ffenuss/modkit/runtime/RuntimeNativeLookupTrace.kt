@@ -434,6 +434,17 @@ enum class RuntimeNativeTraceCapability {
 }
 
 object RuntimeNativeTraceCapabilityRegistry {
+    private val repackedTraceRequirements =
+        setOf(
+            RuntimeNativeTraceCapability.TRACE_PARSER,
+            RuntimeNativeTraceCapability.EXECUTABLE_ADDRESS_VALIDATOR,
+            RuntimeNativeTraceCapability.REPACKED_PASSIVE_DLSYM_CAPTURE,
+            RuntimeNativeTraceCapability
+                .REPACKED_PASSIVE_JNI_REGISTRATION_CAPTURE,
+            RuntimeNativeTraceCapability
+                .REPACKED_PASSIVE_JNI_ONLOAD_INVOCATION_CAPTURE,
+        )
+
     val registered: Set<RuntimeNativeTraceCapability> =
         setOf(
             RuntimeNativeTraceCapability.TRACE_PARSER,
@@ -451,7 +462,9 @@ object RuntimeNativeTraceCapabilityRegistry {
     ): Boolean =
         when (source) {
             RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME ->
-                RuntimeNativeTraceCapability.REPACKED_TRACE_CAPTURE in registered
+                RuntimeNativeTraceCapability.REPACKED_TRACE_CAPTURE in
+                    registered &&
+                    repackedTraceRequirements.all { it in registered }
             RuntimeNativeTraceSource.NON_ROOT_RUNTIME ->
                 RuntimeNativeTraceCapability.NON_ROOT_TRACE_CAPTURE in registered
             RuntimeNativeTraceSource.ROOT_RUNTIME ->
