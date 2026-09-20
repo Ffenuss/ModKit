@@ -146,6 +146,59 @@ class Il2CppNativeMutationDraftBuilderTest {
     }
 
     @Test
+    fun refusesSharedExecutableOffsetForSingleMetadataTarget() {
+        val root =
+            Files.createTempDirectory(
+                "modkit-native-draft-shared-",
+            ).toFile()
+        try {
+            val analysisRoot =
+                File(root, "analysis-results")
+            val nativeDir =
+                File(
+                    analysisRoot,
+                    SHA + "/il2cpp/native",
+                ).apply { mkdirs() }
+            File(
+                nativeDir,
+                "arm64-v8a-libil2cpp.so",
+            ).writeBytes(ByteArray(32) { it.toByte() })
+
+            val failure =
+                runCatching {
+                    Il2CppNativeMutationDraftBuilder.build(
+                        result =
+                            analysisResult(
+                                proof =
+                                    ProofLevel.EXACT_BINARY,
+                                status =
+                                    UserFindingStatus.CONFIRMED,
+                                includeSharedAlias = true,
+                            ),
+                        targetId = TARGET_ID,
+                        replacementHex =
+                            "C0 03 5F D6",
+                        analysisResultsRoot =
+                            analysisRoot,
+                        stagingRoot =
+                            File(root, "staging"),
+                    )
+                }.exceptionOrNull()
+
+            assertTrue(
+                failure is IllegalArgumentException,
+            )
+            assertTrue(
+                failure?.message.orEmpty().contains(
+                    "разделяется 2 IL2CPP-методами",
+                ),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun refusesNoOpReplacement() {
         val root =
             Files.createTempDirectory(
@@ -200,6 +253,7 @@ class Il2CppNativeMutationDraftBuilderTest {
     private fun analysisResult(
         proof: ProofLevel,
         status: UserFindingStatus,
+        includeSharedAlias: Boolean = false,
     ): FastAnalysisResult {
         val source = ArtifactSource("base.apk", 1, SHA)
         val index = ArtifactIndex(
@@ -226,11 +280,33 @@ class Il2CppNativeMutationDraftBuilderTest {
             blockers = emptyList(),
             facts = emptyList(),
         )
+        val targets =
+            if (includeSharedAlias) {
+                listOf(
+                    target,
+                    target.copy(
+                        id = "target-2",
+                        displayName = "Game.Player.Shared",
+                        memberName = "Shared",
+                        metadataToken = 0x06000002,
+                    ),
+                )
+            } else {
+                listOf(target)
+            }
         return FastAnalysisResult(
             index = index,
-            routingPlan = EngineRoutingPlan(emptyList(), emptyList()),
+            routingPlan =
+                EngineRoutingPlan(
+                    emptyList(),
+                    emptyList(),
+                ),
             elapsedMs = 1,
-            evidenceGraph = EvidenceGraph(SHA, listOf(target)),
+            evidenceGraph =
+                EvidenceGraph(
+                    SHA,
+                    targets,
+                ),
         )
     }
 
