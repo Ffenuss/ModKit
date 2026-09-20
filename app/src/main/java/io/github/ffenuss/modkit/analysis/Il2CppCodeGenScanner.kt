@@ -238,13 +238,20 @@ object Il2CppCodeGenScanner {
                         metadata.types.size == it
                 }
                 ?: return null
-        val maxReturnTypeIndex =
+        val returnTypeIndices =
             metadata.methods
                 .asSequence()
                 .map { it.returnTypeIndex }
                 .filter { it >= 0 }
-                .maxOrNull()
+                .distinct()
+                .toList()
+        val maxReturnTypeIndex =
+            returnTypeIndices.maxOrNull()
                 ?: return null
+        val sampleReturnTypeIndices =
+            returnTypeIndices.take(
+                MAX_RETURN_TYPE_SAMPLES,
+            )
 
         val pointerSize = image.pointerSize
         val pairStride = pointerSize * 2L
@@ -301,13 +308,7 @@ object Il2CppCodeGenScanner {
                         maxReturnTypeIndex =
                             maxReturnTypeIndex,
                         sampleReturnTypeIndices =
-                            metadata.methods
-                                .asSequence()
-                                .map { it.returnTypeIndex }
-                                .filter { it >= 0 }
-                                .distinct()
-                                .take(MAX_RETURN_TYPE_SAMPLES)
-                                .toList(),
+                            sampleReturnTypeIndices,
                     )
                 ) {
                     candidateBases += base
