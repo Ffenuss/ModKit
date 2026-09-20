@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
  */
 object RoutedEngineScheduler {
     private val registeredEngineIds = setOf(
+        "dex.inventory",
         "elf.universal-inventory",
         "il2cpp.fast-dump",
         "il2cpp.codegen-bind",
@@ -74,6 +75,49 @@ object RoutedEngineScheduler {
 
             result = try {
                 when (engine.id) {
+                    "dex.inventory" -> {
+                        val cached = withContext(Dispatchers.IO) {
+                            cache?.loadDexInventory(
+                                result.index.artifactSha256,
+                            )
+                        }
+                        val inventory = cached ?: withContext(Dispatchers.IO) {
+                            DexInventoryEngine.analyze(
+                                workspace = workspace,
+                                cancellation = engineCancellation,
+                                progress = progress,
+                            )
+                        }.also { produced ->
+                            withContext(Dispatchers.IO) {
+                                cache?.saveDexInventory(
+                                    result.index.artifactSha256,
+                                    produced,
+                                )
+                            }
+                        }
+                        if (cached != null) {
+                            publishCacheHit(
+                                progress,
+                                engine,
+                                result.index.artifactSha256,
+                            )
+                        }
+                        result.copy(
+                            dexInventory = inventory,
+                            engineCacheHits = if (cached != null) {
+                                result.engineCacheHits + engine.id
+                            } else {
+                                result.engineCacheHits
+                            },
+                            engineWarnings = (
+                                result.engineWarnings +
+                                    inventory.warnings.map {
+                                        engine.id + ": " + it
+                                    }
+                                ).distinct(),
+                        )
+                    }
+
                     "elf.universal-inventory" -> {
                         val cached = withContext(Dispatchers.IO) {
                             cache?.loadUniversalElfInventory(
