@@ -64,6 +64,7 @@ jobs:
           grep -aFq "RuntimeEvidenceProvider" ModKit-runtime-probe.dex
           grep -aFq "RuntimeNativeBridge" ModKit-runtime-probe.dex
           grep -aFq "RuntimeNativeTraceBuffer" ModKit-runtime-probe.dex
+          grep -aFq "RuntimeModMenu" ModKit-runtime-probe.dex
           for ABI in arm64-v8a armeabi-v7a x86 x86_64; do
             NATIVE="ModKit-runtime-probe-${ABI}.so"
             unzip -p "$APK" "assets/modkit-runtime-probe-native/${ABI}/libmodkit_runtime_probe.so" > "$NATIVE"
@@ -72,6 +73,7 @@ jobs:
             grep -aFq "RuntimeNativeBridge_nativeResolveLoadedSymbol" "$NATIVE"
             grep -aFq "RuntimeNativeBridge_nativeStartPassiveDlsymTrace" "$NATIVE"
             grep -aFq "RuntimeNativeBridge_nativeStopPassiveDlsymTrace" "$NATIVE"
+            grep -aFq "RuntimeNativeBridge_nativePatchCode" "$NATIVE"
           done
           "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
           cp "$APK" ModKit-v0.0.2-debug.apk
