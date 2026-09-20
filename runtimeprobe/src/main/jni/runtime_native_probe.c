@@ -340,7 +340,7 @@ static void emit_dlsym_event(
         if (
                 (*g_vm)->AttachCurrentThread(
                         g_vm,
-                        (void**)&env,
+                        &env,
                         NULL) != JNI_OK) {
             return;
         }
