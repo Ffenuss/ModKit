@@ -202,6 +202,23 @@ fun ManualNativePatchSection(
         }
     }
 
+    fun closeCodeEditor() {
+        callerScanCancellation?.cancel()
+        callerScanCancellation = null
+        callerScanBusy = false
+        callerScan = null
+        callerScanError = null
+        codeWindow = null
+        showRawHex = false
+        customReturnValue = ""
+        replacementHex = ""
+        selectedTargetId = null
+        draft = null
+        preflight = null
+        applyOutcome = null
+        error = null
+    }
+
     fun scanIncomingCallers() {
         val selectedId =
             selectedTargetId
@@ -556,14 +573,32 @@ fun ManualNativePatchSection(
                         verticalArrangement =
                             Arrangement.spacedBy(14.dp),
                     ) {
-                        Text(
-                            "Код метода",
-                            style =
-                                MaterialTheme.typography
-                                    .headlineSmall,
-                            fontWeight =
-                                FontWeight.Bold,
-                        )
+                        Row(
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                            verticalAlignment =
+                                Alignment.CenterVertically,
+                            horizontalArrangement =
+                                Arrangement.spacedBy(12.dp),
+                        ) {
+                            Text(
+                                "Код метода",
+                                modifier =
+                                    Modifier.weight(1f),
+                                style =
+                                    MaterialTheme.typography
+                                        .headlineSmall,
+                                fontWeight =
+                                    FontWeight.Bold,
+                            )
+                            OutlinedButton(
+                                onClick =
+                                    ::closeCodeEditor,
+                                enabled = !busy,
+                            ) {
+                                Text("Закрыть")
+                            }
+                        }
                         Text(
                             window.targetDisplayName,
                             fontWeight =
@@ -1327,15 +1362,7 @@ fun ManualNativePatchSection(
                                         automaticQueuedTargetIds -
                                             currentTarget.id
                                     onStagingInvalidated()
-                                    codeWindow = null
-                                    showRawHex = false
-                                    customReturnValue = ""
-                                    replacementHex = ""
-                                    selectedTargetId = null
-                                    draft = null
-                                    preflight = null
-                                    applyOutcome = null
-                                    error = null
+                                    closeCodeEditor()
                                 }.onFailure {
                                     failure ->
                                     error =
@@ -1366,22 +1393,8 @@ fun ManualNativePatchSection(
                         }
 
                         OutlinedButton(
-                            onClick = {
-                                callerScanCancellation?.cancel()
-                                callerScanCancellation = null
-                                callerScanBusy = false
-                                callerScan = null
-                                callerScanError = null
-                                codeWindow = null
-                                showRawHex = false
-                                customReturnValue = ""
-                                replacementHex = ""
-                                selectedTargetId = null
-                                draft = null
-                                preflight = null
-                                applyOutcome = null
-                                error = null
-                            },
+                            onClick =
+                                ::closeCodeEditor,
                             enabled = !busy,
                             modifier =
                                 Modifier.fillMaxWidth(),

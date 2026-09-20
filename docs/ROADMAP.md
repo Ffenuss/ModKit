@@ -75,6 +75,9 @@ Status: **ACTIVE**
 - [x] Internal mutation preflight with SHA/range/conflict/executor gates
 - [x] Staging apply for supported mutation executors
 - [x] One-click Build APK after verified staging
+- [x] Full-screen IL2CPP method inspector with reconstructed metadata view and ARM64 disassembly
+- [x] Bounded AArch64 CFG + direct callee resolution + reverse direct-caller scan for proven IL2CPP method spans
+- [x] Proven scalar-return presets and arbitrary Int64/Float/Double ARM64 return-body generation with in-place method-boundary checks
 - [ ] Generic mutation selection/specification across the remaining backends
 
 ## Phase 5 — Verified build pipeline
@@ -156,6 +159,12 @@ Status: **ACTIVE**
   - [x] JNI_OnLoad invocation provenance is bound through provider/status/export/session validation and remains proof-neutral with no method-execution escalation
   - [x] Full repacked native trace capability is registered only after passive dlsym, RegisterNatives and JNI_OnLoad invocation executors are concrete
   - [ ] Non-root/root trace capture executors
+- [x] Root live-memory value scanner for exact values and disk-backed unknown-initial-value baselines
+- [x] Runtime value refinement: exact new value / changed / unchanged / increased / decreased
+- [x] Natural and byte-aligned scans, batched refinement reads and bounded hit/byte limits
+- [x] Root pointer scan with exact PID revalidation
+- [x] Explicit runtime value write with writable-map proof and read-back verification
+- [x] Explicit runtime value freeze loop with process revalidation on every write
 - [ ] Root runtime only for evidence that remains unresolved after non-root stages
   - [x] Root decision engine requires recorded lower-privilege attempts
   - [x] Executor/implementation gaps explicitly cannot justify root escalation
