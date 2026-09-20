@@ -85,18 +85,30 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
 
         if ("nativeTraceStart".equals(method)) {
             RuntimeNativeTraceBuffer.start();
+            boolean producerReady =
+                    RuntimeNativeBridge.startPassiveDlsymTrace();
+            if (!producerReady) {
+                RuntimeNativeTraceBuffer.stop();
+            }
             return traceStatusBundle(
-                    RuntimeNativeTraceBuffer.snapshot()
+                    RuntimeNativeTraceBuffer.snapshot(),
+                    producerReady
             );
         }
         if ("nativeTraceStop".equals(method)) {
+            boolean restored =
+                    RuntimeNativeBridge.stopPassiveDlsymTrace();
+            RuntimeNativeTraceBuffer.Snapshot snapshot =
+                    RuntimeNativeTraceBuffer.stop();
             return traceStatusBundle(
-                    RuntimeNativeTraceBuffer.stop()
+                    snapshot,
+                    restored
             );
         }
         if ("nativeTraceStatus".equals(method)) {
             return traceStatusBundle(
-                    RuntimeNativeTraceBuffer.snapshot()
+                    RuntimeNativeTraceBuffer.snapshot(),
+                    RuntimeNativeBridge.ensureLoaded()
             );
         }
 
@@ -112,7 +124,8 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
     }
 
     private Bundle traceStatusBundle(
-            RuntimeNativeTraceBuffer.Snapshot snapshot
+            RuntimeNativeTraceBuffer.Snapshot snapshot,
+            boolean producerReady
     ) {
         Bundle result = baseReply();
         result.putString("sessionId", snapshot.sessionId);
@@ -128,6 +141,24 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
                 snapshot.stoppedAtEpochMs
         );
         result.putInt("traceBytes", snapshot.bytes.length);
+        result.putString("producerKind", "PLT_DLSYM_GOT");
+        result.putBoolean("producerReady", producerReady);
+        result.putBoolean(
+                "producerActive",
+                RuntimeNativeBridge.passiveDlsymTraceActive()
+        );
+        result.putInt(
+                "hookedSlotCount",
+                RuntimeNativeBridge.passiveDlsymHookedSlotCount()
+        );
+        result.putBoolean(
+                "producerIncomplete",
+                RuntimeNativeBridge.passiveDlsymIncomplete()
+        );
+        result.putBoolean(
+                "producerRestoreFailed",
+                RuntimeNativeBridge.passiveDlsymRestoreFailed()
+        );
         return result;
     }
 
