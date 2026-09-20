@@ -45,7 +45,7 @@ object EngineRouter {
             targeted(
                 id = "dex.inventory",
                 reason = "Validated DEX present",
-                missingText = "DEX deep inventory has not yet been migrated into the clean repository",
+                available = true,
             )
         }
         if ("native_elf" in runtimes) {
