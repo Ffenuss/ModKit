@@ -704,6 +704,72 @@ class GameplayModificationFinderTest {
     }
 
     @Test
+    fun localCurrencyGetterIsDiscoveredAsEconomySignal() {
+        val target =
+            target(
+                token = 0x06000330,
+                name = "get_Gold",
+                offset = 0x3300,
+                declaringType = "Game.PlayerWallet",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.INTEGER,
+            )
+
+        val opportunity =
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).single()
+
+        assertEquals(
+            GameplayModificationCategory.ECONOMY,
+            opportunity.category,
+        )
+        assertEquals(
+            GameplayMutationAction.DISCOVERY_ONLY,
+            opportunity.action,
+        )
+        assertFalse(opportunity.selectable)
+    }
+
+    @Test
+    fun gachaSummonSurfaceIsVisibleAsSensitiveDiagnostic() {
+        val target =
+            target(
+                token = 0x06000331,
+                name = "get_SummonResult",
+                offset = 0x3310,
+                declaringType = "Game.GachaService",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.POINTER_OR_REFERENCE,
+            )
+
+        val opportunity =
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).single()
+
+        assertEquals(
+            GameplayModificationCategory.SENSITIVE_SURFACE,
+            opportunity.category,
+        )
+        assertEquals(
+            GameplayModificationConfidence.SENSITIVE_SURFACE_SIGNAL,
+            opportunity.confidence,
+        )
+        assertFalse(opportunity.selectable)
+    }
+
+    @Test
     fun purchaseAndPaymentSurfacesAreVisibleButNotAutoPatched() {
         val target = target(
             token = 0x06000006,
