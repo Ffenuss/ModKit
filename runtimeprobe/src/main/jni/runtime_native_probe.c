@@ -1,7 +1,41 @@
+#define _GNU_SOURCE
 #include <jni.h>
 #include <dlfcn.h>
+#include <elf.h>
+#include <link.h>
+#include <pthread.h>
+#include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
+#define MAX_PATCHED_SLOTS 8192
+#define SCAN_INTERVAL_US 250000
+
+typedef void* (*dlsym_fn)(void*, const char*);
+
+typedef struct {
+    void** slot;
+    void* original;
+    int original_prot;
+} patched_slot;
+
+static JavaVM* g_vm = NULL;
+static jclass g_trace_buffer_class = NULL;
+static jmethodID g_append_dlsym = NULL;
+
+static pthread_mutex_t g_hook_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_t g_scan_thread;
+static atomic_int g_trace_active = 0;
+static atomic_int g_scan_thread_started = 0;
+static atomic_int g_inflight = 0;
+static atomic_int g_incomplete = 0;
+static atomic_int g_restore_failed = 0;
+static patched_slot g_slots[MAX_PATCHED_SLOTS];
+static size_t g_slot_count = 0;
+static dlsym_fn g_real_dlsym = NULL;
 
 static const char* base_name(const char* path) {
     if (path == NULL) return NULL;
@@ -28,6 +62,496 @@ static int valid_symbol(const char* value) {
         if (ch <= 0x20 || ch == 0x7f) return 0;
     }
     return 1;
+}
+
+static int app_owned_path(const char* path) {
+    if (path == NULL || path[0] == '\0') return 0;
+    if (strstr(path, "libmodkit_runtime_probe.so") != NULL) return 0;
+    return strncmp(path, "/data/app/", 10) == 0 ||
+            strncmp(path, "/data/user/", 11) == 0 ||
+            strncmp(path, "/data/data/", 11) == 0;
+}
+
+static uintptr_t runtime_address(uintptr_t base, uintptr_t value) {
+    if (base == 0) return value;
+    return value >= base ? value : base + value;
+}
+
+static int query_protection(void* address) {
+    FILE* maps = fopen("/proc/self/maps", "re");
+    if (maps == NULL) return 0;
+
+    const uintptr_t target = (uintptr_t)address;
+    char line[1024];
+    int result = 0;
+    while (fgets(line, sizeof(line), maps) != NULL) {
+        unsigned long start = 0;
+        unsigned long end = 0;
+        char perms[5] = {0};
+        if (sscanf(line, "%lx-%lx %4s", &start, &end, perms) != 3) {
+            continue;
+        }
+        if (target < (uintptr_t)start || target >= (uintptr_t)end) {
+            continue;
+        }
+        if (perms[0] == 'r') result |= PROT_READ;
+        if (perms[1] == 'w') result |= PROT_WRITE;
+        if (perms[2] == 'x') result |= PROT_EXEC;
+        break;
+    }
+    fclose(maps);
+    return result;
+}
+
+static int change_page_protection(void* address, int prot) {
+    long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) return 0;
+    uintptr_t page = (uintptr_t)address &
+            ~((uintptr_t)page_size - 1u);
+    return mprotect((void*)page, (size_t)page_size, prot) == 0;
+}
+
+static int slot_already_patched(void** slot) {
+    for (size_t index = 0; index < g_slot_count; index++) {
+        if (g_slots[index].slot == slot) return 1;
+    }
+    return 0;
+}
+
+static void* wrapper_pointer(void);
+
+static int patch_slot(void** slot) {
+    if (slot == NULL || slot_already_patched(slot)) return 1;
+    if (g_slot_count >= MAX_PATCHED_SLOTS) {
+        atomic_store(&g_incomplete, 1);
+        return 0;
+    }
+
+    void* original = *slot;
+    if (original == NULL) return 1;
+
+    if (g_real_dlsym == NULL) {
+        union {
+            void* object;
+            dlsym_fn function;
+        } conversion;
+        conversion.object = original;
+        g_real_dlsym = conversion.function;
+    }
+
+    const int original_prot = query_protection(slot);
+    if (original_prot == 0) {
+        atomic_store(&g_incomplete, 1);
+        return 0;
+    }
+
+    int write_prot = original_prot | PROT_WRITE;
+    if (!change_page_protection(slot, write_prot)) {
+        atomic_store(&g_incomplete, 1);
+        return 0;
+    }
+
+    *slot = wrapper_pointer();
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+
+    if (!change_page_protection(slot, original_prot)) {
+        *slot = original;
+        atomic_store(&g_incomplete, 1);
+        atomic_store(&g_restore_failed, 1);
+        return 0;
+    }
+
+    g_slots[g_slot_count].slot = slot;
+    g_slots[g_slot_count].original = original;
+    g_slots[g_slot_count].original_prot = original_prot;
+    g_slot_count++;
+    return 1;
+}
+
+static int patch_relocations(
+        uintptr_t base,
+        const ElfW(Sym)* symtab,
+        const char* strtab,
+        size_t strsz,
+        const void* relocations,
+        size_t relocation_bytes,
+        int use_rela) {
+    if (symtab == NULL || strtab == NULL || relocations == NULL) return 0;
+    int patched = 0;
+
+    if (use_rela) {
+        const size_t count = relocation_bytes / sizeof(ElfW(Rela));
+        const ElfW(Rela)* entries = (const ElfW(Rela)*)relocations;
+        for (size_t index = 0; index < count; index++) {
+#if defined(__LP64__)
+            const size_t symbol_index = ELF64_R_SYM(entries[index].r_info);
+#else
+            const size_t symbol_index = ELF32_R_SYM(entries[index].r_info);
+#endif
+            const ElfW(Sym)* symbol = &symtab[symbol_index];
+            if ((size_t)symbol->st_name >= strsz) continue;
+            const char* name = strtab + symbol->st_name;
+            if (strcmp(name, "dlsym") != 0) continue;
+            void** slot = (void**)runtime_address(
+                    base,
+                    (uintptr_t)entries[index].r_offset);
+            if (patch_slot(slot)) patched++;
+        }
+    } else {
+        const size_t count = relocation_bytes / sizeof(ElfW(Rel));
+        const ElfW(Rel)* entries = (const ElfW(Rel)*)relocations;
+        for (size_t index = 0; index < count; index++) {
+#if defined(__LP64__)
+            const size_t symbol_index = ELF64_R_SYM(entries[index].r_info);
+#else
+            const size_t symbol_index = ELF32_R_SYM(entries[index].r_info);
+#endif
+            const ElfW(Sym)* symbol = &symtab[symbol_index];
+            if ((size_t)symbol->st_name >= strsz) continue;
+            const char* name = strtab + symbol->st_name;
+            if (strcmp(name, "dlsym") != 0) continue;
+            void** slot = (void**)runtime_address(
+                    base,
+                    (uintptr_t)entries[index].r_offset);
+            if (patch_slot(slot)) patched++;
+        }
+    }
+
+    return patched;
+}
+
+static int patch_module(
+        struct dl_phdr_info* info,
+        size_t size,
+        void* data) {
+    (void)size;
+    (void)data;
+    if (!atomic_load(&g_trace_active)) return 1;
+    if (info == NULL || !app_owned_path(info->dlpi_name)) return 0;
+
+    const uintptr_t base = (uintptr_t)info->dlpi_addr;
+    const ElfW(Dyn)* dynamic = NULL;
+    size_t dynamic_count = 0;
+
+    for (ElfW(Half) index = 0; index < info->dlpi_phnum; index++) {
+        const ElfW(Phdr)* phdr = &info->dlpi_phdr[index];
+        if (phdr->p_type != PT_DYNAMIC) continue;
+        dynamic = (const ElfW(Dyn)*)runtime_address(
+                base,
+                (uintptr_t)phdr->p_vaddr);
+        dynamic_count = (size_t)(phdr->p_memsz / sizeof(ElfW(Dyn)));
+        break;
+    }
+    if (dynamic == NULL || dynamic_count == 0) return 0;
+
+    const ElfW(Sym)* symtab = NULL;
+    const char* strtab = NULL;
+    size_t strsz = 0;
+    const void* jmprel = NULL;
+    size_t pltrelsz = 0;
+    int use_rela = 0;
+    int have_pltrel = 0;
+
+    for (size_t index = 0; index < dynamic_count; index++) {
+        const ElfW(Dyn)* entry = &dynamic[index];
+        if (entry->d_tag == DT_NULL) break;
+        switch (entry->d_tag) {
+            case DT_SYMTAB:
+                symtab = (const ElfW(Sym)*)runtime_address(
+                        base,
+                        (uintptr_t)entry->d_un.d_ptr);
+                break;
+            case DT_STRTAB:
+                strtab = (const char*)runtime_address(
+                        base,
+                        (uintptr_t)entry->d_un.d_ptr);
+                break;
+            case DT_STRSZ:
+                strsz = (size_t)entry->d_un.d_val;
+                break;
+            case DT_JMPREL:
+                jmprel = (const void*)runtime_address(
+                        base,
+                        (uintptr_t)entry->d_un.d_ptr);
+                break;
+            case DT_PLTRELSZ:
+                pltrelsz = (size_t)entry->d_un.d_val;
+                break;
+            case DT_PLTREL:
+                have_pltrel = 1;
+                use_rela = entry->d_un.d_val == DT_RELA;
+                break;
+            default:
+                break;
+        }
+    }
+
+    if (symtab == NULL || strtab == NULL || strsz == 0 ||
+            jmprel == NULL || pltrelsz == 0 || !have_pltrel) {
+        return 0;
+    }
+
+    patch_relocations(
+            base,
+            symtab,
+            strtab,
+            strsz,
+            jmprel,
+            pltrelsz,
+            use_rela);
+    return 0;
+}
+
+static void scan_loaded_modules(void) {
+    pthread_mutex_lock(&g_hook_lock);
+    if (atomic_load(&g_trace_active)) {
+        dl_iterate_phdr(patch_module, NULL);
+    }
+    pthread_mutex_unlock(&g_hook_lock);
+}
+
+static void* scan_thread_main(void* ignored) {
+    (void)ignored;
+    while (atomic_load(&g_trace_active)) {
+        scan_loaded_modules();
+        usleep(SCAN_INTERVAL_US);
+    }
+    return NULL;
+}
+
+static void emit_dlsym_event(
+        const char* module,
+        const char* symbol,
+        void* address) {
+    if (g_vm == NULL || g_trace_buffer_class == NULL ||
+            g_append_dlsym == NULL || module == NULL ||
+            symbol == NULL || address == NULL) {
+        return;
+    }
+
+    JNIEnv* env = NULL;
+    int attached = 0;
+    const jint state = (*g_vm)->GetEnv(
+            g_vm,
+            (void**)&env,
+            JNI_VERSION_1_6);
+    if (state == JNI_EDETACHED) {
+        if ((*g_vm)->AttachCurrentThread(g_vm, &env, NULL) != JNI_OK) {
+            return;
+        }
+        attached = 1;
+    } else if (state != JNI_OK || env == NULL) {
+        return;
+    }
+
+    jstring module_string = (*env)->NewStringUTF(env, module);
+    jstring symbol_string = (*env)->NewStringUTF(env, symbol);
+    if (module_string != NULL && symbol_string != NULL) {
+        (*env)->CallStaticBooleanMethod(
+                env,
+                g_trace_buffer_class,
+                g_append_dlsym,
+                module_string,
+                symbol_string,
+                (jlong)(uintptr_t)address);
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+        }
+    }
+    if (symbol_string != NULL) {
+        (*env)->DeleteLocalRef(env, symbol_string);
+    }
+    if (module_string != NULL) {
+        (*env)->DeleteLocalRef(env, module_string);
+    }
+
+    if (attached) {
+        (*g_vm)->DetachCurrentThread(g_vm);
+    }
+}
+
+static void* modkit_trace_dlsym(void* handle, const char* symbol) {
+    atomic_fetch_add(&g_inflight, 1);
+    dlsym_fn real = g_real_dlsym;
+    void* result = real == NULL ? NULL : real(handle, symbol);
+
+    if (atomic_load(&g_trace_active) &&
+            result != NULL && valid_symbol(symbol)) {
+        Dl_info info;
+        memset(&info, 0, sizeof(info));
+        if (dladdr(result, &info) != 0 &&
+                app_owned_path(info.dli_fname)) {
+            const char* module = base_name(info.dli_fname);
+            if (valid_module(module)) {
+                emit_dlsym_event(module, symbol, result);
+            }
+        }
+    }
+
+    atomic_fetch_sub(&g_inflight, 1);
+    return result;
+}
+
+static void* wrapper_pointer(void) {
+    union {
+        dlsym_fn function;
+        void* object;
+    } conversion;
+    conversion.function = modkit_trace_dlsym;
+    return conversion.object;
+}
+
+static int restore_all_slots(void) {
+    int ok = 1;
+    pthread_mutex_lock(&g_hook_lock);
+    for (size_t index = 0; index < g_slot_count; index++) {
+        patched_slot* patch = &g_slots[index];
+        if (!change_page_protection(
+                patch->slot,
+                patch->original_prot | PROT_WRITE)) {
+            ok = 0;
+            continue;
+        }
+        *patch->slot = patch->original;
+        __atomic_thread_fence(__ATOMIC_SEQ_CST);
+        if (!change_page_protection(
+                patch->slot,
+                patch->original_prot)) {
+            ok = 0;
+        }
+    }
+    pthread_mutex_unlock(&g_hook_lock);
+    if (!ok) atomic_store(&g_restore_failed, 1);
+    return ok;
+}
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
+    (void)reserved;
+    g_vm = vm;
+
+    JNIEnv* env = NULL;
+    if ((*vm)->GetEnv(vm, (void**)&env, JNI_VERSION_1_6) != JNI_OK ||
+            env == NULL) {
+        return JNI_ERR;
+    }
+    jclass local = (*env)->FindClass(
+            env,
+            "io/github/ffenuss/modkit/runtimeprobe/RuntimeNativeTraceBuffer");
+    if (local == NULL) {
+        (*env)->ExceptionClear(env);
+        return JNI_ERR;
+    }
+    g_trace_buffer_class =
+            (jclass)(*env)->NewGlobalRef(env, local);
+    (*env)->DeleteLocalRef(env, local);
+    if (g_trace_buffer_class == NULL) return JNI_ERR;
+
+    g_append_dlsym = (*env)->GetStaticMethodID(
+            env,
+            g_trace_buffer_class,
+            "appendDlsym",
+            "(Ljava/lang/String;Ljava/lang/String;J)Z");
+    if (g_append_dlsym == NULL) {
+        (*env)->ExceptionClear(env);
+        return JNI_ERR;
+    }
+    return JNI_VERSION_1_6;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeStartPassiveDlsymTrace(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+
+    pthread_mutex_lock(&g_hook_lock);
+    if (atomic_load(&g_trace_active)) {
+        pthread_mutex_unlock(&g_hook_lock);
+        return JNI_TRUE;
+    }
+    g_slot_count = 0;
+    g_real_dlsym = NULL;
+    atomic_store(&g_incomplete, 0);
+    atomic_store(&g_restore_failed, 0);
+    atomic_store(&g_trace_active, 1);
+    pthread_mutex_unlock(&g_hook_lock);
+
+    scan_loaded_modules();
+    if (pthread_create(
+            &g_scan_thread,
+            NULL,
+            scan_thread_main,
+            NULL) != 0) {
+        atomic_store(&g_trace_active, 0);
+        restore_all_slots();
+        return JNI_FALSE;
+    }
+    atomic_store(&g_scan_thread_started, 1);
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeStopPassiveDlsymTrace(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+
+    atomic_store(&g_trace_active, 0);
+    if (atomic_exchange(&g_scan_thread_started, 0)) {
+        pthread_join(g_scan_thread, NULL);
+    }
+
+    const int restored = restore_all_slots();
+
+    for (int spin = 0; spin < 200 && atomic_load(&g_inflight) > 0; spin++) {
+        usleep(1000);
+    }
+    if (atomic_load(&g_inflight) > 0) {
+        atomic_store(&g_incomplete, 1);
+        return JNI_FALSE;
+    }
+    return restored ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveDlsymTraceActive(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+    return atomic_load(&g_trace_active) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveDlsymHookedSlotCount(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+    pthread_mutex_lock(&g_hook_lock);
+    const size_t count = g_slot_count;
+    pthread_mutex_unlock(&g_hook_lock);
+    return count > (size_t)INT32_MAX ? INT32_MAX : (jint)count;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveDlsymIncomplete(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+    return atomic_load(&g_incomplete) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveDlsymRestoreFailed(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+    return atomic_load(&g_restore_failed) ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT jlong JNICALL
