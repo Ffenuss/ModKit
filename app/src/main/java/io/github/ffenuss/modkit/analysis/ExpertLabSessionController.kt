@@ -492,6 +492,9 @@ object ExpertLabSessionController {
         require(session.repackedPassiveTraceSession == null) {
             "A passive dlsym trace session is already active."
         }
+        require(session.repackedPassiveJniTraceSession == null) {
+            "Stop the passive JNI trace before starting passive dlsym tracing."
+        }
         val traceSession = withContext(Dispatchers.IO) {
             RepackedRuntimePassiveTraceSessionCapture.start(
                 build = build,
