@@ -176,6 +176,15 @@ class RuntimeNativeLookupTraceTest {
                 RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME,
             ),
         )
+        assertTrue(
+            RuntimeNativeTraceCapability.REPACKED_PASSIVE_DLSYM_CAPTURE in
+                RuntimeNativeTraceCapabilityRegistry.registered,
+        )
+        assertTrue(
+            RuntimeNativeTraceCapabilityRegistry.passiveDlsymCaptureAvailable(
+                RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME,
+            ),
+        )
         assertFalse(
             RuntimeNativeTraceCapabilityRegistry.captureAvailable(
                 RuntimeNativeTraceSource.REPACKED_TEST_RUNTIME,
