@@ -299,7 +299,7 @@ class RepackedRuntimeNativeProbeInjectorTest {
             "x86_64" -> 62 to true
             else -> error(abi)
         }
-        val bytes = ByteArray(512)
+        val bytes = ByteArray(1024)
         bytes[0] = 0x7f
         bytes[1] = 'E'.code.toByte()
         bytes[2] = 'L'.code.toByte()
@@ -316,7 +316,8 @@ class RepackedRuntimeNativeProbeInjectorTest {
                 "RuntimeNativeBridge_nativeStopPassiveDlsymTrace",
                 "RuntimeNativeBridge_nativeStartPassiveJniTrace",
                 "RuntimeNativeBridge_nativeStopPassiveJniTrace",
-            "RuntimeNativeBridge_nativePassiveJniOnLoadInvocationReady",
+                "RuntimeNativeBridge_nativePassiveJniOnLoadInvocationReady",
+                "RuntimeNativeBridge_nativePatchCode",
             ).forEach { value ->
                 val markerBytes =
                     value.toByteArray(Charsets.US_ASCII)
