@@ -44,4 +44,62 @@ object Il2CppPatchTargetBrowser {
                 it == "assembly-csharp" ||
                     it == "assembly-csharp.dll"
             } == true
+
+    fun originLabel(
+        target: EvidenceTarget,
+    ): String {
+        val image =
+            imageName(target)
+                ?.lowercase()
+                .orEmpty()
+        return when {
+            isAssemblyCSharp(target) ->
+                "Код проекта"
+            image.startsWith("unityengine") ||
+                image.startsWith("unity.") ->
+                "Unity / пакет"
+            image.startsWith("system") ||
+                image.startsWith("microsoft") ||
+                image == "mscorlib" ||
+                image == "mscorlib.dll" ||
+                image == "netstandard" ||
+                image == "netstandard.dll" ->
+                ".NET / системная библиотека"
+            image.isBlank() ->
+                "Источник не определён"
+            else ->
+                "Библиотека / плагин"
+        }
+    }
+
+    fun methodHint(
+        target: EvidenceTarget,
+    ): String {
+        val name =
+            target.memberName.orEmpty()
+        return when {
+            name.startsWith("get_") ->
+                "Getter: чтение свойства."
+            name.startsWith("set_") ->
+                "Setter: запись свойства."
+            name == "Awake" ->
+                "Unity lifecycle: ранняя инициализация объекта."
+            name == "Start" ->
+                "Unity lifecycle: запуск компонента."
+            name == "OnEnable" ->
+                "Unity lifecycle: компонент включён."
+            name == "OnDisable" ->
+                "Unity lifecycle: компонент выключен."
+            name == "Update" ->
+                "Unity lifecycle: вызывается каждый кадр."
+            name.startsWith("On") ->
+                "Callback/обработчик события по имени метода."
+            name.startsWith("Is") ||
+                name.startsWith("Has") ||
+                name.startsWith("Can") ->
+                "По имени похоже на проверку состояния; точный смысл требует контекста."
+            else ->
+                "Назначение по одной сигнатуре не подтверждено."
+        }
+    }
 }
