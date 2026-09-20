@@ -37,6 +37,7 @@ import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
+import io.github.ffenuss.modkit.analysis.nativecode.AArch64ControlFlowGraphBuilder
 import io.github.ffenuss.modkit.analysis.nativecode.AArch64Disassembler
 import io.github.ffenuss.modkit.analysis.nativecode.AArch64MethodAnalyzer
 import io.github.ffenuss.modkit.domain.EngineProgress
@@ -44,6 +45,7 @@ import io.github.ffenuss.modkit.patch.AArch64ScalarReturnEncoder
 import io.github.ffenuss.modkit.patch.GameplayModificationCategory
 import io.github.ffenuss.modkit.patch.GameplayModificationFinder
 import io.github.ffenuss.modkit.patch.GameplayModificationOpportunity
+import io.github.ffenuss.modkit.patch.Il2CppArm64CallResolver
 import io.github.ffenuss.modkit.patch.Il2CppNativeMutationDraftBuilder
 import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
 import io.github.ffenuss.modkit.analysis.Il2CppNativeReturnKind
@@ -416,6 +418,27 @@ fun ManualNativePatchSection(
                             AArch64MethodAnalyzer
                                 .analyze(it)
                         }
+                    val arm64ControlFlow =
+                        arm64Disassembly?.let {
+                            AArch64ControlFlowGraphBuilder
+                                .build(it)
+                        }
+                    val outgoingCalls =
+                        if (
+                            evidenceTarget != null &&
+                            arm64Disassembly != null
+                        ) {
+                            Il2CppArm64CallResolver
+                                .resolveOutgoingCalls(
+                                    result = analysis,
+                                    sourceTarget =
+                                        evidenceTarget,
+                                    disassembly =
+                                        arm64Disassembly,
+                                )
+                        } else {
+                            emptyList()
+                        }
                     val runtimeAddress =
                         evidenceTarget?.let {
                             target ->
@@ -576,6 +599,70 @@ fun ManualNativePatchSection(
                                                         .bodySmall,
                                             )
                                         }
+                                    arm64ControlFlow
+                                        ?.let {
+                                            cfg ->
+                                            Text(
+                                                "CFG: блоков " +
+                                                    cfg.blocks
+                                                        .size +
+                                                    " · рёбер " +
+                                                    cfg.edges
+                                                        .size +
+                                                    " · внешних переходов " +
+                                                    cfg.externalTargets
+                                                        .size +
+                                                    " · complete=" +
+                                                    cfg.completeInsideWindow,
+                                                style =
+                                                    MaterialTheme
+                                                        .typography
+                                                        .bodySmall,
+                                            )
+                                        }
+                                    if (
+                                        outgoingCalls
+                                            .isNotEmpty()
+                                    ) {
+                                        Text(
+                                            "Прямые вызовы",
+                                            fontWeight =
+                                                FontWeight
+                                                    .SemiBold,
+                                        )
+                                        outgoingCalls
+                                            .take(12)
+                                            .forEach {
+                                                call ->
+                                                Text(
+                                                    "• 0x" +
+                                                        call.callSiteAddress
+                                                            .toString(16) +
+                                                        " → " +
+                                                        (
+                                                            call.targetDisplayName
+                                                                ?: (
+                                                                    "0x" +
+                                                                        call.targetAddress
+                                                                            .toString(
+                                                                                16,
+                                                                            )
+                                                                    )
+                                                            ) +
+                                                        if (
+                                                            call.exactIl2CppTarget
+                                                        ) {
+                                                            " · exact IL2CPP"
+                                                        } else {
+                                                            " · unresolved"
+                                                        },
+                                                    style =
+                                                        MaterialTheme
+                                                            .typography
+                                                            .bodySmall,
+                                                )
+                                            }
+                                    }
                                 }
                             }
                         }
