@@ -210,9 +210,9 @@ fun ManualNativePatchSection(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "Здесь показываются только сильные совпадения по самому имени метода " +
-                    "и доказанной сигнатуре. Конструкторы, proxy/compiler-generated, UI/framework " +
-                    "и слабые совпадения скрыты.",
+                "ModKit учитывает имя метода, контекст класса и IL2CPP metadata. " +
+                    "Галочки доступны только для доказанных binary-целей; поля модели данных " +
+                    "показываются отдельно как подсказки и не патчатся вслепую.",
                 style = MaterialTheme.typography.bodySmall,
             )
             if (actionableOpportunities.isEmpty()) {
@@ -266,23 +266,6 @@ fun ManualNativePatchSection(
                             )
                         }
                     }
-                }
-
-                if (deferredOpportunities.isNotEmpty()) {
-                    val deferredSummary =
-                        deferredOpportunities
-                            .groupingBy { it.category.title }
-                            .eachCount()
-                            .entries
-                            .sortedBy { it.key }
-                            .joinToString(" · ") {
-                                it.key + ": " + it.value
-                            }
-                    Text(
-                        "Ещё найдены точные числовые параметры без готового безопасного preset: " +
-                            deferredSummary,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
                 }
 
                 Button(
@@ -365,6 +348,48 @@ fun ManualNativePatchSection(
                             ")",
                     )
                 }
+            }
+
+            if (deferredOpportunities.isNotEmpty()) {
+                val deferredSummary =
+                    deferredOpportunities
+                        .groupingBy { it.category.title }
+                        .eachCount()
+                        .entries
+                        .sortedBy { it.key }
+                        .joinToString(" · ") {
+                            it.key + ": " + it.value
+                        }
+                Text(
+                    "Найдены дополнительные кандидаты без безопасного автопатча: " +
+                        deferredSummary,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                deferredOpportunities
+                    .take(MAX_VISIBLE_DEFERRED_MODIFICATIONS)
+                    .forEach { opportunity ->
+                        Column(
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                            verticalArrangement =
+                                Arrangement.spacedBy(2.dp),
+                        ) {
+                            Text(opportunity.title)
+                            Text(
+                                opportunity.targetDisplayName,
+                                style =
+                                    MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                opportunity.blocker
+                                    ?: opportunity.evidenceSummary,
+                                style =
+                                    MaterialTheme.typography.bodySmall,
+                                color =
+                                    MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
             }
 
             Text(
@@ -1002,3 +1027,4 @@ private fun isManualNativeEligible(
 
 private const val MAX_VISIBLE_TARGETS = 24
 private const val MAX_SUGGESTED_MODIFICATIONS = 24
+private const val MAX_VISIBLE_DEFERRED_MODIFICATIONS = 12
