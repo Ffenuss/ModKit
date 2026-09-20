@@ -52,6 +52,7 @@ import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestAppLauncher
 import io.github.ffenuss.modkit.runtime.RuntimeEvidenceContract
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationPlanner
 import io.github.ffenuss.modkit.runtime.RuntimeEscalationStage
+import io.github.ffenuss.modkit.runtime.RootRuntimeDecisionEngine
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -226,6 +227,26 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                 )
             } catch (_: AnalysisCancelledException) {
                 error = "Non-root runtime-проверка отменена."
+            } catch (failure: Throwable) {
+                error = failure.message ?: failure.javaClass.simpleName
+            } finally {
+                finishOperation()
+            }
+        }
+    }
+
+    fun integrateRootRuntime() {
+        val current = session ?: return
+        val signal = beginOperation("runtime.root-map") ?: return
+        scope.launch {
+            try {
+                session = ExpertLabSessionController.integrateRootRuntime(
+                    context = appContext,
+                    session = current,
+                    cancellation = signal,
+                )
+            } catch (_: AnalysisCancelledException) {
+                error = "Root runtime-проверка отменена."
             } catch (failure: Throwable) {
                 error = failure.message ?: failure.javaClass.simpleName
             } finally {
@@ -1098,6 +1119,54 @@ fun ExpertLabScreen(onBack: () -> Unit) {
                                         "Неоднозначный PID или недоступный maps блокирует подтверждение.",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
+                            }
+                            val rootDecision =
+                                RootRuntimeDecisionEngine.decide(
+                                    plan =
+                                        RuntimeEscalationPlanner.plan(
+                                            current.result,
+                                        ),
+                                    attempts =
+                                        current.result.runtimeStageAttempts,
+                                )
+                            if (rootDecision.evidenceRequiresRoot) {
+                                Text(
+                                    "Root требуется только для оставшихся " +
+                                        "неподтверждённых runtime-целей после " +
+                                        "repacked/non-root попыток.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                rootDecision.reasons
+                                    .take(3)
+                                    .forEach { reason ->
+                                        Text(
+                                            "• " + reason,
+                                            style =
+                                                MaterialTheme.typography.bodySmall,
+                                        )
+                                    }
+                                Button(
+                                    onClick = ::integrateRootRuntime,
+                                    enabled =
+                                        !busy &&
+                                            rootDecision.readyToRunRoot,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text("Запустить root maps capture")
+                                }
+                                if (!rootDecision.readyToRunRoot) {
+                                    rootDecision.blockers
+                                        .take(3)
+                                        .forEach { blocker ->
+                                            Text(
+                                                "• " + blocker.message,
+                                                color =
+                                                    MaterialTheme.colorScheme.error,
+                                                style =
+                                                    MaterialTheme.typography.bodySmall,
+                                            )
+                                        }
+                                }
                             }
                             OutlinedTextField(
                                 value = procMapsText,
