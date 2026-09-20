@@ -81,13 +81,20 @@ object Il2CppPatchTargetBrowser {
     ): Il2CppMethodBinaryBinding? {
         val token = target.metadataToken ?: return null
         val artifact = target.artifact ?: return null
+        val targetImage = imageName(target) ?: return null
         return result.il2cppBinaryBinding
             ?.evidence
             .orEmpty()
             .asSequence()
             .filter { it.libraryEntry == artifact }
             .flatMap { it.bindings.asSequence() }
-            .filter { it.metadataToken == token }
+            .filter {
+                it.metadataToken == token &&
+                    it.imageName.equals(
+                        targetImage,
+                        ignoreCase = true,
+                    )
+            }
             .singleOrNull()
     }
 

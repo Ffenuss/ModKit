@@ -156,6 +156,50 @@ class GameplayModificationFinderTest {
     }
 
     @Test
+    fun hiddenLibraryAliasStillBlocksProjectSuggestion() {
+        val project =
+            target(
+                token = 0x06000008,
+                name = "TakeDamage",
+                offset = 0xa00,
+            )
+        val hiddenAlias =
+            target(
+                token = 0x06000009,
+                name = "SharedDamageThunk",
+                offset = 0xa00,
+                imageName = "Plugin.Runtime.dll",
+            )
+        val result =
+            result(
+                target = project,
+                returnKind = Il2CppNativeReturnKind.VOID,
+                extraTarget = hiddenAlias,
+            )
+        val plan =
+            PatchPreparationPlan(
+                artifactSha256 = SHA,
+                sourceShaVerified = true,
+                preparedAtEpochMs = 1,
+                targets = listOf(prepared(project)),
+                globalBlockers = emptyList(),
+            )
+
+        val opportunity =
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = plan,
+                projectCodeOnly = true,
+            ).single()
+
+        assertFalse(opportunity.selectable)
+        assertTrue(
+            opportunity.blocker.orEmpty()
+                .contains("общий"),
+        )
+    }
+
+    @Test
     fun ammoConsumptionCanBeOfferedAsConcreteSkipMutation() {
         val target = target(
             token = 0x06000007,
@@ -310,8 +354,14 @@ class GameplayModificationFinderTest {
                 methodIndex = (it.metadataToken!! and 0xffff).toInt(),
                 managedIdentity = it.displayName,
                 metadataToken = it.metadataToken,
-                imageName = "Assembly-CSharp.dll",
-                moduleName = "Assembly-CSharp.dll",
+                imageName =
+                    Il2CppPatchTargetBrowser
+                        .imageName(it)
+                        ?: "Assembly-CSharp.dll",
+                moduleName =
+                    Il2CppPatchTargetBrowser
+                        .imageName(it)
+                        ?: "Assembly-CSharp.dll",
                 slotIndex = 0,
                 functionVirtualAddress =
                     0x100000 + requireNotNull(it.fileOffset),
@@ -394,11 +444,12 @@ class GameplayModificationFinderTest {
         token: Long,
         name: String,
         offset: Long,
+        imageName: String = "Assembly-CSharp.dll",
     ) = EvidenceTarget(
         id =
-            "il2cpp:method:Assembly-CSharp.dll:" +
+            "il2cpp:method:" + imageName + ":" +
                 token.toString(16) +
-                ":Assembly-CSharp.dll",
+                ":" + imageName,
         runtimeId = "unity_il2cpp",
         kind = EvidenceTargetKind.METHOD,
         displayName = "Game.Player." + name,

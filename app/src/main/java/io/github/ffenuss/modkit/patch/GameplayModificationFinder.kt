@@ -1,5 +1,6 @@
 package io.github.ffenuss.modkit.patch
 
+import io.github.ffenuss.modkit.analysis.EvidenceTargetKind
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.Il2CppMethodBinaryBinding
 import io.github.ffenuss.modkit.analysis.Il2CppNativeReturnKind
@@ -79,7 +80,11 @@ object GameplayModificationFinder {
                 .asSequence()
                 .flatMap { item ->
                     item.bindings.asSequence().map { binding ->
-                        bindingKey(item.libraryEntry, binding.metadataToken) to binding
+                        bindingKey(
+                            item.libraryEntry,
+                            binding.imageName,
+                            binding.metadataToken,
+                        ) to binding
                     }
                 }
                 .groupBy({ it.first }, { it.second })
@@ -93,15 +98,26 @@ object GameplayModificationFinder {
             }
             .toList()
 
-        val sharedBodyCounts = eligible
-            .asSequence()
-            .mapNotNull { prepared ->
-                val artifact = prepared.target.artifact ?: return@mapNotNull null
-                val offset = prepared.target.fileOffset ?: return@mapNotNull null
-                bodyKey(artifact, offset)
-            }
-            .groupingBy { it }
-            .eachCount()
+        val sharedBodyCounts =
+            result.evidenceGraph
+                ?.targets
+                .orEmpty()
+                .asSequence()
+                .filter {
+                    it.runtimeId == "unity_il2cpp" &&
+                        it.kind == EvidenceTargetKind.METHOD
+                }
+                .mapNotNull { target ->
+                    val artifact =
+                        target.artifact
+                            ?: return@mapNotNull null
+                    val offset =
+                        target.fileOffset
+                            ?: return@mapNotNull null
+                    bodyKey(artifact, offset)
+                }
+                .groupingBy { it }
+                .eachCount()
 
         val ranked = eligible
             .asSequence()
@@ -125,9 +141,17 @@ object GameplayModificationFinder {
                     candidate.terms.any { it in compact }
                 } ?: return@mapNotNull null
 
+                val imageName =
+                    Il2CppPatchTargetBrowser
+                        .imageName(target)
+                        ?: return@mapNotNull null
                 val binding =
                     bindingByArtifactToken[
-                        bindingKey(artifact, token)
+                        bindingKey(
+                            artifact,
+                            imageName,
+                            token,
+                        )
                     ]
                         ?.singleOrNull()
                 val action =
@@ -328,8 +352,12 @@ object GameplayModificationFinder {
 
     private fun bindingKey(
         artifact: String,
+        imageName: String,
         token: Long,
-    ): String = artifact + "#" + token.toString(16)
+    ): String =
+        artifact + "#" +
+            imageName.lowercase() + "#" +
+            token.toString(16)
 
     private fun bodyKey(
         artifact: String,

@@ -140,6 +140,87 @@ class Il2CppPatchTargetBrowserTest {
     }
 
     @Test
+    fun duplicateMethodTokenAcrossImagesKeepsOwningImageBinding() {
+        val project =
+            target(
+                id =
+                    "il2cpp:method:Assembly-CSharp.dll:" +
+                        "6000001:Assembly-CSharp.dll",
+            )
+        val artifact = requireNotNull(project.artifact)
+        fun binding(
+            image: String,
+            kind: Il2CppNativeReturnKind,
+        ) =
+            Il2CppMethodBinaryBinding(
+                methodIndex = 0,
+                managedIdentity = project.displayName,
+                metadataToken = 0x06000001,
+                imageName = image,
+                moduleName = image,
+                slotIndex = 0,
+                functionVirtualAddress = 0x1000,
+                functionFileOffset = 0x200,
+                returnTypeIndex = 7,
+                returnKind = kind,
+                returnTypeProof = "test-proof",
+            )
+        val result =
+            resultWithBinding(
+                target = project,
+                returnKind =
+                    Il2CppNativeReturnKind.BOOLEAN,
+            ).copy(
+                il2cppBinaryBinding =
+                    Il2CppBinaryBindingResult(
+                        evidence =
+                            listOf(
+                                Il2CppBinaryEvidence(
+                                    libraryEntry = artifact,
+                                    machine = 183,
+                                    pointerSize = 8,
+                                    relativeRelocationCount = 0,
+                                    codeRegistrationVirtualAddress = null,
+                                    metadataRegistrationVirtualAddress = 0x3000,
+                                    codegenRegisterVirtualAddress = null,
+                                    moduleArrayDiscovery = "TEST",
+                                    modules = emptyList(),
+                                    bindings =
+                                        listOf(
+                                            binding(
+                                                "Assembly-CSharp.dll",
+                                                Il2CppNativeReturnKind.BOOLEAN,
+                                            ),
+                                            binding(
+                                                "System.Runtime.dll",
+                                                Il2CppNativeReturnKind.VOID,
+                                            ),
+                                        ),
+                                    blockers = emptyList(),
+                                ),
+                            ),
+                        exactBindingCount = 2,
+                        warnings = emptyList(),
+                    ),
+            )
+
+        val resolved =
+            Il2CppPatchTargetBrowser.bindingFor(
+                result,
+                project,
+            )
+
+        assertEquals(
+            Il2CppNativeReturnKind.BOOLEAN,
+            requireNotNull(resolved).returnKind,
+        )
+        assertEquals(
+            "Assembly-CSharp.dll",
+            resolved.imageName,
+        )
+    }
+
+    @Test
     fun nonMethodIdHasNoImageName() {
         val target =
             target(id = "runtime:unity_il2cpp")
