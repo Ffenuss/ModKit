@@ -56,6 +56,41 @@ public final class RuntimeNativeBridge {
         return nativePassiveDlsymRestoreFailed();
     }
 
+    public static boolean startPassiveJniTrace() {
+        if (!ensureLoaded()) return false;
+        return nativeStartPassiveJniTrace();
+    }
+
+    public static boolean stopPassiveJniTrace() {
+        if (!ensureLoaded()) return false;
+        return nativeStopPassiveJniTrace();
+    }
+
+    public static boolean passiveJniTraceActive() {
+        if (!ensureLoaded()) return false;
+        return nativePassiveJniTraceActive();
+    }
+
+    public static int passiveJniOnLoadHookedSlotCount() {
+        if (!ensureLoaded()) return 0;
+        return nativePassiveJniOnLoadHookedSlotCount();
+    }
+
+    public static boolean passiveRegisterNativesHooked() {
+        if (!ensureLoaded()) return false;
+        return nativePassiveRegisterNativesHooked();
+    }
+
+    public static boolean passiveJniIncomplete() {
+        if (!ensureLoaded()) return true;
+        return nativePassiveJniIncomplete();
+    }
+
+    public static boolean passiveJniRestoreFailed() {
+        if (!ensureLoaded()) return true;
+        return nativePassiveJniRestoreFailed();
+    }
+
     public static long resolveLoadedSymbol(
             String moduleName,
             String symbolName
@@ -101,6 +136,20 @@ public final class RuntimeNativeBridge {
     private static native boolean nativePassiveDlsymIncomplete();
 
     private static native boolean nativePassiveDlsymRestoreFailed();
+
+    private static native boolean nativeStartPassiveJniTrace();
+
+    private static native boolean nativeStopPassiveJniTrace();
+
+    private static native boolean nativePassiveJniTraceActive();
+
+    private static native int nativePassiveJniOnLoadHookedSlotCount();
+
+    private static native boolean nativePassiveRegisterNativesHooked();
+
+    private static native boolean nativePassiveJniIncomplete();
+
+    private static native boolean nativePassiveJniRestoreFailed();
 
     private static native long nativeResolveLoadedSymbol(
             String moduleName,
