@@ -85,62 +85,66 @@ object GameplayModificationFinder {
             "Gameplay category result limit is out of bounds."
         }
 
-        val bindingByArtifactImageToken =
-            result.il2cppBinaryBinding
-                ?.evidence
-                .orEmpty()
-                .asSequence()
-                .flatMap { evidence ->
-                    evidence.bindings.asSequence().map { binding ->
-                        bindingKey(
-                            artifact = evidence.libraryEntry,
-                            imageName = binding.imageName,
-                            token = binding.metadataToken,
-                        ) to binding
-                    }
-                }
-                .groupBy({ it.first }, { it.second })
-
-        val eligible =
+        /*
+         * Keep the first pass deliberately cheap. Large IL2CPP titles can have
+         * 100k+ exact targets; building binding/body maps for all of them caused
+         * large transient allocations and UI/export crashes. We first retain
+         * only semantically plausible gameplay/sensitive targets, then build
+         * exact lookup tables for that much smaller candidate set.
+         */
+        val candidates =
             preparation.targets
                 .asSequence()
                 .filter(::isEligible)
-                .filter { prepared ->
-                    !projectCodeOnly ||
-                        Il2CppPatchTargetBrowser
-                            .isAssemblyCSharp(prepared.target) ||
-                        isSensitiveTarget(prepared.target)
-                }
-                .filterNot { prepared ->
-                    isInfrastructureOrGenerated(prepared.target) &&
-                        !isSensitiveTarget(prepared.target)
-                }
-                .toList()
-
-        val sharedBodyCounts =
-            result.evidenceGraph
-                ?.targets
-                .orEmpty()
-                .asSequence()
-                .filter {
-                    it.runtimeId == "unity_il2cpp" &&
-                        it.kind == EvidenceTargetKind.METHOD
-                }
-                .mapNotNull { target ->
-                    val artifact =
-                        target.artifact ?: return@mapNotNull null
-                    val offset =
-                        target.fileOffset ?: return@mapNotNull null
-                    bodyKey(artifact, offset)
-                }
-                .groupingBy { it }
-                .eachCount()
-
-        val ranked =
-            eligible
-                .asSequence()
                 .mapNotNull { prepared ->
                     val target = prepared.target
+                    val memberName =
+                        target.memberName ?: return@mapNotNull null
+                    val methodTokens =
+                        semanticMethodTokens(memberName)
+                    if (methodTokens.isEmpty()) {
+                        return@mapNotNull null
+                    }
+
+                    val sensitiveKind =
+                        sensitiveSurfaceKind(
+                            target = target,
+                            methodTokens = methodTokens,
+                        )
+                    if (
+                        projectCodeOnly &&
+                        !Il2CppPatchTargetBrowser
+                            .isAssemblyCSharp(target) &&
+                        sensitiveKind == null
+                    ) {
+                        return@mapNotNull null
+                    }
+                    if (
+                        isInfrastructureOrGenerated(target) &&
+                        sensitiveKind == null
+                    ) {
+                        return@mapNotNull null
+                    }
+
+                    val category =
+                        if (sensitiveKind == null) {
+                            classify(methodTokens)
+                                ?: return@mapNotNull null
+                        } else {
+                            GameplayModificationCategory
+                                .SENSITIVE_SURFACE
+                        }
+                    if (
+                        sensitiveKind == null &&
+                        !isSemanticallyPlausible(
+                            target = target,
+                            category = category,
+                            methodTokens = methodTokens,
+                        )
+                    ) {
+                        return@mapNotNull null
+                    }
+
                     val artifact =
                         target.artifact ?: return@mapNotNull null
                     val token =
@@ -152,42 +156,119 @@ object GameplayModificationFinder {
                     val imageName =
                         Il2CppPatchTargetBrowser.imageName(target)
                             ?: return@mapNotNull null
+
+                    MethodCandidate(
+                        target = target,
+                        artifact = artifact,
+                        token = token,
+                        abi = abi,
+                        offset = offset,
+                        imageName = imageName,
+                        methodTokens = methodTokens,
+                        category = category,
+                        sensitiveKind = sensitiveKind,
+                    )
+                }
+                .toList()
+
+        val candidateBindingKeys =
+            candidates
+                .asSequence()
+                .map {
+                    bindingKey(
+                        artifact = it.artifact,
+                        imageName = it.imageName,
+                        token = it.token,
+                    )
+                }
+                .toHashSet()
+
+        val bindingByArtifactImageToken =
+            HashMap<String, MutableList<Il2CppMethodBinaryBinding>>()
+        result.il2cppBinaryBinding
+            ?.evidence
+            .orEmpty()
+            .forEach { evidence ->
+                evidence.bindings.forEach { binding ->
+                    val key =
+                        bindingKey(
+                            artifact = evidence.libraryEntry,
+                            imageName = binding.imageName,
+                            token = binding.metadataToken,
+                        )
+                    if (key in candidateBindingKeys) {
+                        bindingByArtifactImageToken
+                            .getOrPut(key) { mutableListOf() }
+                            .add(binding)
+                    }
+                }
+            }
+
+        val candidateBodyKeys =
+            candidates
+                .asSequence()
+                .map {
+                    bodyKey(
+                        artifact = it.artifact,
+                        offset = it.offset,
+                    )
+                }
+                .toHashSet()
+        val sharedBodyCounts =
+            HashMap<String, Int>()
+        result.evidenceGraph
+            ?.targets
+            .orEmpty()
+            .forEach { target ->
+                if (
+                    target.runtimeId != "unity_il2cpp" ||
+                    target.kind != EvidenceTargetKind.METHOD
+                ) {
+                    return@forEach
+                }
+                val artifact =
+                    target.artifact ?: return@forEach
+                val offset =
+                    target.fileOffset ?: return@forEach
+                val key = bodyKey(artifact, offset)
+                if (key in candidateBodyKeys) {
+                    sharedBodyCounts[key] =
+                        (sharedBodyCounts[key] ?: 0) + 1
+                }
+            }
+
+        val ranked =
+            candidates
+                .asSequence()
+                .mapNotNull { candidate ->
+                    val target = candidate.target
                     val memberName =
                         target.memberName ?: return@mapNotNull null
-                    val methodTokens =
-                        semanticMethodTokens(memberName)
-                    if (methodTokens.isEmpty()) {
-                        return@mapNotNull null
-                    }
-                    val sensitiveKind =
-                        sensitiveSurfaceKind(
-                            target = target,
-                            methodTokens = methodTokens,
-                        )
-                    if (sensitiveKind != null) {
-                        val binding =
-                            bindingByArtifactImageToken[
-                                bindingKey(
-                                    artifact = artifact,
-                                    imageName = imageName,
-                                    token = token,
-                                )
-                            ]
-                                ?.singleOrNull()
-                        val returnKind =
-                            binding?.returnKind
-                                ?: Il2CppNativeReturnKind.UNKNOWN
+                    val binding =
+                        bindingByArtifactImageToken[
+                            bindingKey(
+                                artifact = candidate.artifact,
+                                imageName = candidate.imageName,
+                                token = candidate.token,
+                            )
+                        ]
+                            ?.singleOrNull()
+                    val returnKind =
+                        binding?.returnKind
+                            ?: Il2CppNativeReturnKind.UNKNOWN
+
+                    if (candidate.sensitiveKind != null) {
                         return@mapNotNull GameplayModificationOpportunity(
                             id =
                                 "sensitive:" +
-                                    sensitiveKind.lowercase() + ":" +
+                                    candidate.sensitiveKind.lowercase() + ":" +
                                     target.id,
                             category =
                                 GameplayModificationCategory
                                     .SENSITIVE_SURFACE,
                             title =
                                 "Чувствительная поверхность: " +
-                                    sensitiveKind,
+                                    candidate.sensitiveKind,
                             targetId = target.id,
                             targetDisplayName =
                                 target.displayName,
@@ -210,35 +291,12 @@ object GameplayModificationFinder {
                         )
                     }
 
-                    val category =
-                        classify(methodTokens)
-                            ?: return@mapNotNull null
-                    if (
-                        !isSemanticallyPlausible(
-                            target = target,
-                            category = category,
-                            methodTokens = methodTokens,
-                        )
-                    ) {
-                        return@mapNotNull null
-                    }
-                    val binding =
-                        bindingByArtifactImageToken[
-                            bindingKey(
-                                artifact = artifact,
-                                imageName = imageName,
-                                token = token,
-                            )
-                        ]
-                            ?.singleOrNull()
-                    val returnKind =
-                        binding?.returnKind
-                            ?: Il2CppNativeReturnKind.UNKNOWN
+                    val category = candidate.category
                     val action =
                         resolveAction(
                             target = target,
                             category = category,
-                            methodTokens = methodTokens,
+                            methodTokens = candidate.methodTokens,
                             returnKind = returnKind,
                         )
                     val numericCandidate =
@@ -257,13 +315,16 @@ object GameplayModificationFinder {
 
                     val preset =
                         presetForAction(
-                            abi = abi,
+                            abi = candidate.abi,
                             action = action,
                             returnKind = returnKind,
                         )
                     val sharedCount =
                         sharedBodyCounts[
-                            bodyKey(artifact, offset)
+                            bodyKey(
+                                candidate.artifact,
+                                candidate.offset,
+                            )
                         ] ?: 0
 
                     val blocker =
@@ -356,6 +417,18 @@ object GameplayModificationFinder {
             .take(limit)
             .toList()
     }
+
+    private data class MethodCandidate(
+        val target: EvidenceTarget,
+        val artifact: String,
+        val token: Long,
+        val abi: String,
+        val offset: Long,
+        val imageName: String,
+        val methodTokens: List<String>,
+        val category: GameplayModificationCategory,
+        val sensitiveKind: String?,
+    )
 
     private fun isEligible(
         prepared: PreparedTarget,
