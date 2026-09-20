@@ -56,10 +56,27 @@ class Il2CppCodeGenScannerTest {
         assertBinding(result)
     }
 
+    @Test
+    fun strippedBinaryRecoversCodegenPointersThroughAndroidAps2() {
+        val result = scanFixture(
+            includeCodeRegistrationSymbol = false,
+            includeAndroidPackedRelocations = true,
+        )
+
+        assertNull(result.codeRegistrationVirtualAddress)
+        assertTrue(
+            result.moduleArrayDiscovery.orEmpty().startsWith(
+                "BOUNDED_IMAGE_SET_SCAN@",
+            ),
+        )
+        assertBinding(result)
+    }
+
     private fun scanFixture(
         includeCodeRegistrationSymbol: Boolean,
         includeOutsideFileNobits: Boolean = false,
         includeRelativeRelocations: Boolean = false,
+        includeAndroidPackedRelocations: Boolean = false,
     ): Il2CppBinaryEvidence {
         val file = Files.createTempFile("modkit-codegen", ".so").toFile()
         file.writeBytes(
@@ -67,6 +84,7 @@ class Il2CppCodeGenScannerTest {
                 includeCodeRegistrationSymbol,
                 includeOutsideFileNobits,
                 includeRelativeRelocations,
+                includeAndroidPackedRelocations,
             ),
         )
         try {
@@ -145,7 +163,12 @@ class Il2CppCodeGenScannerTest {
         includeCodeRegistrationSymbol: Boolean,
         includeOutsideFileNobits: Boolean,
         includeRelativeRelocations: Boolean,
+        includeAndroidPackedRelocations: Boolean,
     ): ByteArray {
+        require(
+            !(includeRelativeRelocations &&
+                includeAndroidPackedRelocations),
+        )
         val bytes = ByteArray(0x2600)
         val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
 
@@ -169,7 +192,16 @@ class Il2CppCodeGenScannerTest {
         val sectionCount =
             3 +
                 (if (includeOutsideFileNobits) 1 else 0) +
-                (if (includeRelativeRelocations) 1 else 0)
+                (
+                    if (
+                        includeRelativeRelocations ||
+                        includeAndroidPackedRelocations
+                    ) {
+                        1
+                    } else {
+                        0
+                    }
+                    )
         buffer.putShort(60, sectionCount.toShort())
         buffer.putShort(62, 0.toShort())
 
@@ -227,13 +259,41 @@ class Il2CppCodeGenScannerTest {
             buffer.putLong(bssSection + 32, 0x2000)
             nextSectionIndex++
         }
-        if (includeRelativeRelocations) {
-            val relaSection =
+        val aps2 =
+            if (includeAndroidPackedRelocations) {
+                androidPackedRelocations()
+            } else {
+                null
+            }
+        if (
+            includeRelativeRelocations ||
+            includeAndroidPackedRelocations
+        ) {
+            val relocationSection =
                 0x2200 + nextSectionIndex * 64
-            buffer.putInt(relaSection + 4, 4)
-            buffer.putLong(relaSection + 24, 0x1800)
-            buffer.putLong(relaSection + 32, 5L * 24L)
-            buffer.putLong(relaSection + 56, 24)
+            buffer.putInt(
+                relocationSection + 4,
+                if (includeAndroidPackedRelocations) {
+                    0x60000002
+                } else {
+                    4
+                },
+            )
+            buffer.putLong(
+                relocationSection + 24,
+                0x1800,
+            )
+            buffer.putLong(
+                relocationSection + 32,
+                aps2?.size?.toLong() ?: 5L * 24L,
+            )
+            if (includeRelativeRelocations) {
+                buffer.putLong(
+                    relocationSection + 56,
+                    24,
+                )
+            }
+            aps2?.copyInto(bytes, 0x1800)
         }
 
         fun symbol(index: Int, nameOffset: Int, value: Long, typeInfo: Int = 0x11) {
@@ -257,25 +317,30 @@ class Il2CppCodeGenScannerTest {
         // CodeRegistration candidate pair #0 at VA 0x200100.
         buffer.putInt(0x1100, 1)
 
-        if (includeRelativeRelocations) {
-            fun rela(
-                index: Int,
-                targetVa: Long,
-                addendVa: Long,
-            ) {
-                val base = 0x1800 + index * 24
-                buffer.putLong(base, targetVa)
-                buffer.putLong(base + 8, 1027L)
-                buffer.putLong(base + 16, addendVa)
-            }
+        if (
+            includeRelativeRelocations ||
+            includeAndroidPackedRelocations
+        ) {
+            if (includeRelativeRelocations) {
+                fun rela(
+                    index: Int,
+                    targetVa: Long,
+                    addendVa: Long,
+                ) {
+                    val base = 0x1800 + index * 24
+                    buffer.putLong(base, targetVa)
+                    buffer.putLong(base + 8, 1027L)
+                    buffer.putLong(base + 16, addendVa)
+                }
 
-            // Android/AArch64 ET_DYN stores these local pointers through
-            // R_AARCH64_RELATIVE relocations rather than absolute file bytes.
-            rela(0, 0x200108, 0x200200)
-            rela(1, 0x200200, 0x200250)
-            rela(2, 0x200250, 0x200300)
-            rela(3, 0x200260, 0x200380)
-            rela(4, 0x200380, 0x100900)
+                // Android/AArch64 ET_DYN stores these local pointers through
+                // R_AARCH64_RELATIVE relocations rather than absolute bytes.
+                rela(0, 0x200108, 0x200200)
+                rela(1, 0x200200, 0x200250)
+                rela(2, 0x200250, 0x200300)
+                rela(3, 0x200260, 0x200380)
+                rela(4, 0x200380, 0x100900)
+            }
         } else {
             buffer.putLong(0x1108, 0x200200)
             buffer.putLong(0x1200, 0x200250)
@@ -298,6 +363,66 @@ class Il2CppCodeGenScannerTest {
         bytes[0x903] = 0xD6.toByte()
 
         return bytes
+    }
+
+    private fun androidPackedRelocations(): ByteArray {
+        val out = ArrayList<Byte>()
+
+        fun byte(value: Int) {
+            out += value.toByte()
+        }
+
+        fun sleb(value: Long) {
+            var remaining = value
+            var more = true
+            while (more) {
+                var current =
+                    (remaining and 0x7f).toInt()
+                val signBit = current and 0x40 != 0
+                remaining = remaining shr 7
+                more = !(
+                    (remaining == 0L && !signBit) ||
+                        (remaining == -1L && signBit)
+                    )
+                if (more) current = current or 0x80
+                byte(current)
+            }
+        }
+
+        "APS2".toByteArray(Charsets.US_ASCII).forEach {
+            out += it
+        }
+        sleb(5)
+        sleb(0x200100)
+        sleb(5)
+        sleb(0x09)
+        sleb(1027)
+
+        val offsets =
+            longArrayOf(
+                0x200108,
+                0x200200,
+                0x200250,
+                0x200260,
+                0x200380,
+            )
+        val addends =
+            longArrayOf(
+                0x200200,
+                0x200250,
+                0x200300,
+                0x200380,
+                0x100900,
+            )
+        var previousOffset = 0x200100L
+        var previousAddend = 0L
+        offsets.indices.forEach { index ->
+            sleb(offsets[index] - previousOffset)
+            sleb(addends[index] - previousAddend)
+            previousOffset = offsets[index]
+            previousAddend = addends[index]
+        }
+        return ByteArray(out.size) { out[it] }
     }
 
     private fun neverCancelled() = object : CancellationSignal {
