@@ -575,7 +575,6 @@ object RepackedRuntimeBuildCoordinator {
             }
 
             val installability = BuiltPackageVerifier.verify(
-                context = context,
                 files = signedFiles,
             )
             require(installability.verified) {
