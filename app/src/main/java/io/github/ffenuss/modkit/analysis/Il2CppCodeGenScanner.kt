@@ -29,6 +29,7 @@ data class Il2CppBinaryEvidence(
     val libraryEntry: String,
     val machine: Int,
     val pointerSize: Int,
+    val relativeRelocationCount: Int,
     val codeRegistrationVirtualAddress: Long?,
     val metadataRegistrationVirtualAddress: Long?,
     val codegenRegisterVirtualAddress: Long?,
@@ -127,6 +128,8 @@ object Il2CppCodeGenScanner {
                 libraryEntry = libraryEntry,
                 machine = image.machine,
                 pointerSize = image.pointerSize,
+                relativeRelocationCount =
+                    image.relativeRelocationCount,
                 codeRegistrationVirtualAddress = codeRegistration,
                 metadataRegistrationVirtualAddress = metadataRegistration,
                 codegenRegisterVirtualAddress = codegenRegister,
