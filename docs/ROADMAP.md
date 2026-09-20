@@ -150,9 +150,10 @@ Status: **ACTIVE**
   - [x] Passive repacked dlsym producer patches/restores app-owned PLT/GOT slots and validates positive observations
   - [x] Passive dlsym session/export is bounded, signer/PID/session/SHA bound and usable from Expert Lab
   - [x] Passive RegisterNatives capture uses the JNI function table, records only successful app-owned registrations, and is signer/PID/session/SHA bound
-  - [x] ART JNI_OnLoad symbol lookup, when the runtime exposes a hookable dlsym PLT slot, is captured only as proof-neutral DLSYM presence; missing lookup-hook coverage is incomplete diagnostics, not negative proof
-  - [ ] Concrete passive JNI_OnLoad invocation executor without lookup-to-invocation proof escalation
-  - [ ] Full repacked trace capability remains gated until JNI_OnLoad invocation capture is real
+  - [x] ART JNI_OnLoad symbol lookup, when the runtime exposes a hookable dlsym PLT slot, is captured as proof-neutral DLSYM presence; missing lookup-hook coverage is incomplete diagnostics, not negative proof
+  - [x] Passive JNI_OnLoad invocation executor uses bounded per-lookup wrappers and emits JNI_ON_LOAD only after the original JNI_OnLoad actually returns
+  - [x] JNI_OnLoad invocation provenance is bound through provider/status/export/session validation and remains proof-neutral with no method-execution escalation
+  - [x] Full repacked native trace capability is registered only after passive dlsym, RegisterNatives and JNI_OnLoad invocation executors are concrete
   - [ ] Non-root/root trace capture executors
 - [ ] Root runtime only for evidence that remains unresolved after non-root stages
   - [x] Root decision engine requires recorded lower-privilege attempts
