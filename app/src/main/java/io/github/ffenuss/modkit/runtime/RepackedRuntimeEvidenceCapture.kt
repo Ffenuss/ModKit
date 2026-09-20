@@ -537,9 +537,9 @@ class AndroidRepackedRuntimeProbeTransport(
                 result.getBoolean("producerReady", false),
             producerActive =
                 result.getBoolean("producerActive", false),
-            jniOnLoadHookedSlotCount =
+            jniOnLoadLookupHookedSlotCount =
                 result.getInt(
-                    "jniOnLoadHookedSlotCount",
+                    "jniOnLoadLookupHookedSlotCount",
                     -1,
                 ),
             registerNativesHooked =
