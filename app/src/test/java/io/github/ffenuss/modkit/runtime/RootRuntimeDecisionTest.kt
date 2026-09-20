@@ -7,6 +7,11 @@ import org.junit.Test
 
 class RootRuntimeDecisionTest {
     @Test
+    fun privilegedMapsExecutorIsRegistered() {
+        assertTrue(RootRuntimeCapabilityRegistry.executorRegistered)
+    }
+
+    @Test
     fun implementationGapNeverJustifiesRoot() {
         val decision = RootRuntimeDecisionEngine.decide(
             plan = plan(),
