@@ -543,19 +543,31 @@ fun AnalysisScreen(
 private fun il2CppBindingBlockerLabel(
     blocker: String,
 ): String =
-    when (blocker) {
-        "METADATA_IMAGE_MAP_UNAVAILABLE" ->
+    when {
+        blocker.startsWith(
+            "AMBIGUOUS_RELOCATED_CODEGEN_MODULES:",
+        ) ->
+            "Несколько relocation-кандидатов подходят для " +
+                blocker.substringAfter(':') +
+                " IL2CPP image; автоматический выбор запрещён."
+        blocker.startsWith(
+            "PARTIAL_RELOCATED_CODEGEN_MODULE_SET:",
+        ) ->
+            "Точно восстановлена только часть CodeGenModule: " +
+                blocker.substringAfter(':') +
+                ". Неподтверждённые images не используются как доказательство."
+        blocker == "METADATA_IMAGE_MAP_UNAVAILABLE" ->
             "В metadata нет подтверждённой карты IL2CPP images."
-        "CODE_REGISTRATION_SYMBOL_UNRESOLVED" ->
+        blocker == "CODE_REGISTRATION_SYMBOL_UNRESOLVED" ->
             "Экспорт CodeRegistration не найден; используется статический fallback."
         "CODEGEN_MODULE_ARRAY_UNRESOLVED",
-        "STRIPPED_CODEGEN_MODULE_ARRAY_UNRESOLVED" ->
+        blocker == "STRIPPED_CODEGEN_MODULE_ARRAY_UNRESOLVED" ->
             "Не удалось однозначно восстановить таблицу CodeGenModule из ELF."
-        "AMBIGUOUS_CODEGEN_MODULE_ARRAY" ->
+        blocker == "AMBIGUOUS_CODEGEN_MODULE_ARRAY" ->
             "Найдено несколько несовместимых кандидатов CodeGenModule; автоматический выбор запрещён."
-        "CODEGEN_FALLBACK_SCAN_LIMIT_REACHED" ->
+        blocker == "CODEGEN_FALLBACK_SCAN_LIMIT_REACHED" ->
             "Достигнут безопасный лимит статического поиска CodeGenModule."
-        "NO_METHOD_TOKEN_SLOT_BINDINGS" ->
+        blocker == "NO_METHOD_TOKEN_SLOT_BINDINGS" ->
             "CodeGenModule найден, но точное token → executable pointer сопоставление не доказано."
         else -> "Статическая IL2CPP-привязка: " + blocker
     }
