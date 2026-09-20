@@ -252,15 +252,15 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         result.putLong("startedAtEpochMs", snapshot.startedAtEpochMs);
         result.putLong("stoppedAtEpochMs", snapshot.stoppedAtEpochMs);
         result.putInt("traceBytes", snapshot.bytes.length);
-        result.putString("producerKind", "ART_DLSYM_JNI_TABLE");
+        result.putString("producerKind", "ART_JNI_ONLOAD_LOOKUP_JNI_TABLE");
         result.putBoolean("producerReady", producerReady);
         result.putBoolean(
                 "producerActive",
                 RuntimeNativeBridge.passiveJniTraceActive()
         );
         result.putInt(
-                "jniOnLoadHookedSlotCount",
-                RuntimeNativeBridge.passiveJniOnLoadHookedSlotCount()
+                "jniOnLoadLookupHookedSlotCount",
+                RuntimeNativeBridge.passiveJniOnLoadLookupHookedSlotCount()
         );
         result.putBoolean(
                 "registerNativesHooked",
@@ -504,9 +504,9 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
                     "traceSha256=" + sha256(trace) + "\n" +
                     "traceBytes=" + trace.length + "\n" +
                     "truncated=" + snapshot.truncated + "\n" +
-                    "producerKind=ART_DLSYM_JNI_TABLE\n" +
-                    "jniOnLoadHookedSlotCount=" +
-                    producer.jniOnLoadHookedSlotCount + "\n" +
+                    "producerKind=ART_JNI_ONLOAD_LOOKUP_JNI_TABLE\n" +
+                    "jniOnLoadLookupHookedSlotCount=" +
+                    producer.jniOnLoadLookupHookedSlotCount + "\n" +
                     "registerNativesHooked=" +
                     producer.registerNativesHooked + "\n" +
                     "producerIncomplete=" +
@@ -523,18 +523,18 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
     }
 
     private static final class JniProducerSnapshot {
-        final int jniOnLoadHookedSlotCount;
+        final int jniOnLoadLookupHookedSlotCount;
         final boolean registerNativesHooked;
         final boolean incomplete;
         final boolean restoreFailed;
 
         JniProducerSnapshot(
-                int jniOnLoadHookedSlotCount,
+                int jniOnLoadLookupHookedSlotCount,
                 boolean registerNativesHooked,
                 boolean incomplete,
                 boolean restoreFailed
         ) {
-            this.jniOnLoadHookedSlotCount = jniOnLoadHookedSlotCount;
+            this.jniOnLoadLookupHookedSlotCount = jniOnLoadLookupHookedSlotCount;
             this.registerNativesHooked = registerNativesHooked;
             this.incomplete = incomplete;
             this.restoreFailed = restoreFailed;
@@ -544,7 +544,7 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
             boolean restoreFailed =
                     RuntimeNativeBridge.passiveJniRestoreFailed() || !restored;
             return new JniProducerSnapshot(
-                    RuntimeNativeBridge.passiveJniOnLoadHookedSlotCount(),
+                    RuntimeNativeBridge.passiveJniOnLoadLookupHookedSlotCount(),
                     RuntimeNativeBridge.passiveRegisterNativesHooked(),
                     RuntimeNativeBridge.passiveJniIncomplete(),
                     restoreFailed
