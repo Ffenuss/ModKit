@@ -190,6 +190,36 @@ fun AutoModScreen(
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }
+
+                    val runtimes =
+                        analysisResult.index.runtimeProfiles
+                    if (runtimes.isNotEmpty()) {
+                        Text(
+                            "Найденные технологии: " +
+                                runtimes.joinToString {
+                                    it.title
+                                },
+                            style =
+                                MaterialTheme.typography
+                                    .bodySmall,
+                        )
+                    }
+                    val hasIl2Cpp =
+                        runtimes.any {
+                            it.runtimeId ==
+                                "unity_il2cpp"
+                        }
+                    if (!hasIl2Cpp) {
+                        Text(
+                            "Для этой цели Unity/IL2CPP не подтверждён. " +
+                                "Текущий native Patch Lab не должен использоваться " +
+                                "как универсальный редактор Android-приложений: " +
+                                "DEX/обычный NDK требуют отдельного mutation executor.",
+                            style =
+                                MaterialTheme.typography
+                                    .bodySmall,
+                        )
+                    }
                 }
             }
         }
