@@ -37,6 +37,31 @@ data class RepackedRuntimeNativeLookupReply(
     val resolvedRuntimeAddress: Long,
 )
 
+enum class RepackedRuntimeTestMenuItemMode {
+    PATCH,
+    INFO,
+}
+
+data class RepackedRuntimeTestMenuItem(
+    val id: String,
+    val label: String,
+    val detail: String,
+    val mode: RepackedRuntimeTestMenuItemMode,
+    val moduleName: String = "",
+    val binaryVirtualAddress: Long = 0L,
+    val originalHex: String = "",
+    val replacementHex: String = "",
+)
+
+data class RepackedRuntimeTestMenuStatus(
+    val schemaVersion: Int,
+    val packageName: String,
+    val pid: Int,
+    val itemCount: Int,
+    val patchItemCount: Int,
+    val infoItemCount: Int,
+)
+
 data class RepackedRuntimeNativeTraceStatus(
     val schemaVersion: Int,
     val packageName: String,
@@ -108,6 +133,22 @@ interface RepackedRuntimeProbeTransport {
         cancellation: CancellationSignal,
         maxBytes: Int,
     ): ByteArray
+}
+
+interface RepackedRuntimeTestMenuTransport :
+    RepackedRuntimeProbeTransport {
+    fun configureTestMenu(
+        authority: String,
+        items: List<RepackedRuntimeTestMenuItem>,
+    ): RepackedRuntimeTestMenuStatus
+
+    fun testMenuStatus(
+        authority: String,
+    ): RepackedRuntimeTestMenuStatus
+
+    fun clearTestMenu(
+        authority: String,
+    ): RepackedRuntimeTestMenuStatus
 }
 
 interface RepackedRuntimeNativeLookupTransport :
@@ -188,7 +229,8 @@ object RepackedRuntimeProbeIdentityVerifier {
 class AndroidRepackedRuntimeProbeTransport(
     private val context: Context,
 ) : RepackedRuntimePassiveTraceTransport,
-    RepackedRuntimePassiveJniTraceTransport {
+    RepackedRuntimePassiveJniTraceTransport,
+    RepackedRuntimeTestMenuTransport {
     override fun inspectInstalled(
         packageName: String,
         authority: String,
@@ -271,6 +313,87 @@ class AndroidRepackedRuntimeProbeTransport(
             )
         }
     }
+
+    override fun configureTestMenu(
+        authority: String,
+        items: List<RepackedRuntimeTestMenuItem>,
+    ): RepackedRuntimeTestMenuStatus {
+        require(items.size <= 64) {
+            "Runtime test menu supports at most 64 items."
+        }
+        require(items.map { it.id }.distinct().size == items.size) {
+            "Runtime test menu item ids must be unique."
+        }
+        val uri = Uri.parse(
+            "content://" + authority + "/" +
+                RuntimeEvidenceProviderContract.PATH_EVIDENCE,
+        )
+        val extras =
+            Bundle().apply {
+                putStringArrayList(
+                    "ids",
+                    ArrayList(items.map { it.id }),
+                )
+                putStringArrayList(
+                    "labels",
+                    ArrayList(items.map { it.label }),
+                )
+                putStringArrayList(
+                    "details",
+                    ArrayList(items.map { it.detail }),
+                )
+                putStringArrayList(
+                    "modes",
+                    ArrayList(items.map { it.mode.name }),
+                )
+                putStringArrayList(
+                    "modules",
+                    ArrayList(items.map { it.moduleName }),
+                )
+                putStringArrayList(
+                    "originalHex",
+                    ArrayList(items.map { it.originalHex }),
+                )
+                putStringArrayList(
+                    "replacementHex",
+                    ArrayList(items.map { it.replacementHex }),
+                )
+                putLongArray(
+                    "binaryVirtualAddresses",
+                    items.map {
+                        it.binaryVirtualAddress
+                    }.toLongArray(),
+                )
+            }
+        val result =
+            requireNotNull(
+                context.contentResolver.call(
+                    uri,
+                    "configureTestMenu",
+                    null,
+                    extras,
+                ),
+            ) {
+                "Runtime test menu configuration returned no result."
+            }
+        return parseTestMenuStatus(result)
+    }
+
+    override fun testMenuStatus(
+        authority: String,
+    ): RepackedRuntimeTestMenuStatus =
+        testMenuControl(
+            authority = authority,
+            method = "testMenuStatus",
+        )
+
+    override fun clearTestMenu(
+        authority: String,
+    ): RepackedRuntimeTestMenuStatus =
+        testMenuControl(
+            authority = authority,
+            method = "clearTestMenu",
+        )
 
     override fun resolveLoadedSymbol(
         authority: String,
@@ -419,6 +542,45 @@ class AndroidRepackedRuntimeProbeTransport(
             )
         }
     }
+
+    private fun testMenuControl(
+        authority: String,
+        method: String,
+    ): RepackedRuntimeTestMenuStatus {
+        val uri = Uri.parse(
+            "content://" + authority + "/" +
+                RuntimeEvidenceProviderContract.PATH_EVIDENCE,
+        )
+        val result =
+            requireNotNull(
+                context.contentResolver.call(
+                    uri,
+                    method,
+                    null,
+                    null,
+                ),
+            ) {
+                "Runtime test menu control returned no result."
+            }
+        return parseTestMenuStatus(result)
+    }
+
+    private fun parseTestMenuStatus(
+        result: Bundle,
+    ): RepackedRuntimeTestMenuStatus =
+        RepackedRuntimeTestMenuStatus(
+            schemaVersion =
+                result.getInt("schemaVersion", -1),
+            packageName =
+                result.getString("packageName").orEmpty(),
+            pid = result.getInt("pid", -1),
+            itemCount =
+                result.getInt("itemCount", -1),
+            patchItemCount =
+                result.getInt("patchItemCount", -1),
+            infoItemCount =
+                result.getInt("infoItemCount", -1),
+        )
 
     private fun nativeTraceControl(
         authority: String,
