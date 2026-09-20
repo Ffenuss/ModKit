@@ -72,6 +72,48 @@ object Il2CppPatchTargetBrowser {
         }
     }
 
+    fun presetAdvice(
+        target: EvidenceTarget,
+    ): String {
+        val name =
+            target.memberName.orEmpty()
+        return when {
+            name in setOf(
+                "Awake",
+                "Start",
+                "Update",
+                "LateUpdate",
+                "FixedUpdate",
+                "OnEnable",
+                "OnDisable",
+                "OnDestroy",
+            ) ->
+                "Unity lifecycle-методы по соглашению обычно void. " +
+                    "«Сразу вернуть (void)» пропустит тело метода."
+
+            name.startsWith("set_") ->
+                "Setter обычно не возвращает полезное значение. " +
+                    "Для пропуска записи чаще подходит «Сразу вернуть (void)», " +
+                    "но это подсказка по соглашению, не доказательство сигнатуры."
+
+            name.startsWith("On") ->
+                "По имени это callback/обработчик. Такие методы часто void. " +
+                    "Если сигнатура неизвестна, не выбирайте 0/1 только по названию."
+
+            name.startsWith("get_") ||
+                name.startsWith("Is") ||
+                name.startsWith("Has") ||
+                name.startsWith("Can") ->
+                "Метод похож на возврат значения. 0 обычно означает false/0/null, " +
+                    "1 — true/1 для bool/int-подобного результата. " +
+                    "Точный return type здесь не подтверждён."
+
+            else ->
+                "Тип возврата не подтверждён. «void», «0» и «1» имеют разную " +
+                    "семантику; выбирайте шаблон только когда понимаете контракт метода."
+        }
+    }
+
     fun methodHint(
         target: EvidenceTarget,
     ): String {
