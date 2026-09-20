@@ -246,6 +246,17 @@ fun AutoModScreen(
         }
 
         plan?.let { prepared ->
+            val manualEligibleCount = prepared.targets.count { candidate ->
+                (
+                    candidate.status ==
+                        PreparationTargetStatus.CONFIRMED_NEEDS_CHANGE ||
+                        candidate.status ==
+                        PreparationTargetStatus.READY
+                    ) &&
+                    candidate.target.runtimeId == "unity_il2cpp" &&
+                    candidate.target.fileOffset != null &&
+                    candidate.target.abi != null
+            }
             item {
                 Card(Modifier.fillMaxWidth()) {
                     val summary = prepared.summary
@@ -302,16 +313,31 @@ fun AutoModScreen(
             }
 
             item {
-                OutlinedButton(
-                    onClick = { showManualPatch = !showManualPatch },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
+                if (manualEligibleCount > 0) {
+                    Button(
+                        onClick = { showManualPatch = !showManualPatch },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (showManualPatch) {
+                                "Скрыть ручной Patch Lab"
+                            } else {
+                                "Выбрать подтверждённый IL2CPP-метод (" +
+                                    manualEligibleCount +
+                                    ")"
+                            },
+                        )
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { showManualPatch = !showManualPatch },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Ручной Patch Lab")
+                    }
                     Text(
-                        if (showManualPatch) {
-                            "Скрыть ручной Patch Lab"
-                        } else {
-                            "Ручной Patch Lab"
-                        },
+                        "Подтверждённых IL2CPP-методов с точным file offset пока нет.",
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
