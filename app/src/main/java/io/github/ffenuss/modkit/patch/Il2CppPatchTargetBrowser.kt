@@ -109,8 +109,12 @@ object Il2CppPatchTargetBrowser {
             "целочисленный"
         Il2CppNativeReturnKind.POINTER_OR_REFERENCE ->
             "ссылка / указатель"
+        Il2CppNativeReturnKind.FLOAT32 ->
+            "float (R4)"
+        Il2CppNativeReturnKind.FLOAT64 ->
+            "double (R8)"
         Il2CppNativeReturnKind.FLOATING_POINT ->
-            "float / double"
+            "float / double (legacy, ширина не доказана)"
         Il2CppNativeReturnKind.VALUE_TYPE ->
             "value type / структура"
         Il2CppNativeReturnKind.UNKNOWN ->
@@ -132,8 +136,12 @@ object Il2CppPatchTargetBrowser {
                 "ModKit доказал целочисленный return: доступны возврат 0 или 1."
             Il2CppNativeReturnKind.POINTER_OR_REFERENCE ->
                 "ModKit доказал ссылочный/указательный return: безопасный готовый вариант — вернуть null."
+            Il2CppNativeReturnKind.FLOAT32 ->
+                "ModKit доказал IL2CPP float (R4): доступны ARM64 presets 0.0/0.5/1/2/3/5."
+            Il2CppNativeReturnKind.FLOAT64 ->
+                "ModKit доказал IL2CPP double (R8): доступны ARM64 presets 0.0/0.5/1/2/3/5."
             Il2CppNativeReturnKind.FLOATING_POINT ->
-                "Доказан float/double return, но готового ARM64 semantic preset пока нет."
+                "Это старый результат анализа без доказанной ширины float/double; пересканируйте APK для безопасных presets."
             Il2CppNativeReturnKind.VALUE_TYPE ->
                 "Доказан value-type return; простой X0 preset запрещён ABI-правилами."
             Il2CppNativeReturnKind.UNKNOWN ->
