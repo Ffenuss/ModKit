@@ -34,8 +34,9 @@ Status: **ACTIVE**
 - [x] Content-addressed engine cache keyed by `artifactSHA + engineID + engineVersion`
 - [x] Reuse cached ArtifactIndex before repeating archive-entry probes
 - [x] Preserve already produced partial results when analysis is cancelled
+- [x] Bounded DEX header/table inventory without whole-entry extraction
 
-Current cache coverage: `artifact.fast-index`, `elf.universal-inventory`, `il2cpp.fast-dump`, `il2cpp.codegen-bind`, `runtime.evidence`, and `runtime.stage-attempts`. Every newly migrated engine must define and bump its own cache version when output semantics change.
+Current cache coverage: `artifact.fast-index`, `dex.inventory`, `elf.universal-inventory`, `il2cpp.fast-dump`, `il2cpp.codegen-bind`, `runtime.evidence`, and `runtime.stage-attempts`. Every newly migrated engine must define and bump its own cache version when output semantics change.
 
 ## Phase 2 — IL2CPP fast path
 - [x] Immediate validated global-metadata.dat + libil2cpp.so pair detection
@@ -99,7 +100,7 @@ Status: **CORE ACTIVE**
 - [x] APK/APK-set/installed-app/individual-file inputs
 - [x] Raw technical output separated from Simple Mode
 - [x] Scoped technical report export
-- [ ] Direct execution coverage for newly migrated non-IL2CPP backends
+- [x] Direct execution coverage for currently migrated non-IL2CPP backends (bounded DEX inventory + universal ELF inventory)
 - [x] Search/filtering for large target and backend inventories
 
 ## Phase 7 — Runtime escalation
