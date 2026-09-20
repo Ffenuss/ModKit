@@ -100,7 +100,7 @@ Status: **CORE ACTIVE**
 - [x] Raw technical output separated from Simple Mode
 - [x] Scoped technical report export
 - [ ] Direct execution coverage for newly migrated non-IL2CPP backends
-- [ ] Search/filtering for large target and backend inventories
+- [x] Search/filtering for large target and backend inventories
 
 ## Phase 7 — Runtime escalation
 Status: **ACTIVE**
