@@ -317,6 +317,13 @@ fun ManualNativePatchSection(
                         ),
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Text(
+                    "Как выбирать шаблон: " +
+                        Il2CppPatchTargetBrowser.presetAdvice(
+                            evidenceTarget,
+                        ),
+                    style = MaterialTheme.typography.bodySmall,
+                )
 
                 if (selectedSharedBodyCount > 1) {
                     Text(
@@ -339,9 +346,10 @@ fun ManualNativePatchSection(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        "Шаблон меняет entry point метода. " +
-                            "ModKit не угадывает тип возврата: " +
-                            "выберите вариант, соответствующий реальной сигнатуре.",
+                        "Что именно произойдёт: «void» сразу завершает метод; " +
+                            "«0» возвращает 0/false/null-подобное значение; " +
+                            "«1» возвращает 1/true для bool/int-подобного результата. " +
+                            "Это не готовая игровая функция — эффект зависит от выбранного метода.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     presets.forEach { preset ->
