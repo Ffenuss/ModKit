@@ -23,9 +23,13 @@ data class RuntimeProbeNativePayloadValidation(
 
 object RuntimeProbeNativePayloadValidator {
     private const val ET_DYN = 3
-    private val bridgeMarker =
-        "RuntimeNativeBridge_nativeResolveLoadedSymbol"
-            .toByteArray(Charsets.US_ASCII)
+    private val bridgeMarkers = listOf(
+        "RuntimeNativeBridge_nativeResolveLoadedSymbol",
+        "RuntimeNativeBridge_nativeStartPassiveDlsymTrace",
+        "RuntimeNativeBridge_nativeStopPassiveDlsymTrace",
+    ).map {
+        it.toByteArray(Charsets.US_ASCII)
+    }
 
     private data class ExpectedAbi(
         val machine: Int,
@@ -99,9 +103,11 @@ object RuntimeProbeNativePayloadValidator {
             blockers +=
                 "Runtime probe ELF machine/class does not match ABI $abi."
         }
-        if (!contains(bytes, bridgeMarker)) {
+        val missingMarkers =
+            bridgeMarkers.count { !contains(bytes, it) }
+        if (missingMarkers > 0) {
             blockers +=
-                "Runtime probe ELF does not expose the expected JNI bridge marker."
+                "Runtime probe ELF does not expose all expected JNI bridge markers."
         }
 
         return RuntimeProbeNativePayloadValidation(
