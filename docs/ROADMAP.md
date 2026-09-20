@@ -149,8 +149,10 @@ Status: **ACTIVE**
   - [x] ABI-aware native helper payload/build/install/launch flow covers arm64-v8a, armeabi-v7a, x86 and x86_64
   - [x] Passive repacked dlsym producer patches/restores app-owned PLT/GOT slots and validates positive observations
   - [x] Passive dlsym session/export is bounded, signer/PID/session/SHA bound and usable from Expert Lab
-  - [ ] Passive repacked JNI_OnLoad/RegisterNatives capture executor
-  - [ ] Full repacked trace capability remains gated until JNI capture is real
+  - [x] Passive RegisterNatives capture uses the JNI function table, records only successful app-owned registrations, and is signer/PID/session/SHA bound
+  - [x] ART JNI_OnLoad symbol lookup is captured only as proof-neutral DLSYM presence; it is not labeled as invocation
+  - [ ] Concrete passive JNI_OnLoad invocation executor without lookup-to-invocation proof escalation
+  - [ ] Full repacked trace capability remains gated until JNI_OnLoad invocation capture is real
   - [ ] Non-root/root trace capture executors
 - [ ] Root runtime only for evidence that remains unresolved after non-root stages
   - [x] Root decision engine requires recorded lower-privilege attempts
