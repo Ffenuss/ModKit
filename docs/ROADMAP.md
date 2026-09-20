@@ -158,8 +158,10 @@ Status: **ACTIVE**
 - [ ] Root runtime only for evidence that remains unresolved after non-root stages
   - [x] Root decision engine requires recorded lower-privilege attempts
   - [x] Executor/implementation gaps explicitly cannot justify root escalation
-  - [x] Root capability remains unavailable while no concrete executor is registered
-  - [ ] Concrete privileged capture executor and device integration
+  - [x] Concrete bounded su-based privileged maps capture executor with exact PID/cmdline revalidation
+  - [x] Root maps capture is explicit in Expert Lab and never auto-runs
+  - [x] Root environment failures are recorded as TARGET_ENVIRONMENT blockers
+  - [ ] Root native trace capture executor; ROOT_TRACE_CAPTURE remains false until this exists
 
 ## Phase 8 — Non-ARM64 deep completion
 - [ ] ARMv7 / Thumb-2
