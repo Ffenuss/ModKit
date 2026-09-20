@@ -13,6 +13,7 @@
 
 #define MAX_PATCHED_SLOTS 8192
 #define MAX_JNI_ONLOAD_DLSYM_SLOTS 16
+#define MAX_JNI_ONLOAD_WRAPPERS 32
 #define MAX_REGISTER_NATIVE_METHODS 4096
 #define SCAN_INTERVAL_US 250000
 
@@ -22,12 +23,21 @@ typedef jint (JNICALL *register_natives_fn)(
         jclass,
         const JNINativeMethod*,
         jint);
+typedef jint (JNICALL *jni_onload_fn)(JavaVM*, void*);
 
 typedef struct {
     void** slot;
     void* original;
     int original_prot;
 } patched_slot;
+
+typedef struct {
+    jni_onload_fn original;
+    void* address;
+    char module[256];
+    unsigned long generation;
+    int in_use;
+} jni_onload_pending_slot;
 
 static JavaVM* g_vm = NULL;
 static jclass g_trace_buffer_class = NULL;
@@ -59,6 +69,10 @@ static _Atomic(register_natives_fn) g_real_register_natives = NULL;
 static int g_register_natives_original_prot = 0;
 static _Thread_local int g_in_art_dlsym_wrapper = 0;
 static _Thread_local int g_in_register_natives_wrapper = 0;
+static pthread_mutex_t g_jni_onload_wrapper_lock =
+        PTHREAD_MUTEX_INITIALIZER;
+static jni_onload_pending_slot
+        g_jni_onload_pending[MAX_JNI_ONLOAD_WRAPPERS];
 
 static const char* base_name(const char* path) {
     if (path == NULL) return NULL;
@@ -171,6 +185,10 @@ static int slot_already_patched(void** slot) {
 
 static void* wrapper_pointer(void);
 static void* art_dlsym_wrapper_pointer(void);
+static jint invoke_jni_onload_slot(
+        size_t slot_index,
+        JavaVM* vm,
+        void* reserved);
 static jint JNICALL modkit_trace_register_natives(
         JNIEnv* env,
         jclass clazz,
@@ -734,6 +752,69 @@ static void emit_dlsym_event(
     }
 }
 
+static void emit_jni_onload_event(
+        const char* module,
+        void* address) {
+    if (g_vm == NULL || g_trace_buffer_class == NULL ||
+            module == NULL || address == NULL) {
+        atomic_store(&g_jni_incomplete, 1);
+        return;
+    }
+
+    JNIEnv* env = NULL;
+    int attached = 0;
+    const jint state = (*g_vm)->GetEnv(
+            g_vm,
+            (void**)&env,
+            JNI_VERSION_1_6);
+    if (state == JNI_EDETACHED) {
+        if ((*g_vm)->AttachCurrentThread(
+                g_vm,
+                &env,
+                NULL) != JNI_OK) {
+            atomic_store(&g_jni_incomplete, 1);
+            return;
+        }
+        attached = 1;
+    } else if (state != JNI_OK || env == NULL) {
+        atomic_store(&g_jni_incomplete, 1);
+        return;
+    }
+
+    jstring module_string = (*env)->NewStringUTF(env, module);
+    if (module_string != NULL) {
+        jmethodID append = (*env)->GetStaticMethodID(
+                env,
+                g_trace_buffer_class,
+                "appendJniOnLoad",
+                "(Ljava/lang/String;J)Z");
+        if (append != NULL) {
+            (*env)->CallStaticBooleanMethod(
+                    env,
+                    g_trace_buffer_class,
+                    append,
+                    module_string,
+                    (jlong)(uintptr_t)address);
+        } else {
+            (*env)->ExceptionClear(env);
+            atomic_store(&g_jni_incomplete, 1);
+        }
+    } else {
+        atomic_store(&g_jni_incomplete, 1);
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        atomic_store(&g_jni_incomplete, 1);
+    }
+    if (module_string != NULL) {
+        (*env)->DeleteLocalRef(env, module_string);
+    }
+
+    if (attached) {
+        (*g_vm)->DetachCurrentThread(g_vm);
+    }
+}
+
 static void emit_register_native_event(
         JNIEnv* env,
         jclass clazz,
@@ -792,6 +873,365 @@ static void emit_register_native_event(
     }
 }
 
+static jint invoke_jni_onload_slot(
+        size_t slot_index,
+        JavaVM* vm,
+        void* reserved) {
+    if (slot_index >= MAX_JNI_ONLOAD_WRAPPERS) {
+        return JNI_ERR;
+    }
+
+    jni_onload_pending_slot pending;
+    memset(&pending, 0, sizeof(pending));
+    pthread_mutex_lock(&g_jni_onload_wrapper_lock);
+    if (g_jni_onload_pending[slot_index].in_use) {
+        pending = g_jni_onload_pending[slot_index];
+    }
+    pthread_mutex_unlock(&g_jni_onload_wrapper_lock);
+
+    if (!pending.in_use || pending.original == NULL) {
+        atomic_store(&g_jni_incomplete, 1);
+        return JNI_ERR;
+    }
+
+    atomic_fetch_add(&g_jni_inflight, 1);
+    const jint result = pending.original(vm, reserved);
+    if (atomic_load(&g_jni_trace_active) &&
+            pending.generation ==
+                    atomic_load(&g_jni_generation)) {
+        emit_jni_onload_event(
+                pending.module,
+                pending.address);
+    }
+    atomic_fetch_sub(&g_jni_inflight, 1);
+
+    pthread_mutex_lock(&g_jni_onload_wrapper_lock);
+    if (g_jni_onload_pending[slot_index].in_use &&
+            g_jni_onload_pending[slot_index].generation ==
+                    pending.generation &&
+            g_jni_onload_pending[slot_index].original ==
+                    pending.original) {
+        memset(
+                &g_jni_onload_pending[slot_index],
+                0,
+                sizeof(g_jni_onload_pending[slot_index]));
+    }
+    pthread_mutex_unlock(&g_jni_onload_wrapper_lock);
+    return result;
+}
+
+static jint JNICALL modkit_trace_jni_onload_0(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(0, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_1(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(1, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_2(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(2, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_3(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(3, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_4(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(4, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_5(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(5, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_6(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(6, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_7(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(7, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_8(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(8, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_9(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(9, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_10(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(10, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_11(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(11, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_12(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(12, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_13(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(13, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_14(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(14, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_15(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(15, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_16(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(16, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_17(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(17, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_18(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(18, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_19(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(19, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_20(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(20, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_21(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(21, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_22(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(22, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_23(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(23, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_24(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(24, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_25(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(25, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_26(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(26, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_27(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(27, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_28(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(28, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_29(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(29, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_30(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(30, vm, reserved);
+}
+
+static jint JNICALL modkit_trace_jni_onload_31(
+        JavaVM* vm,
+        void* reserved) {
+    return invoke_jni_onload_slot(31, vm, reserved);
+}
+
+static jni_onload_fn const
+        g_jni_onload_wrappers[MAX_JNI_ONLOAD_WRAPPERS] = {
+            modkit_trace_jni_onload_0,
+            modkit_trace_jni_onload_1,
+            modkit_trace_jni_onload_2,
+            modkit_trace_jni_onload_3,
+            modkit_trace_jni_onload_4,
+            modkit_trace_jni_onload_5,
+            modkit_trace_jni_onload_6,
+            modkit_trace_jni_onload_7,
+            modkit_trace_jni_onload_8,
+            modkit_trace_jni_onload_9,
+            modkit_trace_jni_onload_10,
+            modkit_trace_jni_onload_11,
+            modkit_trace_jni_onload_12,
+            modkit_trace_jni_onload_13,
+            modkit_trace_jni_onload_14,
+            modkit_trace_jni_onload_15,
+            modkit_trace_jni_onload_16,
+            modkit_trace_jni_onload_17,
+            modkit_trace_jni_onload_18,
+            modkit_trace_jni_onload_19,
+            modkit_trace_jni_onload_20,
+            modkit_trace_jni_onload_21,
+            modkit_trace_jni_onload_22,
+            modkit_trace_jni_onload_23,
+            modkit_trace_jni_onload_24,
+            modkit_trace_jni_onload_25,
+            modkit_trace_jni_onload_26,
+            modkit_trace_jni_onload_27,
+            modkit_trace_jni_onload_28,
+            modkit_trace_jni_onload_29,
+            modkit_trace_jni_onload_30,
+            modkit_trace_jni_onload_31
+        };
+
+static void* allocate_jni_onload_wrapper(
+        const char* module,
+        void* address) {
+    if (module == NULL || address == NULL) return NULL;
+    const size_t module_length = strlen(module);
+    if (module_length == 0 ||
+            module_length >=
+                    sizeof(g_jni_onload_pending[0].module)) {
+        atomic_store(&g_jni_incomplete, 1);
+        return NULL;
+    }
+
+    union {
+        void* object;
+        jni_onload_fn function;
+    } original;
+    original.object = address;
+    if (original.function == NULL) return NULL;
+
+    void* wrapper_object = NULL;
+    pthread_mutex_lock(&g_jni_onload_wrapper_lock);
+    for (size_t index = 0;
+            index < MAX_JNI_ONLOAD_WRAPPERS;
+            index++) {
+        if (g_jni_onload_pending[index].in_use) continue;
+        g_jni_onload_pending[index].original =
+                original.function;
+        g_jni_onload_pending[index].address = address;
+        memcpy(
+                g_jni_onload_pending[index].module,
+                module,
+                module_length + 1);
+        g_jni_onload_pending[index].generation =
+                atomic_load(&g_jni_generation);
+        g_jni_onload_pending[index].in_use = 1;
+
+        union {
+            jni_onload_fn function;
+            void* object;
+        } wrapper;
+        wrapper.function = g_jni_onload_wrappers[index];
+        wrapper_object = wrapper.object;
+        break;
+    }
+    pthread_mutex_unlock(&g_jni_onload_wrapper_lock);
+
+    if (wrapper_object == NULL) {
+        atomic_store(&g_jni_incomplete, 1);
+    }
+    return wrapper_object;
+}
+
+static int jni_onload_wrapper_capacity_available(void) {
+    int available = 0;
+    pthread_mutex_lock(&g_jni_onload_wrapper_lock);
+    for (size_t index = 0;
+            index < MAX_JNI_ONLOAD_WRAPPERS;
+            index++) {
+        if (!g_jni_onload_pending[index].in_use) {
+            available = 1;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_jni_onload_wrapper_lock);
+    return available;
+}
+
+static int pending_jni_onload_for_generation(
+        unsigned long generation) {
+    int count = 0;
+    pthread_mutex_lock(&g_jni_onload_wrapper_lock);
+    for (size_t index = 0;
+            index < MAX_JNI_ONLOAD_WRAPPERS;
+            index++) {
+        if (g_jni_onload_pending[index].in_use &&
+                g_jni_onload_pending[index].generation ==
+                        generation) {
+            count++;
+        }
+    }
+    pthread_mutex_unlock(&g_jni_onload_wrapper_lock);
+    return count;
+}
+
 static void* modkit_trace_art_dlsym(
         void* handle,
         const char* symbol) {
@@ -813,6 +1253,13 @@ static void* modkit_trace_art_dlsym(
             const char* module = base_name(info.dli_fname);
             if (valid_module(module)) {
                 emit_dlsym_event(module, symbol, result);
+                void* wrapper =
+                        allocate_jni_onload_wrapper(
+                                module,
+                                result);
+                if (wrapper != NULL) {
+                    result = wrapper;
+                }
             }
         }
     }
@@ -1216,9 +1663,16 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeStopPassive
 
     pthread_mutex_lock(&g_jni_hook_lock);
     atomic_store(&g_jni_trace_active, 0);
-    atomic_fetch_add(&g_jni_generation, 1);
+    const unsigned long stopping_generation =
+            atomic_load(&g_jni_generation);
     const int restored = restore_jni_hooks_locked();
+    atomic_fetch_add(&g_jni_generation, 1);
     pthread_mutex_unlock(&g_jni_hook_lock);
+
+    if (pending_jni_onload_for_generation(
+            stopping_generation) > 0) {
+        atomic_store(&g_jni_incomplete, 1);
+    }
 
     for (int spin = 0;
             spin < 200 && atomic_load(&g_jni_inflight) > 0;
@@ -1267,6 +1721,20 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveRegi
     const int hooked = g_register_natives_slot != NULL;
     pthread_mutex_unlock(&g_jni_hook_lock);
     return hooked ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveJniOnLoadInvocationReady(
+        JNIEnv* env,
+        jclass clazz) {
+    (void)env;
+    (void)clazz;
+    pthread_mutex_lock(&g_jni_hook_lock);
+    const int hooked = g_jni_onload_slot_count > 0;
+    pthread_mutex_unlock(&g_jni_hook_lock);
+    return hooked && jni_onload_wrapper_capacity_available()
+            ? JNI_TRUE
+            : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
