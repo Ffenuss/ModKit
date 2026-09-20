@@ -542,6 +542,11 @@ class AndroidRepackedRuntimeProbeTransport(
                     "jniOnLoadLookupHookedSlotCount",
                     -1,
                 ),
+            jniOnLoadInvocationReady =
+                result.getBoolean(
+                    "jniOnLoadInvocationReady",
+                    false,
+                ),
             registerNativesHooked =
                 result.getBoolean(
                     "registerNativesHooked",
