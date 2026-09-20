@@ -11,6 +11,10 @@ import io.github.ffenuss.modkit.analysis.Il2CppBinaryBindingResult
 import io.github.ffenuss.modkit.analysis.Il2CppBinaryEvidence
 import io.github.ffenuss.modkit.analysis.Il2CppMethodBinaryBinding
 import io.github.ffenuss.modkit.analysis.Il2CppNativeReturnKind
+import io.github.ffenuss.modkit.analysis.Il2CppFastDumpResult
+import io.github.ffenuss.modkit.analysis.Il2CppFieldDefinition
+import io.github.ffenuss.modkit.analysis.Il2CppImageDefinition
+import io.github.ffenuss.modkit.analysis.Il2CppMetadataModel
 import io.github.ffenuss.modkit.analysis.UserFindingStatus
 import io.github.ffenuss.modkit.domain.ProofLevel
 import org.junit.Assert.assertEquals
@@ -427,6 +431,138 @@ class GameplayModificationFinderTest {
                 result = result,
                 preparation = preparation(target),
             ).isEmpty(),
+        )
+    }
+
+    @Test
+    fun heroDataFieldsAreExposedAsNonSelectableModelSignals() {
+        val target =
+            target(
+                token = 0x06000320,
+                name = "Heartbeat",
+                offset = 0x3200,
+                declaringType = "Game.Runtime",
+            )
+        val base =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.VOID,
+            )
+        val metadata =
+            Il2CppMetadataModel(
+                sizeBytes = 1,
+                magicValid = true,
+                metadataVersion = 31,
+                layoutProfile = "test",
+                tableRanges = emptyList(),
+                declaredTypeCount = 1,
+                declaredMethodCount = 0,
+                declaredFieldCount = 4,
+                declaredImageCount = 1,
+                images =
+                    listOf(
+                        Il2CppImageDefinition(
+                            index = 0,
+                            name = "Assembly-CSharp.dll",
+                            assemblyIndex = 0,
+                            typeStart = 77,
+                            typeCount = 2,
+                            token = 0x2000001,
+                        ),
+                    ),
+                types = emptyList(),
+                methods = emptyList(),
+                fields =
+                    listOf(
+                        Il2CppFieldDefinition(
+                            index = 0,
+                            declaringTypeIndex = 77,
+                            declaringType = "IGame.HeroData",
+                            name = "level",
+                            typeIndex = 1,
+                            token = 0x040043af,
+                        ),
+                        Il2CppFieldDefinition(
+                            index = 1,
+                            declaringTypeIndex = 77,
+                            declaringType = "IGame.HeroData",
+                            name = "rank",
+                            typeIndex = 1,
+                            token = 0x040043b0,
+                        ),
+                        Il2CppFieldDefinition(
+                            index = 2,
+                            declaringTypeIndex = 77,
+                            declaringType = "IGame.HeroData",
+                            name = "quality",
+                            typeIndex = 1,
+                            token = 0x040043b1,
+                        ),
+                        Il2CppFieldDefinition(
+                            index = 3,
+                            declaringTypeIndex = 78,
+                            declaringType = "IGame.QualityManager",
+                            name = "deviceLevel",
+                            typeIndex = 1,
+                            token = 0x040043b2,
+                        ),
+                    ),
+                structuredSupported = true,
+                truncated = false,
+                warnings = emptyList(),
+            )
+        val analysis =
+            base.copy(
+                il2cppFastDump =
+                    Il2CppFastDumpResult(
+                        metadataEntry =
+                            "base.apk:assets/global-metadata.dat",
+                        libraryEntries =
+                            listOf(
+                                "split_config.arm64_v8a.apk:lib/arm64-v8a/libil2cpp.so",
+                            ),
+                        metadata = metadata,
+                        dumpFilePath = "dump.cs",
+                        preview = "",
+                        warnings = emptyList(),
+                    ),
+            )
+
+        val signals =
+            GameplayModificationFinder.find(
+                result = analysis,
+                preparation = preparation(target),
+            ).filter {
+                it.confidence ==
+                    GameplayModificationConfidence
+                        .SEMANTIC_MODEL_SIGNAL
+            }
+
+        assertTrue(
+            signals.any {
+                it.targetDisplayName ==
+                    "IGame.HeroData.level"
+            },
+        )
+        assertTrue(
+            signals.any {
+                it.targetDisplayName ==
+                    "IGame.HeroData.rank"
+            },
+        )
+        assertTrue(
+            signals.any {
+                it.targetDisplayName ==
+                    "IGame.HeroData.quality"
+            },
+        )
+        assertTrue(signals.all { !it.selectable })
+        assertTrue(
+            signals.none {
+                it.targetDisplayName ==
+                    "IGame.QualityManager.deviceLevel"
+            },
         )
     }
 
