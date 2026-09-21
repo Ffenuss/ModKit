@@ -559,7 +559,7 @@ object RootSandboxRuntimePatchCoordinator {
                             1..MAX_MODULE_BYTES
                     ) {
                         "Размер runtime-модуля вне безопасного лимита: " +
-                            moduleName,
+                            moduleName
                     }
                     candidates +=
                         Triple(
