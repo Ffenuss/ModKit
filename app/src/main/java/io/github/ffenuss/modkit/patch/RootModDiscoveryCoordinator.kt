@@ -32,8 +32,9 @@ data class RootModDiscoveryResult(
  * cache instead of dumping gigabytes of live memory. This keeps discovery
  * fast and avoids stressing the target process.
  *
- * Sensitive billing/auth/anti-cheat surfaces are intentionally excluded from
- * the actionable root catalogue.
+ * Sensitive billing/auth/anti-cheat surfaces are retained as discovery-only
+ * entries. They are visible to the user for analysis but never become
+ * auto-selectable runtime actions.
  */
 object RootModDiscoveryCoordinator {
     suspend fun discover(
@@ -151,12 +152,7 @@ object RootModDiscoveryCoordinator {
                         256,
                     perCategoryLimit =
                         24,
-                )
-                .filter {
-                    it.category !=
-                        GameplayModificationCategory
-                            .SENSITIVE_SURFACE
-                }
+)
 
         return RootModDiscoveryResult(
             analysisResult =

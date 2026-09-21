@@ -27,16 +27,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
-import io.github.ffenuss.modkit.analysis.EngineResultCache
-import io.github.ffenuss.modkit.analysis.FastArtifactIndexer
-import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.runtime.RootAccessProbeResult
 import io.github.ffenuss.modkit.runtime.RootProcessDiscovery
-import io.github.ffenuss.modkit.sandbox.RootSandboxAndroidProfileManager
+import io.github.ffenuss.modkit.sandbox.RootSandboxLaunchCoordinator
+import io.github.ffenuss.modkit.sandbox.RootSandboxRunningSession
 import io.github.ffenuss.modkit.sandbox.SandboxProfileStore
 import io.github.ffenuss.modkit.sandbox.StoredSandboxProfile
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -52,7 +49,6 @@ fun SandboxScreen(
     val scope = rememberCoroutineScope()
     val store = remember { SandboxProfileStore(appContext) }
     val repository = remember { InstalledAppRepository(appContext) }
-    val cache = remember { EngineResultCache(File(appContext.filesDir, "analysis-cache")) }
 
     var profiles by remember {
         mutableStateOf(runCatching { store.list() }.getOrDefault(emptyList()))
@@ -61,6 +57,9 @@ fun SandboxScreen(
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var lastLaunchedPackage by remember { mutableStateOf<String?>(null) }
+    var activeSession by remember {
+        mutableStateOf<RootSandboxRunningSession?>(null)
+    }
 
     fun refresh() {
         profiles = runCatching { store.list() }.getOrDefault(emptyList())
@@ -134,32 +133,30 @@ fun SandboxScreen(
                     require(app.versionCode == stored.profile.versionCode) {
                         "Версия приложения изменилась: sandbox-профиль нужно пересобрать."
                     }
-                    val indexed = FastArtifactIndexer.index(
-                        files = app.apkFiles,
-                        cancellation = AtomicCancellationSignal(),
-                        progress = ProgressSink { },
-                        cache = cache,
-                    )
-                    require(
-                        indexed.index.artifactSha256.equals(
-                            stored.profile.artifactSha256,
-                            ignoreCase = true,
-                        ),
-                    ) {
-                        "SHA установленного APK не совпадает с профилем. Старые offsets не будут применяться."
-                    }
-                    RootSandboxAndroidProfileManager.installExistingAndLaunch(
-                        packageName = stored.profile.packageName,
+                    RootSandboxLaunchCoordinator.launch(
+                        context = appContext,
+                        app = app,
+                        profile = stored.profile,
                         cancellation = AtomicCancellationSignal(),
                     )
                 }
             }
             result.onSuccess {
-                lastLaunchedPackage = it.packageName
+                lastLaunchedPackage =
+                    it.packageName
+                activeSession =
+                    it
                 message =
-                    "Sandbox-копия запущена в Android user " + it.userId +
-                        ". У неё отдельные app-data/сохранения; оригинал не удалялся и не очищался. " +
-                        "Профиль модов SHA-проверен. Открой runtime sandbox-процесса для продолжения."
+                    "Игра запущена в ModKit Sandbox · Android user " +
+                        it.userId +
+                        " · PID " +
+                        it.pid +
+                        ". Отдельные app-data/сохранения активны. " +
+                        "Профиль SHA-проверен: применено " +
+                        it.activation.appliedCount +
+                        ", уже было активно " +
+                        it.activation.alreadyActiveCount +
+                        ". Плавающее MK mod menu запущено поверх игры."
                 rootProbe = RootAccessProbeResult(true, 0, "Root подтверждён: uid=0.")
             }.onFailure {
                 message = "Sandbox не запущен: " +
@@ -203,8 +200,10 @@ fun SandboxScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Проверить root") }
                     Text(
-                        "Без root отдельный clone-package backend будет использовать repacked APK с другим package id; " +
-                            "он не должен заменять оригинальную игру. Этот backend ещё не включён, чтобы не рисковать сохранениями.",
+                        "Root sandbox SHA-проверяет профиль, запускает отдельную копию игры, привязывается к точному PID, " +
+                            "применяет подтверждённые моды и стартует плавающее MK mod menu в том же sandbox-профиле. " +
+                            "Переключатели меню меняют моды в live-процессе с read-back и fail-closed проверками. " +
+                            "Оригинальная установка и её сохранения не заменяются.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -253,12 +252,51 @@ fun SandboxScreen(
                         onClick = { launchSandbox(stored) },
                         enabled = !busy && rootProbe?.available == true,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Запустить отдельную sandbox-копию") }
+                    ) { Text("Запустить игру с MK mod menu") }
                     if (lastLaunchedPackage == stored.profile.packageName) {
                         OutlinedButton(
                             onClick = { onOpenRootRuntime(stored.profile.packageName) },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text("Открыть runtime sandbox-процесса") }
+                    }
+                    val session =
+                        activeSession
+                    if (
+                        session != null &&
+                        session.packageName ==
+                        stored.profile.packageName
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                if (!busy) {
+                                    busy = true
+                                    message = "Откатываем моды текущего sandbox-процесса…"
+                                    scope.launch {
+                                        val rollback =
+                                            runCatching {
+                                                withContext(Dispatchers.IO) {
+                                                    RootSandboxLaunchCoordinator.stopOverlayAndRollback(
+                                                        session = session,
+                                                        cancellation = AtomicCancellationSignal(),
+                                                    )
+                                                }
+                                            }
+                                        if (rollback.isSuccess) {
+                                            activeSession = null
+                                            message = "Моды этого sandbox-процесса откатились к исходным байтам."
+                                        } else {
+                                            message =
+                                                "Rollback не подтверждён: " +
+                                                    (rollback.exceptionOrNull()?.message
+                                                        ?: "неизвестная ошибка")
+                                        }
+                                        busy = false
+                                    }
+                                }
+                            },
+                            enabled = !busy,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Откатить активированные моды") }
                     }
                     OutlinedButton(
                         onClick = {
