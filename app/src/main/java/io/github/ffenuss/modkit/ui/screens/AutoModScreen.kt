@@ -57,6 +57,7 @@ fun AutoModScreen(
     target: AnalysisTargetDescriptor,
     result: FastAnalysisResult,
     onBack: () -> Unit,
+    onOpenRootRuntime: (FastAnalysisResult) -> Unit = { },
 ) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
@@ -526,6 +527,74 @@ fun AutoModScreen(
                                 "shared bodies и снимок AutoMod. Его можно прислать сюда для разбора.",
                             style =
                                 MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
+        }
+
+        if (
+            target is
+                AnalysisTargetDescriptor
+                    .InstalledPackage
+        ) {
+            item {
+                val runtimeRequired =
+                    analysisResult.evidenceGraph
+                        ?.summary
+                        ?.runtimeRequired
+                        ?: 0
+                Card(
+                    Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement =
+                            Arrangement.spacedBy(
+                                7.dp,
+                            ),
+                    ) {
+                        Text(
+                            "Root / Live Memory",
+                            fontWeight =
+                                FontWeight.SemiBold,
+                        )
+                        Text(
+                            if (
+                                runtimeRequired > 0
+                            ) {
+                                "Статический анализ оставил " +
+                                    runtimeRequired +
+                                    " runtime-целей. Можно сразу открыть текущую игру в Root Process Lab без повторного выбора APK."
+                            } else {
+                                "Открыть текущую установленную игру в Root Process Lab: attach к процессу, live memory scan, unknown value, pointer scan, verified write и freeze."
+                            },
+                            style =
+                                MaterialTheme.typography
+                                    .bodySmall,
+                        )
+                        Button(
+                            onClick = {
+                                onOpenRootRuntime(
+                                    analysisResult,
+                                )
+                            },
+                            enabled =
+                                !preparing &&
+                                    !building &&
+                                    !runtimeMenuBusy,
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                "Открыть Root Process Lab",
+                            )
+                        }
+                        Text(
+                            "Root не запускается автоматически: запрос superuser появится при первом privileged действии.",
+                            style =
+                                MaterialTheme.typography
+                                    .bodySmall,
                         )
                     }
                 }

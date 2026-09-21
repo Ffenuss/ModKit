@@ -2,6 +2,7 @@ package io.github.ffenuss.modkit.analysis
 
 import android.content.Context
 import android.net.Uri
+import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.runtime.AndroidNonRootProcessProbe
 import io.github.ffenuss.modkit.runtime.AndroidRepackedRuntimeProbeTransport
@@ -252,12 +253,10 @@ object ExpertLabSessionController {
                         .zip(
                             installed.apkFiles,
                         )
-                        .map {
-                                pair,
-                            ->
+                        .map { (descriptor, file) ->
                             WorkspaceSource(
-                                pair.first,
-                                pair.second,
+                                descriptor,
+                                file,
                             )
                         },
             )
