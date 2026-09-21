@@ -1314,6 +1314,12 @@ fun RootProcessLabScreen(
                                 MaterialTheme.typography
                                     .bodySmall,
                         )
+                        Text(
+                            "Подключение уже выполнено. Runtime dump необязателен для Live Memory Scanner — можно сразу искать значения ниже.",
+                            style =
+                                MaterialTheme.typography
+                                    .bodySmall,
+                        )
                         OutlinedButton(
                             onClick = {
                                 clearRuntimeState()
