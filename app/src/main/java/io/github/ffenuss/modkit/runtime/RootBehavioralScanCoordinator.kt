@@ -197,6 +197,7 @@ object RootBehavioralScanCoordinator {
                     maxBytes =
                         maxBaselineBytes,
                     expectedPid = pid,
+                    behavioralMode = true,
                 )
         require(baseline.pid == pid) {
             RootRuntimeUnknownValueCoordinator
@@ -1063,6 +1064,8 @@ object RootBehavioralScanCoordinator {
                             ),
                     expectedPid =
                         session.pid,
+                    behavioralMode =
+                        true,
                 )
         session.baseline =
             replacement
