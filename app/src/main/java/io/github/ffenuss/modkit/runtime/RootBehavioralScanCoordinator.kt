@@ -123,7 +123,7 @@ object RootBehavioralScanCoordinator {
     const val DEFAULT_BASELINE_BYTES =
         24L * 1024L * 1024L
     const val DEFAULT_VISIBLE_CANDIDATES =
-        24
+        8
 
     private const val MAX_TRACKS =
         12_000
