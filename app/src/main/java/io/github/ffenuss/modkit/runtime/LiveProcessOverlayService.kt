@@ -768,8 +768,6 @@ class LiveProcessOverlayService : Service() {
                                     .AUTO,
                             cancellation =
                                 AtomicCancellationSignal(),
-                            visibleLimit =
-                                5,
                         )
                 }
             main.post {
@@ -1004,6 +1002,8 @@ class LiveProcessOverlayService : Service() {
                                 session,
                             cancellation =
                                 AtomicCancellationSignal(),
+                            visibleLimit =
+                                5,
                         )
                 }
             RootBehavioralScanCoordinator
