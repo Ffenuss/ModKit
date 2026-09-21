@@ -118,7 +118,7 @@ object RootProcessDiscovery {
             root.message
         }
 
-        val result =
+        val projected =
             runner.run(
                 command =
                     "ps -A -o PID,USER,NAME",
@@ -127,20 +127,51 @@ object RootProcessDiscovery {
                 cancellation =
                     cancellation,
             )
-        require(
-            result.exitCode == 0,
-        ) {
-            "Root ps не поддерживает PID/USER/NAME на этом Android."
-        }
-        require(!result.truncated) {
-            "Список процессов слишком большой и был обрезан."
-        }
+        val result =
+            if (
+                projected.exitCode == 0 &&
+                !projected.truncated
+            ) {
+                projected to true
+            } else {
+                val fallback =
+                    runner.run(
+                        command =
+                            "ps -A",
+                        maxOutputBytes =
+                            4 * 1024 * 1024,
+                        cancellation =
+                            cancellation,
+                    )
+                require(
+                    fallback.exitCode == 0
+                ) {
+                    "Root ps недоступен на этом Android/emulator."
+                }
+                require(
+                    !fallback.truncated
+                ) {
+                    "Список процессов слишком большой и был обрезан."
+                }
+                fallback to false
+            }
 
-        return result.output
+        return result.first.output
             .toString(Charsets.UTF_8)
             .lineSequence()
             .drop(1)
-            .mapNotNull(::parseLine)
+            .mapNotNull {
+                line ->
+                if (result.second) {
+                    parseProjectedLine(
+                        line,
+                    )
+                } else {
+                    parseFallbackLine(
+                        line,
+                    )
+                }
+            }
             .filter {
                 it.isMainProcess
             }
@@ -157,7 +188,7 @@ object RootProcessDiscovery {
             .toList()
     }
 
-    private fun parseLine(
+    private fun parseProjectedLine(
         line: String,
     ): RootRunningAppProcess? {
         val columns =
@@ -169,26 +200,58 @@ object RootProcessDiscovery {
         if (columns.size != 3) {
             return null
         }
+        return buildProcess(
+            pidText = columns[0],
+            user = columns[1],
+            processName =
+                columns[2]
+                    .trim()
+                    .substringBefore(' '),
+        )
+    }
+
+    private fun parseFallbackLine(
+        line: String,
+    ): RootRunningAppProcess? {
+        val columns =
+            line.trim()
+                .split(
+                    Regex("\\s+"),
+                )
+        if (columns.size < 3) {
+            return null
+        }
+        return buildProcess(
+            pidText = columns[1],
+            user = columns[0],
+            processName =
+                columns.last(),
+        )
+    }
+
+    private fun buildProcess(
+        pidText: String,
+        user: String,
+        processName: String,
+    ): RootRunningAppProcess? {
         val pid =
-            columns[0].toIntOrNull()
+            pidText.toIntOrNull()
                 ?: return null
-        val user =
-            columns[1].trim()
-        val processName =
-            columns[2]
-                .trim()
-                .substringBefore(' ')
+        val normalizedUser =
+            user.trim()
+        val normalizedProcess =
+            processName.trim()
         if (
             pid <= 0 ||
-            user.isBlank() ||
+            normalizedUser.isBlank() ||
             !packageRegex.matches(
-                processName,
+                normalizedProcess,
             )
         ) {
             return null
         }
         val packageName =
-            processName.substringBefore(
+            normalizedProcess.substringBefore(
                 ':',
             )
         if (
@@ -201,9 +264,10 @@ object RootProcessDiscovery {
 
         return RootRunningAppProcess(
             pid = pid,
-            user = user,
+            user =
+                normalizedUser,
             processName =
-                processName,
+                normalizedProcess,
             packageName =
                 packageName,
         )

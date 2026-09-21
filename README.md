@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.4**
+Current application version: **0.0.5**
 
 ## Product flow
 
@@ -55,6 +55,7 @@ See [docs/PORTING_MATRIX.md](docs/PORTING_MATRIX.md) and [docs/ROADMAP.md](docs/
 - full-screen IL2CPP method inspector with reconstructed C#-like metadata view, ARM64 disassembly, CFG, direct callees and bounded reverse-caller scan;
 - proven ARM64 scalar-return presets plus arbitrary Int64/Float/Double return-body generation with in-place boundary checks;
 - root live-memory scanner for exact and unknown initial values, natural/byte alignment, changed/increased/decreased refinement, pointer scan, explicit verified writes and freeze;
+- dedicated main-menu Root Process Lab: root probe, running app/game process picker, direct attach, bounded live process dump/export and memory tools without a prerequisite APK analysis;
 - streaming staging APK/APK-set mutation with stale-signature removal;
 - align → sign → verify → mutation-diff check → post-build re-analysis;
 - human-readable build report and scoped APK/APK-set export;

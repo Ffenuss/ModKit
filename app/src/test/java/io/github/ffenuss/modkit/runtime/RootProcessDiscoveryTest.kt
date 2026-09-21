@@ -75,6 +75,59 @@ class RootProcessDiscoveryTest {
     }
 
     @Test
+    fun fallsBackToDefaultPsProjectionForRootedEmulator() {
+        val runner =
+            RootCommandRunner {
+                    command,
+                    _,
+                    _,
+                ->
+                when (command) {
+                    "id -u" ->
+                        result("0\n")
+                    "ps -A -o PID,USER,NAME" ->
+                        RootCommandResult(
+                            exitCode = 1,
+                            output =
+                                ByteArray(0),
+                            truncated = false,
+                        )
+                    "ps -A" ->
+                        result(
+                            "USER PID PPID VSZ RSS WCHAN ADDR S NAME\n" +
+                                "u0_a42 777 1 0 0 0 0 S com.example.emugame\n",
+                        )
+                    else ->
+                        RootCommandResult(
+                            exitCode = 1,
+                            output =
+                                ByteArray(0),
+                            truncated = false,
+                        )
+                }
+            }
+
+        val processes =
+            RootProcessDiscovery
+                .listMainAppProcesses(
+                    cancellation =
+                        AtomicCancellationSignal(),
+                    runner = runner,
+                )
+
+        assertEquals(1, processes.size)
+        assertEquals(
+            777,
+            processes.single().pid,
+        )
+        assertEquals(
+            "com.example.emugame",
+            processes.single()
+                .packageName,
+        )
+    }
+
+    @Test
     fun nonRootProbeFailsClosed() {
         val runner =
             RootCommandRunner {

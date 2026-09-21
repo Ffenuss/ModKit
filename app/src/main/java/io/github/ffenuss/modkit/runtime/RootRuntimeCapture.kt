@@ -255,27 +255,65 @@ object RootRuntimeCaptureCoordinator {
             "Root access was not granted by the device root manager."
         }
 
-        val pidResult = runner.run(
-            command = "pidof $packageName",
-            maxOutputBytes = 4096,
-            cancellation = cancellation,
-        )
+        val pidResult =
+            runner.run(
+                command =
+                    "pidof $packageName",
+                maxOutputBytes = 4096,
+                cancellation =
+                    cancellation,
+            )
         require(!pidResult.truncated) {
             "Root process discovery output was truncated."
         }
-        require(pidResult.exitCode == 0) {
-            "Root process discovery could not find the target package."
-        }
-        val candidates = pidResult.output
-            .toString(Charsets.UTF_8)
-            .trim()
-            .split(Regex("\\s+"))
-            .mapNotNull { it.toIntOrNull() }
-            .filter { it > 0 }
-            .distinct()
-            .sorted()
+        val pidofCandidates =
+            if (
+                pidResult.exitCode == 0
+            ) {
+                pidResult.output
+                    .toString(
+                        Charsets.UTF_8,
+                    )
+                    .trim()
+                    .split(
+                        Regex("\\s+"),
+                    )
+                    .mapNotNull {
+                        it.toIntOrNull()
+                    }
+                    .filter {
+                        it > 0
+                    }
+                    .distinct()
+                    .sorted()
+            } else {
+                emptyList()
+            }
+        val candidates =
+            if (
+                pidofCandidates
+                    .isNotEmpty()
+            ) {
+                pidofCandidates
+            } else {
+                RootProcessDiscovery
+                    .listMainAppProcesses(
+                        cancellation =
+                            cancellation,
+                        runner = runner,
+                    )
+                    .filter {
+                        it.packageName ==
+                            packageName
+                    }
+                    .map {
+                        it.pid
+                    }
+                    .distinct()
+                    .sorted()
+            }
         require(candidates.isNotEmpty()) {
-            "Root process discovery returned no valid PID."
+            "Root process discovery could not find the target package."
         }
 
         val exactMain = candidates.filter { pid ->

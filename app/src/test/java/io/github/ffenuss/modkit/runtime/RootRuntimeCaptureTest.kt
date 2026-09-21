@@ -104,6 +104,81 @@ class RootRuntimeCaptureTest {
     }
 
     @Test
+    fun fallsBackToPsWhenPidofIsUnavailable() {
+        val runner =
+            object : RootCommandRunner {
+                override fun run(
+                    command: String,
+                    maxOutputBytes: Int,
+                    cancellation:
+                        io.github.ffenuss.modkit.analysis.CancellationSignal,
+                ): RootCommandResult =
+                    when (command) {
+                        "id -u" ->
+                            RootCommandResult(
+                                0,
+                                "0".toByteArray(),
+                                false,
+                            )
+                        "pidof $PACKAGE" ->
+                            RootCommandResult(
+                                1,
+                                ByteArray(0),
+                                false,
+                            )
+                        "ps -A -o PID,USER,NAME" ->
+                            RootCommandResult(
+                                0,
+                                (
+                                    "PID USER NAME\n" +
+                                        "987 u0_a42 $PACKAGE\n"
+                                    ).toByteArray(),
+                                false,
+                            )
+                        "cat /proc/987/cmdline" ->
+                            RootCommandResult(
+                                0,
+                                (
+                                    PACKAGE +
+                                        "\u0000"
+                                    ).toByteArray(),
+                                false,
+                            )
+                        "cat /proc/987/maps" ->
+                            RootCommandResult(
+                                0,
+                                (
+                                    "70000000-70001000 rw-p 00000000 00:00 0 [heap]\n"
+                                    ).toByteArray(),
+                                false,
+                            )
+                        else ->
+                            RootCommandResult(
+                                1,
+                                ByteArray(0),
+                                false,
+                            )
+                    }
+            }
+
+        val result =
+            RootRuntimeCaptureCoordinator
+                .captureMaps(
+                    packageName =
+                        PACKAGE,
+                    cancellation =
+                        AtomicCancellationSignal(),
+                    runner = runner,
+                )
+
+        assertEquals(987, result.pid)
+        assertTrue(
+            result.capture.text
+                .contains("[heap]"),
+        )
+    }
+
+    @Test
     fun rootMemoryReaderReadsExactBoundedRange() {
         val expected =
             byteArrayOf(

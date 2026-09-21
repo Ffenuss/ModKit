@@ -160,6 +160,8 @@ Status: **ACTIVE**
   - [x] Full repacked native trace capability is registered only after passive dlsym, RegisterNatives and JNI_OnLoad invocation executors are concrete
   - [ ] Non-root/root trace capture executors
 - [x] Root live-memory value scanner for exact values and disk-backed unknown-initial-value baselines
+- [x] Dedicated main-menu root workflow: explicit root probe → running app/game process picker → attach → live dump/export → memory analysis/manipulation
+- [x] Root process discovery fallback for rooted Android emulators without projected `ps -o` support or working `pidof`
 - [x] Runtime value refinement: exact new value / changed / unchanged / increased / decreased
 - [x] Natural and byte-aligned scans, batched refinement reads and bounded hit/byte limits
 - [x] Root pointer scan with exact PID revalidation
