@@ -288,10 +288,10 @@ class ModMenuOverlayService : Service() {
                 isFillViewport = false
                 addView(
                     list,
-                    ScrollView.LayoutParams(
-                        ScrollView.LayoutParams
+                    android.view.ViewGroup.LayoutParams(
+                        android.view.ViewGroup.LayoutParams
                             .MATCH_PARENT,
-                        ScrollView.LayoutParams
+                        android.view.ViewGroup.LayoutParams
                             .WRAP_CONTENT,
                     ),
                 )

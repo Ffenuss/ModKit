@@ -6,13 +6,16 @@ import io.github.ffenuss.modkit.runtime.AndroidRootCommandRunner
 import io.github.ffenuss.modkit.runtime.RootCommandRunner
 
 data class RootSandboxOverlayLaunchResult(
-    val userId: Int,
+    val sandboxUserId: Int,
+    val overlayUserId: Int,
     val itemCount: Int,
 )
 
 object RootSandboxOverlayLauncher {
     const val CONFIG_EXTRA =
         "modkit_overlay_b64"
+    private const val OVERLAY_USER_ID =
+        0
 
     fun start(
         userId: Int,
@@ -22,25 +25,19 @@ object RootSandboxOverlayLauncher {
             AndroidRootCommandRunner(),
     ): RootSandboxOverlayLaunchResult {
         require(userId > 0) {
-            "Overlay must run in sandbox user."
+            "Game sandbox must use a secondary Android profile."
         }
         require(session.records.isNotEmpty()) {
             "Overlay requires active sandbox modifications."
         }
+
         val packageName =
             BuildConfig.APPLICATION_ID
-
-        installExisting(
-            userId = userId,
-            packageName = packageName,
-            cancellation = cancellation,
-            runner = runner,
-        )
         val appOps =
             runner.run(
                 command =
                     "appops set --user " +
-                        userId +
+                        OVERLAY_USER_ID +
                         " " +
                         packageName +
                         " SYSTEM_ALERT_WINDOW allow",
@@ -53,7 +50,7 @@ object RootSandboxOverlayLauncher {
             appOps.exitCode == 0 &&
                 !appOps.truncated,
         ) {
-            "Could not grant sandbox overlay app-op."
+            "Could not grant ModKit overlay app-op."
         }
 
         val config =
@@ -67,11 +64,24 @@ object RootSandboxOverlayLauncher {
         val component =
             packageName +
                 "/.sandbox.ModMenuOverlayService"
+
+        runner.run(
+            command =
+                "am stopservice --user " +
+                    OVERLAY_USER_ID +
+                    " -n " +
+                    component,
+            maxOutputBytes =
+                16 * 1024,
+            cancellation =
+                cancellation,
+        )
+
         val start =
             runner.run(
                 command =
                     "am start-foreground-service --user " +
-                        userId +
+                        OVERLAY_USER_ID +
                         " -n " +
                         component +
                         " --es " +
@@ -100,12 +110,14 @@ object RootSandboxOverlayLauncher {
                     ignoreCase = true,
                 ),
         ) {
-            "Could not start ModKit overlay inside sandbox user: " +
+            "Could not start ModKit overlay host: " +
                 output.trim()
         }
 
         return RootSandboxOverlayLaunchResult(
-            userId = userId,
+            sandboxUserId = userId,
+            overlayUserId =
+                OVERLAY_USER_ID,
             itemCount =
                 session.records.size,
         )
@@ -121,52 +133,12 @@ object RootSandboxOverlayLauncher {
         runner.run(
             command =
                 "am stopservice --user " +
-                    userId +
+                    OVERLAY_USER_ID +
                     " -n " +
                     BuildConfig.APPLICATION_ID +
                     "/.sandbox.ModMenuOverlayService",
             maxOutputBytes = 16 * 1024,
             cancellation = cancellation,
         )
-    }
-
-    private fun installExisting(
-        userId: Int,
-        packageName: String,
-        cancellation: CancellationSignal,
-        runner: RootCommandRunner,
-    ) {
-        val primary =
-            runner.run(
-                command =
-                    "cmd package install-existing --user " +
-                        userId +
-                        " " +
-                        packageName,
-                maxOutputBytes =
-                    32 * 1024,
-                cancellation =
-                    cancellation,
-            )
-        if (primary.exitCode == 0) {
-            return
-        }
-        val fallback =
-            runner.run(
-                command =
-                    "pm install-existing --user " +
-                        userId +
-                        " " +
-                        packageName,
-                maxOutputBytes =
-                    32 * 1024,
-                cancellation =
-                    cancellation,
-            )
-        require(
-            fallback.exitCode == 0,
-        ) {
-            "Could not install ModKit overlay host into sandbox profile."
-        }
     }
 }

@@ -194,7 +194,7 @@ Status: **PLANNED / ACTIVE FOUNDATION**
 - [ ] Non-root clone-package sandbox backend that rewrites package identity safely and never replaces the original package
 - [x] Overlay menu generated from confirmed sandbox profile controls and bound only to validated targets
 - [x] Persist selected mod configuration separately from the original APK
-- [x] Re-resolve ASLR/module addresses and activate selected root-sandbox modifications on every launch\n- [x] External in-profile MK overlay service for per-mod enable/disable while the sandbox game is foreground; live toggles revalidate PID/bytes and verify read-back
+- [x] Re-resolve ASLR/module addresses and activate selected root-sandbox modifications on every launch\n- [x] External main-profile MK overlay service for per-mod enable/disable while the sandbox game is foreground; live toggles revalidate PID/bytes and verify read-back
 - [x] Keep billing/auth/anti-cheat surfaces visible in discovery while never exposing them as automatic profile/live bypass actions
 
 ## Phase 8 — Non-ARM64 deep completion
