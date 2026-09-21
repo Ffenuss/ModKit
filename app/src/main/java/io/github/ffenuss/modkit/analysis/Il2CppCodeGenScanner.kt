@@ -259,20 +259,49 @@ object Il2CppCodeGenScanner {
                         metadata.types.size == it
                 }
                 ?: return null
-        val returnTypeIndices =
-            metadata.methods
-                .asSequence()
-                .map { it.returnTypeIndex }
-                .filter { it >= 0 }
-                .distinct()
-                .toList()
-        val maxReturnTypeIndex =
-            returnTypeIndices.maxOrNull()
-                ?: return null
+        // Do not build a distinct HashSet/List for every return type.
+        // Large Unity titles can expose 150k+ MethodDefs while the validation
+        // below needs only the maximum index and a tiny representative sample.
+        var maxReturnTypeIndex = -1
         val sampleReturnTypeIndices =
-            returnTypeIndices.take(
+            ArrayList<Int>(
                 MAX_RETURN_TYPE_SAMPLES,
             )
+        metadata.methods.forEachIndexed {
+                index,
+                method,
+            ->
+            if (
+                index % 4096 == 0 &&
+                cancellation.isCancelled()
+            ) {
+                throw AnalysisCancelledException()
+            }
+            val returnTypeIndex =
+                method.returnTypeIndex
+            if (returnTypeIndex < 0) {
+                return@forEachIndexed
+            }
+            if (
+                returnTypeIndex >
+                maxReturnTypeIndex
+            ) {
+                maxReturnTypeIndex =
+                    returnTypeIndex
+            }
+            if (
+                sampleReturnTypeIndices.size <
+                    MAX_RETURN_TYPE_SAMPLES &&
+                returnTypeIndex !in
+                    sampleReturnTypeIndices
+            ) {
+                sampleReturnTypeIndices +=
+                    returnTypeIndex
+            }
+        }
+        if (maxReturnTypeIndex < 0) {
+            return null
+        }
 
         val pointerSize = image.pointerSize
         val pairStride = pointerSize * 2L
