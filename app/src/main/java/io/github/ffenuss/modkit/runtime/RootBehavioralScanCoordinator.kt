@@ -69,7 +69,7 @@ data class BehavioralScanSample(
     val elapsedMs: Long,
 )
 
-private data class BehavioralTrack(
+internal data class BehavioralTrack(
     val address: Long,
     val valueType: RuntimeValueType,
     val regionStart: Long,
