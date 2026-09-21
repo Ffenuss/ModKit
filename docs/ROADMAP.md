@@ -190,11 +190,11 @@ Status: **PLANNED / ACTIVE FOUNDATION**
 - [x] Internal sandbox profile store plus import/parser; validate package/version/artifact SHA before launch
 - [x] Root Android managed-profile sandbox backend: separate Android user/profile app-data, install-existing, launcher resolution and launch without uninstalling or clearing the original user-0 package
 - [x] Root process attach accepts an exact PID so original and sandbox processes with the same package name remain distinguishable
-- [ ] In-process runtime executor with instruction-cache-safe native patch application and verified rollback
+- [x] Root sandbox native-code activation: exact sandbox PID, SHA/version validation, PT_LOAD/load-bias address resolution, stopped-process write/read-back and verified partial-profile rollback\n- [ ] In-process injected runtime executor for non-root/clone-package activation and richer per-control hooks
 - [ ] Non-root clone-package sandbox backend that rewrites package identity safely and never replaces the original package
 - [ ] Overlay menu generated from confirmed sandbox profile controls and bound only to validated targets
 - [x] Persist selected mod configuration separately from the original APK
-- [ ] Re-resolve ASLR/module addresses and activate selected sandbox modifications on every launch
+- [x] Re-resolve ASLR/module addresses and activate selected root-sandbox modifications on every launch\n- [ ] External overlay controls for per-mod enable/disable while the sandbox game is foreground
 - [ ] Never expose billing/auth/anti-cheat bypass as an automatic profile action
 
 ## Phase 8 — Non-ARM64 deep completion

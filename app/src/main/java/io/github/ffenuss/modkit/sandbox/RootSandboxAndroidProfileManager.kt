@@ -14,6 +14,7 @@ data class RootSandboxLaunchResult(
     val userId: Int,
     val packageName: String,
     val launcherComponent: String,
+    val pid: Int,
 )
 
 object RootSandboxAndroidProfileManager {
@@ -128,6 +129,130 @@ object RootSandboxAndroidProfileManager {
         require(launch.exitCode == 0) {
             "Android не запустил sandbox-копию приложения."
         }
-        return RootSandboxLaunchResult(profile.userId, packageName, component)
+        val pid =
+            resolveProcessPid(
+                userId = profile.userId,
+                packageName = packageName,
+                cancellation = cancellation,
+                runner = runner,
+            )
+        return RootSandboxLaunchResult(
+            userId = profile.userId,
+            packageName = packageName,
+            launcherComponent = component,
+            pid = pid,
+        )
     }
+
+    private fun resolveProcessPid(
+        userId: Int,
+        packageName: String,
+        cancellation: CancellationSignal,
+        runner: RootCommandRunner,
+    ): Int {
+        repeat(30) {
+            if (cancellation.isCancelled()) {
+                error("Sandbox process resolution cancelled.")
+            }
+            val pidResult =
+                runner.run(
+                    command = "pidof " + packageName,
+                    maxOutputBytes = 4096,
+                    cancellation = cancellation,
+                )
+            if (
+                pidResult.exitCode == 0 &&
+                !pidResult.truncated
+            ) {
+                val matches =
+                    pidResult.output
+                        .toString(Charsets.UTF_8)
+                        .trim()
+                        .split(Regex("\\s+"))
+                        .mapNotNull {
+                            it.toIntOrNull()
+                        }
+                        .filter {
+                            it > 0
+                        }
+                        .filter {
+                            pid ->
+                            processBelongsToUser(
+                                pid = pid,
+                                expectedUserId = userId,
+                                packageName = packageName,
+                                cancellation = cancellation,
+                                runner = runner,
+                            )
+                        }
+                        .distinct()
+                if (matches.size == 1) {
+                    return matches.single()
+                }
+                require(matches.size <= 1) {
+                    "Для sandbox user найдено несколько main PID одного package."
+                }
+            }
+            Thread.sleep(100L)
+        }
+        error(
+            "Sandbox-копия запущена, но её точный PID не удалось подтвердить.",
+        )
+    }
+
+    private fun processBelongsToUser(
+        pid: Int,
+        expectedUserId: Int,
+        packageName: String,
+        cancellation: CancellationSignal,
+        runner: RootCommandRunner,
+    ): Boolean {
+        val cmdline =
+            runner.run(
+                command = "cat /proc/" + pid + "/cmdline",
+                maxOutputBytes = 4096,
+                cancellation = cancellation,
+            )
+        if (
+            cmdline.exitCode != 0 ||
+            cmdline.truncated ||
+            cmdline.output
+                .toString(Charsets.UTF_8)
+                .substringBefore('\u0000')
+                .trim() !=
+            packageName
+        ) {
+            return false
+        }
+        val status =
+            runner.run(
+                command = "cat /proc/" + pid + "/status",
+                maxOutputBytes = 64 * 1024,
+                cancellation = cancellation,
+            )
+        if (
+            status.exitCode != 0 ||
+            status.truncated
+        ) {
+            return false
+        }
+        val uid =
+            status.output
+                .toString(Charsets.UTF_8)
+                .lineSequence()
+                .firstOrNull {
+                    it.startsWith("Uid:")
+                }
+                ?.substringAfter("Uid:")
+                ?.trim()
+                ?.split(Regex("\\s+"))
+                ?.firstOrNull()
+                ?.toIntOrNull()
+                ?: return false
+        return uid / PER_USER_RANGE ==
+            expectedUserId
+    }
+
+    private const val PER_USER_RANGE =
+        100_000
 }
