@@ -475,6 +475,77 @@ fun AutoModScreen(
                         )
                     }
 
+                    analysisResult.il2cppFastDump
+                        ?.metadata
+                        ?.let {
+                            metadata ->
+                            Text(
+                                "IL2CPP metadata найдено: " +
+                                    metadata.methods.size +
+                                    " методов · " +
+                                    metadata.fields.size +
+                                    " полей · " +
+                                    metadata.types.size +
+                                    " типов.",
+                                style =
+                                    MaterialTheme.typography
+                                        .bodySmall,
+                            )
+                            val binding =
+                                analysisResult
+                                    .il2cppBinaryBinding
+                            if (
+                                binding != null &&
+                                !binding
+                                    .exactBindingAvailable
+                            ) {
+                                Text(
+                                    "Важно: код и metadata найдены. Ноль exact-методов означает, " +
+                                        "что не завершилось только сопоставление MethodDef → адрес в libil2cpp.so, " +
+                                        "а не что в игре нет методов.",
+                                    style =
+                                        MaterialTheme.typography
+                                            .bodySmall,
+                                )
+                                val memoryWarning =
+                                    binding.warnings
+                                        .firstOrNull {
+                                            warning ->
+                                            warning.contains(
+                                                "allocate",
+                                                ignoreCase =
+                                                    true,
+                                            ) ||
+                                                warning.contains(
+                                                    "OOM",
+                                                    ignoreCase =
+                                                        true,
+                                                ) ||
+                                                warning.contains(
+                                                    "heap",
+                                                    ignoreCase =
+                                                        true,
+                                                )
+                                        }
+                                if (
+                                    memoryWarning != null
+                                ) {
+                                    Text(
+                                        "Предыдущая точная привязка упёрлась в лимит памяти Android. " +
+                                            "В этой версии используется bounded/compact binding и low-memory retry.",
+                                        color =
+                                            MaterialTheme
+                                                .colorScheme
+                                                .error,
+                                        style =
+                                            MaterialTheme
+                                                .typography
+                                                .bodySmall,
+                                    )
+                                }
+                            }
+                        }
+
                     val runtimes =
                         analysisResult.index.runtimeProfiles
                     if (runtimes.isNotEmpty()) {
