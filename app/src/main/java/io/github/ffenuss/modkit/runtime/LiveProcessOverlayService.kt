@@ -439,6 +439,32 @@ class LiveProcessOverlayService : Service() {
             matchWidth(),
         )
 
+        val trainingRow3 =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+            }
+        trainingRow3.addView(
+            trainingButton(
+                "Предмет",
+                BehavioralActionHint
+                    .ITEM_CHANGE,
+            ),
+            weighted(),
+        )
+        trainingRow3.addView(
+            trainingButton(
+                "Другое",
+                BehavioralActionHint
+                    .OTHER,
+            ),
+            weighted(),
+        )
+        body.addView(
+            trainingRow3,
+            matchWidth(),
+        )
+
         body.addView(
             sectionTitle(
                 "Кандидаты автосканирования",
@@ -742,6 +768,8 @@ class LiveProcessOverlayService : Service() {
                                     .AUTO,
                             cancellation =
                                 AtomicCancellationSignal(),
+                            visibleLimit =
+                                5,
                         )
                 }
             main.post {
