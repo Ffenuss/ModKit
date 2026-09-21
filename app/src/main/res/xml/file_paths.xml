@@ -6,4 +6,7 @@
     <files-path
         name="expert_lab_export"
         path="expert-lab-export/" />
+    <files-path
+        name="root_process_dump"
+        path="root-process-dump/" />
 </paths>

@@ -13,6 +13,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import io.github.ffenuss.modkit.analysis.AnalysisManager
+import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.AnalysisRunState
 import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
@@ -23,7 +24,10 @@ import io.github.ffenuss.modkit.ui.screens.AnalysisScreen
 import io.github.ffenuss.modkit.ui.screens.AutoModScreen
 import io.github.ffenuss.modkit.ui.screens.ExpertLabScreen
 import io.github.ffenuss.modkit.ui.screens.InstalledAppsScreen
+import io.github.ffenuss.modkit.runtime.RootAccessProbeResult
+import io.github.ffenuss.modkit.runtime.RootProcessDiscovery
 import io.github.ffenuss.modkit.ui.screens.RecoveryScreen
+import io.github.ffenuss.modkit.ui.screens.RootProcessLabScreen
 import io.github.ffenuss.modkit.ui.screens.RestoringPartialScreen
 import io.github.ffenuss.modkit.ui.screens.TargetSelectionScreen
 import kotlinx.coroutines.Dispatchers
@@ -31,7 +35,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-private enum class Screen { TARGET, INSTALLED_APPS, EXPERT_LAB, AUTOMOD }
+private enum class Screen {
+    TARGET,
+    INSTALLED_APPS,
+    ROOT_PROCESS,
+    EXPERT_LAB,
+    AUTOMOD,
+}
 
 @Composable
 fun ModKitApp() {
@@ -68,6 +78,19 @@ fun ModKitApp() {
     var installedApps by remember { mutableStateOf<List<InstalledAppTarget>>(emptyList()) }
     var installedLoading by remember { mutableStateOf(false) }
     var installedError by remember { mutableStateOf<String?>(null) }
+
+    var rootProbe by remember {
+        mutableStateOf<RootAccessProbeResult?>(null)
+    }
+    var rootChecking by remember {
+        mutableStateOf(false)
+    }
+    var rootInitialPackage by remember {
+        mutableStateOf<String?>(null)
+    }
+    var rootReturnScreen by remember {
+        mutableStateOf(Screen.TARGET)
+    }
 
     var autoModTarget by remember { mutableStateOf<AnalysisTargetDescriptor?>(null) }
     var autoModResult by remember { mutableStateOf<FastAnalysisResult?>(null) }
@@ -302,6 +325,36 @@ fun ModKitApp() {
                     screen =
                         Screen.EXPERT_LAB
                 },
+                rootProbe = rootProbe,
+                rootChecking =
+                    rootChecking,
+                onCheckRoot = {
+                    if (!rootChecking) {
+                        rootChecking = true
+                        scope.launch {
+                            rootProbe =
+                                withContext(
+                                    Dispatchers.IO,
+                                ) {
+                                    RootProcessDiscovery
+                                        .probe(
+                                            cancellation =
+                                                AtomicCancellationSignal(),
+                                        )
+                                }
+                            rootChecking =
+                                false
+                        }
+                    }
+                },
+                onOpenRootProcessLab = {
+                    rootInitialPackage =
+                        null
+                    rootReturnScreen =
+                        Screen.TARGET
+                    screen =
+                        Screen.ROOT_PROCESS
+                },
             )
 
             Screen.INSTALLED_APPS -> InstalledAppsScreen(
@@ -314,6 +367,20 @@ fun ModKitApp() {
                     AnalysisManager.startInstalled(app)
                 },
             )
+
+            Screen.ROOT_PROCESS ->
+                RootProcessLabScreen(
+                    onBack = {
+                        rootInitialPackage =
+                            null
+                        screen =
+                            rootReturnScreen
+                    },
+                    initialRootProbe =
+                        rootProbe,
+                    initialPackageName =
+                        rootInitialPackage,
+                )
 
             Screen.EXPERT_LAB ->
                 ExpertLabScreen(
@@ -345,16 +412,18 @@ fun ModKitApp() {
                             screen = Screen.TARGET
                         },
                         onOpenRootRuntime = {
-                                currentResult,
+                                _,
                             ->
-                            expertInitialTarget =
-                                target
-                            expertInitialResult =
-                                currentResult
-                            expertReturnScreen =
+                            rootInitialPackage =
+                                (
+                                    target as?
+                                        AnalysisTargetDescriptor
+                                            .InstalledPackage
+                                    )?.packageName
+                            rootReturnScreen =
                                 Screen.AUTOMOD
                             screen =
-                                Screen.EXPERT_LAB
+                                Screen.ROOT_PROCESS
                         },
                     )
                 } else {
