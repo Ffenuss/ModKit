@@ -65,6 +65,10 @@ object Il2CppCodeGenScanner {
     private const val MAX_MODULES = 4_096
     private const val MAX_METHOD_POINTERS = 5_000_000
     private const val MAX_SAMPLED_POINTERS = 32
+    // Keep exact bindings useful on low-memory Android devices. Project/game
+    // assemblies are materialized first; additional libraries fill the
+    // remaining bounded slots.
+    private const val MAX_MATERIALIZED_BINDINGS = 30_000
     private const val MAX_FALLBACK_SCAN_BYTES = 256L * 1024L * 1024L
     private const val FALLBACK_WINDOW_BYTES = 1 * 1024 * 1024
     private const val HEARTBEAT_MS = 1_500L
@@ -177,6 +181,7 @@ object Il2CppCodeGenScanner {
                     progress = progress,
                     libraryEntry = libraryEntry,
                     metadataRegistrationVa = metadataRegistration,
+                    blockers = blockers,
                 )
             } else {
                 emptyList()
@@ -1143,21 +1148,28 @@ object Il2CppCodeGenScanner {
         progress: ProgressSink,
         libraryEntry: String,
         metadataRegistrationVa: Long?,
+        blockers: MutableList<String>,
     ): List<Il2CppMethodBinaryBinding> {
         val modulesByName =
             modules.groupBy {
                 it.moduleName.lowercase()
             }
-        val imageByTypeIndex =
-            HashMap<Int, Il2CppImageDefinition>(
-                metadata.types.size * 2,
-            )
         val parsedTypeLimit =
             (
                 metadata.types
                     .maxOfOrNull { it.index }
                     ?: -1
                 ) + 1
+        if (parsedTypeLimit <= 0) {
+            return emptyList()
+        }
+
+        // An array is substantially cheaper than tens of thousands of boxed
+        // Int keys in a HashMap and gives O(1) owner-image lookup.
+        val imageByTypeIndex =
+            arrayOfNulls<Il2CppImageDefinition>(
+                parsedTypeLimit,
+            )
         metadata.images.forEach { imageDef ->
             if (
                 imageDef.typeStart >= 0 &&
@@ -1174,92 +1186,221 @@ object Il2CppCodeGenScanner {
                     typeIndex in
                     imageDef.typeStart until endExclusive
                 ) {
-                    imageByTypeIndex.putIfAbsent(
-                        typeIndex,
-                        imageDef,
-                    )
+                    if (
+                        imageByTypeIndex[typeIndex] == null
+                    ) {
+                        imageByTypeIndex[typeIndex] =
+                            imageDef
+                    }
                 }
             }
         }
 
         val out =
             ArrayList<Il2CppMethodBinaryBinding>(
-                metadata.methods.size,
+                minOf(
+                    metadata.methods.size,
+                    MAX_MATERIALIZED_BINDINGS,
+                ),
             )
         var lastHeartbeat = 0L
+        var visited = 0
 
-        metadata.methods.forEachIndexed { index, method ->
-            if (index % 256 == 0) {
-                if (cancellation.isCancelled()) throw AnalysisCancelledException()
-                val now = System.currentTimeMillis()
-                if (now - lastHeartbeat >= HEARTBEAT_MS) {
-                    lastHeartbeat = now
-                    progress.publish(
-                        EngineProgress(
-                            engineId = "il2cpp.codegen-bind",
-                            scheduleClass = EngineScheduleClass.CONFIRMATION,
-                            state = RunState.RUNNING,
-                            currentTask = "IL2CPP: metadata token → native slot",
-                            currentArtifact = libraryEntry,
-                            processed = index.toLong(),
-                            total = metadata.methods.size.toLong(),
-                            lastHeartbeatEpochMs = now,
-                        ),
-                    )
-                }
+        fun priority(
+            imageName: String,
+        ): Int {
+            val name =
+                imageName.lowercase()
+                    .removeSuffix(".dll")
+            return when {
+                name == "assembly-csharp" -> 0
+                name.startsWith("assembly-csharp-") -> 0
+                name.startsWith("unityengine") ||
+                    name.startsWith("unity.") ||
+                    name == "mscorlib" ||
+                    name == "netstandard" ||
+                    name.startsWith("system") ||
+                    name.startsWith("microsoft") ->
+                    2
+                else -> 1
             }
+        }
 
-            val imageDef =
-                imageByTypeIndex[
-                    method.declaringTypeIndex
-                ] ?: return@forEachIndexed
-
-            val module = modulesByName[imageDef.name.lowercase()]?.singleOrNull()
-                ?: return@forEachIndexed
-
-            val rid = (method.token and 0x00ffffffL).toInt()
-            if (rid <= 0) return@forEachIndexed
+        fun appendBinding(
+            method: Il2CppMethodDefinition,
+            imageDef: Il2CppImageDefinition,
+            module: Il2CppCodeGenModuleEvidence,
+        ) {
+            val rid =
+                (method.token and 0x00ffffffL)
+                    .toInt()
+            if (rid <= 0) return
             val slot = rid - 1
-            if (slot >= module.methodPointerCount || module.methodPointersVirtualAddress <= 0L) {
-                return@forEachIndexed
+            if (
+                slot >= module.methodPointerCount ||
+                module.methodPointersVirtualAddress <= 0L
+            ) {
+                return
             }
 
-            val functionVa = image.readPointerAtVa(
-                module.methodPointersVirtualAddress + slot.toLong() * image.pointerSize,
-            ) ?: return@forEachIndexed
-
-            if (functionVa <= 0L || !image.isExecutableVa(functionVa)) return@forEachIndexed
+            val functionVa =
+                image.readPointerAtVa(
+                    module.methodPointersVirtualAddress +
+                        slot.toLong() *
+                            image.pointerSize,
+                ) ?: return
+            if (
+                functionVa <= 0L ||
+                !image.isExecutableVa(
+                    functionVa,
+                )
+            ) {
+                return
+            }
 
             val returnKind =
                 resolveReturnKind(
                     image = image,
-                    metadataRegistrationVa = metadataRegistrationVa,
-                    returnTypeIndex = method.returnTypeIndex,
+                    metadataRegistrationVa =
+                        metadataRegistrationVa,
+                    returnTypeIndex =
+                        method.returnTypeIndex,
                 )
-            out += Il2CppMethodBinaryBinding(
-                methodIndex = method.index,
-                managedIdentity = method.declaringType + "." + method.name,
-                metadataToken = method.token,
-                imageName = imageDef.name,
-                moduleName = module.moduleName,
-                slotIndex = slot,
-                functionVirtualAddress = functionVa,
-                functionFileOffset = image.fileOffsetForVa(functionVa),
-                returnTypeIndex = method.returnTypeIndex,
-                returnKind = returnKind,
-                returnTypeProof =
+            out +=
+                Il2CppMethodBinaryBinding(
+                    methodIndex =
+                        method.index,
+                    managedIdentity =
+                        method.declaringType +
+                            "." +
+                            method.name,
+                    metadataToken =
+                        method.token,
+                    imageName =
+                        imageDef.name,
+                    moduleName =
+                        module.moduleName,
+                    slotIndex = slot,
+                    functionVirtualAddress =
+                        functionVa,
+                    functionFileOffset =
+                        image.fileOffsetForVa(
+                            functionVa,
+                        ),
+                    returnTypeIndex =
+                        method.returnTypeIndex,
+                    returnKind =
+                        returnKind,
+                    returnTypeProof =
+                        if (
+                            metadataRegistrationVa !=
+                            null &&
+                            returnKind !=
+                            Il2CppNativeReturnKind
+                                .UNKNOWN
+                        ) {
+                            "Il2CppMetadataRegistration.types[" +
+                                method.returnTypeIndex +
+                                "] @ 0x" +
+                                metadataRegistrationVa
+                                    .toString(16)
+                        } else {
+                            null
+                        },
+                )
+        }
+
+        // Three allocation-free passes prioritize project code, then plugins,
+        // then framework/system code. This makes Patch Lab useful before the
+        // bounded materialization limit is reached.
+        for (wantedPriority in 0..2) {
+            for (
+                method in
+                metadata.methods
+            ) {
+                if (
+                    out.size >=
+                    MAX_MATERIALIZED_BINDINGS
+                ) {
+                    blockers +=
+                        "BINDING_MATERIALIZATION_LIMIT_REACHED:" +
+                            MAX_MATERIALIZED_BINDINGS
+                    return out
+                }
+                visited++
+                if (visited % 512 == 0) {
                     if (
-                        metadataRegistrationVa != null &&
-                        returnKind != Il2CppNativeReturnKind.UNKNOWN
+                        cancellation.isCancelled()
                     ) {
-                        "Il2CppMetadataRegistration.types[" +
-                            method.returnTypeIndex +
-                            "] @ 0x" +
-                            metadataRegistrationVa.toString(16)
-                    } else {
-                        null
-                    },
-            )
+                        throw AnalysisCancelledException()
+                    }
+                    val now =
+                        System.currentTimeMillis()
+                    if (
+                        now - lastHeartbeat >=
+                        HEARTBEAT_MS
+                    ) {
+                        lastHeartbeat = now
+                        progress.publish(
+                            EngineProgress(
+                                engineId =
+                                    "il2cpp.codegen-bind",
+                                scheduleClass =
+                                    EngineScheduleClass
+                                        .CONFIRMATION,
+                                state =
+                                    RunState.RUNNING,
+                                currentTask =
+                                    "IL2CPP: metadata token → native slot" +
+                                        " · priority " +
+                                        wantedPriority,
+                                currentArtifact =
+                                    libraryEntry,
+                                processed =
+                                    visited.toLong(),
+                                total =
+                                    metadata.methods
+                                        .size
+                                        .toLong() *
+                                        3L,
+                                lastHeartbeatEpochMs =
+                                    now,
+                            ),
+                        )
+                    }
+                }
+
+                val typeIndex =
+                    method.declaringTypeIndex
+                if (
+                    typeIndex !in
+                    imageByTypeIndex.indices
+                ) {
+                    continue
+                }
+                val imageDef =
+                    imageByTypeIndex[
+                        typeIndex
+                    ] ?: continue
+                if (
+                    priority(
+                        imageDef.name,
+                    ) != wantedPriority
+                ) {
+                    continue
+                }
+                val module =
+                    modulesByName[
+                        imageDef.name
+                            .lowercase()
+                    ]?.singleOrNull()
+                        ?: continue
+                appendBinding(
+                    method = method,
+                    imageDef = imageDef,
+                    module = module,
+                )
+            }
         }
         return out
     }

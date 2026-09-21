@@ -36,6 +36,12 @@ internal fun Il2CppBinaryBindingResult.toEvidenceBlockers(): List<EvidenceBlocke
                         "Stripped binary recovery did not prove a unique CodeGenModule array."
                     code == "NO_METHOD_TOKEN_SLOT_BINDINGS" ->
                         "No MethodDef token could be bound to an executable method-pointer slot."
+                    code.startsWith(
+                        "BINDING_MATERIALIZATION_LIMIT_REACHED:",
+                    ) ->
+                        "Exact binding succeeded, but Android memory protection limited the in-memory target list to " +
+                            code.substringAfter(':') +
+                            " prioritized methods. Project assemblies are kept first; absence beyond this cap is not proof of absence."
                     else ->
                         "Binary confirmation is blocked: $code."
                 },

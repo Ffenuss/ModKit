@@ -13,9 +13,8 @@ object Il2CppDumpRenderer {
         progress: ProgressSink,
     ) {
         output.parentFile?.mkdirs()
-        val fieldsByType = model.fields.groupBy { it.declaringTypeIndex }
-        val methodsByType = model.methods.groupBy { it.declaringTypeIndex }
-
+        // Type definitions already contain contiguous field/method ranges.
+        // Do not duplicate large metadata tables into groupBy maps on Android.
         output.bufferedWriter(Charsets.UTF_8, 128 * 1024).use { writer ->
             writer.appendLine("// ModKit IL2CPP metadata dump")
             writer.appendLine("// metadata_version=" + (model.metadataVersion ?: "unknown"))
@@ -60,30 +59,74 @@ object Il2CppDumpRenderer {
                 writer.appendLine(indent + "class " + safeIdentifier(type.name))
                 writer.appendLine(indent + "{")
 
-                fieldsByType[type.index].orEmpty().sortedBy { it.index }.forEach { field ->
-                    writer.appendLine(
-                        indent + "    // FieldIndex: " + field.index +
-                            " · token: 0x" + field.token.toString(16) +
-                            " · typeIndex: " + field.typeIndex,
-                    )
-                    writer.appendLine(
-                        indent + "    /*TypeRef#" + field.typeIndex + "*/ object " +
-                            safeIdentifier(field.name) + ";",
-                    )
+                if (
+                    type.fieldStart >= 0 &&
+                    type.fieldCount > 0
+                ) {
+                    repeat(type.fieldCount) {
+                            relative ->
+                        val field =
+                            model.fields.getOrNull(
+                                type.fieldStart +
+                                    relative,
+                            ) ?: return@repeat
+                        if (
+                            field.declaringTypeIndex !=
+                            type.index
+                        ) {
+                            return@repeat
+                        }
+                        writer.appendLine(
+                            indent + "    // FieldIndex: " + field.index +
+                                " · token: 0x" + field.token.toString(16) +
+                                " · typeIndex: " + field.typeIndex,
+                        )
+                        writer.appendLine(
+                            indent + "    /*TypeRef#" + field.typeIndex + "*/ object " +
+                                safeIdentifier(field.name) + ";",
+                        )
+                    }
                 }
 
-                methodsByType[type.index].orEmpty().sortedBy { it.index }.forEach { method ->
-                    writer.appendLine(
-                        indent + "    // MethodIndex: " + method.index +
-                            " · token: 0x" + method.token.toString(16) +
-                            " · flags: 0x" + method.flags.toString(16),
-                    )
-                    writer.append(indent + "    object " + safeIdentifier(method.name) + "(")
-                    repeat(method.parameterCount) { parameterIndex ->
-                        if (parameterIndex > 0) writer.append(", ")
-                        writer.append("object arg" + parameterIndex)
+                if (
+                    type.methodStart >= 0 &&
+                    type.methodCount > 0
+                ) {
+                    repeat(type.methodCount) {
+                            relative ->
+                        val method =
+                            model.methods.getOrNull(
+                                type.methodStart +
+                                    relative,
+                            ) ?: return@repeat
+                        if (
+                            method.declaringTypeIndex !=
+                            type.index
+                        ) {
+                            return@repeat
+                        }
+                        writer.appendLine(
+                            indent + "    // MethodIndex: " + method.index +
+                                " · token: 0x" + method.token.toString(16) +
+                                " · flags: 0x" + method.flags.toString(16),
+                        )
+                        writer.append(
+                            indent + "    object " +
+                                safeIdentifier(method.name) +
+                                "(",
+                        )
+                        repeat(method.parameterCount) {
+                                parameterIndex ->
+                            if (parameterIndex > 0) {
+                                writer.append(", ")
+                            }
+                            writer.append(
+                                "object arg" +
+                                    parameterIndex,
+                            )
+                        }
+                        writer.appendLine(");")
                     }
-                    writer.appendLine(");")
                 }
 
                 writer.appendLine(indent + "}")

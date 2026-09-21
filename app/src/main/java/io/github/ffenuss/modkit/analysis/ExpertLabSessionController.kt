@@ -199,6 +199,86 @@ object ExpertLabSessionController {
     }
 
     /**
+     * Opens the already analyzed installed target directly in Expert Lab.
+     *
+     * The current installed APK set is SHA-revalidated before reusing any
+     * executable binding/runtime state, so AutoMod can hand off to root tools
+     * without forcing a second deep analysis.
+     */
+    suspend fun openExistingInstalled(
+        context: Context,
+        target: AnalysisTargetDescriptor.InstalledPackage,
+        result: FastAnalysisResult,
+        cancellation: CancellationSignal,
+        progress: ProgressSink,
+    ): ExpertLabSession {
+        val installed =
+            withContext(Dispatchers.IO) {
+                InstalledAppRepository(context)
+                    .find(target.packageName)
+            } ?: error(
+                "Установленное приложение больше недоступно: " +
+                    target.packageName,
+            )
+
+        val verification =
+            withContext(Dispatchers.IO) {
+                TargetShaVerifier.verify(
+                    context = context,
+                    target = target,
+                    expectedSha256 =
+                        result.index.artifactSha256,
+                    cancellation =
+                        cancellation,
+                    progress = progress,
+                )
+            }
+        require(verification.matches) {
+            verification.blockerMessage
+                ?: "SHA текущего установленного приложения не совпадает с анализом."
+        }
+        require(
+            result.index.sources.size ==
+                installed.apkFiles.size,
+        ) {
+            "Набор APK/split изменился после анализа; откройте приложение заново."
+        }
+
+        val workspace =
+            AnalysisWorkspace(
+                index = result.index,
+                sources =
+                    result.index.sources
+                        .zip(
+                            installed.apkFiles,
+                        )
+                        .map {
+                                pair,
+                            ->
+                            WorkspaceSource(
+                                pair.first,
+                                pair.second,
+                            )
+                        },
+            )
+        return ExpertLabSession(
+            label =
+                target.label +
+                    " · " +
+                    target.packageName,
+            sourceKind =
+                ExpertLabSourceKind
+                    .INSTALLED_APP,
+            result = result,
+            workspace = workspace,
+            temporaryFiles =
+                emptyList(),
+            packageName =
+                target.packageName,
+        )
+    }
+
+    /**
      * Imported maps are useful for mapping diagnostics, but they no longer
      * promote a target to RUNTIME_CONFIRMED because process identity cannot be
      * independently established from pasted text.

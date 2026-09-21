@@ -71,6 +71,15 @@ fun ModKitApp() {
 
     var autoModTarget by remember { mutableStateOf<AnalysisTargetDescriptor?>(null) }
     var autoModResult by remember { mutableStateOf<FastAnalysisResult?>(null) }
+    var expertInitialTarget by remember {
+        mutableStateOf<AnalysisTargetDescriptor?>(null)
+    }
+    var expertInitialResult by remember {
+        mutableStateOf<FastAnalysisResult?>(null)
+    }
+    var expertReturnScreen by remember {
+        mutableStateOf(Screen.TARGET)
+    }
 
     LaunchedEffect(Unit) {
         if (
@@ -285,7 +294,14 @@ fun ModKitApp() {
                         ),
                     )
                 },
-                onOpenExpertLab = { screen = Screen.EXPERT_LAB },
+                onOpenExpertLab = {
+                    expertInitialTarget = null
+                    expertInitialResult = null
+                    expertReturnScreen =
+                        Screen.TARGET
+                    screen =
+                        Screen.EXPERT_LAB
+                },
             )
 
             Screen.INSTALLED_APPS -> InstalledAppsScreen(
@@ -299,7 +315,21 @@ fun ModKitApp() {
                 },
             )
 
-            Screen.EXPERT_LAB -> ExpertLabScreen(onBack = { screen = Screen.TARGET })
+            Screen.EXPERT_LAB ->
+                ExpertLabScreen(
+                    onBack = {
+                        expertInitialTarget =
+                            null
+                        expertInitialResult =
+                            null
+                        screen =
+                            expertReturnScreen
+                    },
+                    initialTarget =
+                        expertInitialTarget,
+                    initialResult =
+                        expertInitialResult,
+                )
 
             Screen.AUTOMOD -> {
                 val target = autoModTarget
@@ -313,6 +343,18 @@ fun ModKitApp() {
                             autoModTarget = null
                             autoModResult = null
                             screen = Screen.TARGET
+                        },
+                        onOpenRootRuntime = {
+                                currentResult,
+                            ->
+                            expertInitialTarget =
+                                target
+                            expertInitialResult =
+                                currentResult
+                            expertReturnScreen =
+                                Screen.AUTOMOD
+                            screen =
+                                Screen.EXPERT_LAB
                         },
                     )
                 } else {

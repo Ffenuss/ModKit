@@ -370,7 +370,7 @@ class EngineResultCache(
         const val IL2CPP_FAST_DUMP_ENGINE_VERSION = "4"
 
         const val IL2CPP_BINARY_BINDING_ENGINE_ID = "il2cpp.codegen-bind"
-        const val IL2CPP_BINARY_BINDING_ENGINE_VERSION = "14"
+        const val IL2CPP_BINARY_BINDING_ENGINE_VERSION = "15"
 
         const val RUNTIME_EVIDENCE_ENGINE_ID = "runtime.evidence"
         const val RUNTIME_EVIDENCE_ENGINE_VERSION = "3"

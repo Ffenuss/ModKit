@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.3**
+Current application version: **0.0.4**
 
 ## Product flow
 

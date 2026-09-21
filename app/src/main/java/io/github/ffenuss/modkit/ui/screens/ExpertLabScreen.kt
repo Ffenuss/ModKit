@@ -33,6 +33,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
+import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
+import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.ExpertCapabilityValidator
 import io.github.ffenuss.modkit.analysis.ExpertLabReportExporter
@@ -74,7 +76,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun ExpertLabScreen(onBack: () -> Unit) {
+fun ExpertLabScreen(
+    onBack: () -> Unit,
+    initialTarget: AnalysisTargetDescriptor? = null,
+    initialResult: FastAnalysisResult? = null,
+) {
     val context = LocalContext.current
     val appContext = context.applicationContext
     val scope = rememberCoroutineScope()
@@ -259,6 +265,59 @@ fun ExpertLabScreen(onBack: () -> Unit) {
             } finally {
                 finishOperation()
             }
+        }
+    }
+
+    LaunchedEffect(
+        initialTarget,
+        initialResult?.index?.artifactSha256,
+    ) {
+        if (
+            session != null ||
+            initialTarget == null ||
+            initialResult == null
+        ) {
+            return@LaunchedEffect
+        }
+        val installedTarget =
+            initialTarget as?
+                AnalysisTargetDescriptor
+                    .InstalledPackage
+                ?: return@LaunchedEffect
+        val signal =
+            beginOperation(
+                "expert.current-target",
+            ) ?: return@LaunchedEffect
+        try {
+            session =
+                ExpertLabSessionController
+                    .openExistingInstalled(
+                        context = appContext,
+                        target =
+                            installedTarget,
+                        result =
+                            initialResult,
+                        cancellation =
+                            signal,
+                        progress =
+                            ProgressSink {
+                                update ->
+                                scope.launch {
+                                    progress =
+                                        update
+                                }
+                            },
+                    )
+        } catch (_: AnalysisCancelledException) {
+            error =
+                "Открытие текущей цели в Expert Lab отменено."
+        } catch (failure: Throwable) {
+            error =
+                failure.message
+                    ?: failure.javaClass
+                        .simpleName
+        } finally {
+            finishOperation()
         }
     }
 
