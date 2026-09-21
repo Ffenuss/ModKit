@@ -1424,7 +1424,7 @@ fun RootProcessLabScreen(
                             ) {
                                 "Полный режим проходит все readable mappings процесса, кроме специальных kernel mappings, и не останавливается на 256 MiB. Перед стартом проверяется свободное место."
                             } else {
-                                "Быстрый режим ограничен 256 MiB и приоритизирует app/runtime mappings без системных библиотек.",
+                                "Быстрый режим ограничен 256 MiB и приоритизирует app/runtime mappings без системных библиотек."
                             },
                             style =
                                 MaterialTheme.typography
