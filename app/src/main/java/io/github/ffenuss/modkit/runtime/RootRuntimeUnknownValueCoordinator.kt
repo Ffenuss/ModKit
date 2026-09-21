@@ -52,6 +52,7 @@ object RootRuntimeUnknownValueCoordinator {
         runner: RootCommandRunner =
             AndroidRootCommandRunner(),
         maxBytes: Long? = null,
+        expectedPid: Int? = null,
     ): RootRuntimeUnknownBaseline {
         require(
             maxBytes == null ||
@@ -67,6 +68,7 @@ object RootRuntimeUnknownValueCoordinator {
                     cancellation =
                         cancellation,
                     runner = runner,
+                    expectedPid = expectedPid,
                 )
         val ranges =
             RootRuntimeValueScanCoordinator
@@ -319,6 +321,7 @@ object RootRuntimeUnknownValueCoordinator {
                     cancellation =
                         cancellation,
                     runner = runner,
+                    expectedPid = baseline.pid,
                 )
         require(
             capture.pid ==
