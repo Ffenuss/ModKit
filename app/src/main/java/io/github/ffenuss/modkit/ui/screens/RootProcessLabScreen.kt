@@ -47,6 +47,7 @@ import io.github.ffenuss.modkit.runtime.RootProcessDiscovery
 import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpCoordinator
 import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpProgress
 import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpResult
+import io.github.ffenuss.modkit.runtime.RootProcessOverlayLauncher
 import io.github.ffenuss.modkit.runtime.RootRunningAppProcess
 import io.github.ffenuss.modkit.runtime.RootRuntimeCaptureCoordinator
 import io.github.ffenuss.modkit.runtime.RootRuntimePointerScanResult
@@ -681,6 +682,23 @@ fun RootProcessLabScreen(
                 ) {
                     "PID процесса изменился. Обновите список процессов."
                 }
+                val overlay =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootProcessOverlayLauncher
+                            .startAndBringToFront(
+                                packageName =
+                                    item.process
+                                        .packageName,
+                                pid =
+                                    capture.pid,
+                                label =
+                                    item.label,
+                                cancellation =
+                                    signal,
+                            )
+                    }
                 clearRuntimeState()
                 selected = item
                 attachedPid =
@@ -691,9 +709,10 @@ fun RootProcessLabScreen(
                         .count {
                             it.isNotBlank()
                         }
-                discoverMods(
-                    item,
-                )
+                saveMessage =
+                    "Подключено к PID " +
+                        overlay.pid +
+                        ". Игра выведена на передний план; MK overlay готов для автоскана, обучения действий и ручного поиска."
             } catch (_: AnalysisCancelledException) {
                 error =
                     "Подключение к процессу отменено."
