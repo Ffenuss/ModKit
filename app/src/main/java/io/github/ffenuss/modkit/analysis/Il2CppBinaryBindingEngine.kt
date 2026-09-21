@@ -20,6 +20,7 @@ object Il2CppBinaryBindingEngine {
     private const val EXTRACTION_READ_BYTES = 16 * 1024
     private const val EXTRACTION_WRITE_BUFFER_BYTES = 256 * 1024
     private const val HEARTBEAT_MS = 1_000L
+    private const val LOW_MEMORY_BINDING_LIMIT = 5_000
 
     fun analyze(
         workspace: AnalysisWorkspace,
@@ -104,15 +105,47 @@ object Il2CppBinaryBindingEngine {
                 continue
             }
 
-            val scan = runCatching {
-                Il2CppCodeGenScanner.scan(
-                    file = output,
-                    libraryEntry = candidate.container + ":" + candidate.path,
-                    metadata = metadata,
-                    cancellation = cancellation,
-                    progress = progress,
-                )
-            }
+            var lowMemoryRetry = false
+            val scan =
+                runCatching {
+                    Il2CppCodeGenScanner.scan(
+                        file = output,
+                        libraryEntry =
+                            candidate.container +
+                                ":" +
+                                candidate.path,
+                        metadata = metadata,
+                        cancellation =
+                            cancellation,
+                        progress = progress,
+                    )
+                }.recoverCatching {
+                    failure ->
+                    if (
+                        failure !is
+                        OutOfMemoryError
+                    ) {
+                        throw failure
+                    }
+                    lowMemoryRetry = true
+                    // The first attempt has unwound. Ask ART to reclaim scan
+                    // windows and partial binding objects before the compact
+                    // retry; source metadata stays SHA-bound and unchanged.
+                    System.gc()
+                    Il2CppCodeGenScanner.scan(
+                        file = output,
+                        libraryEntry =
+                            candidate.container +
+                                ":" +
+                                candidate.path,
+                        metadata = metadata,
+                        cancellation =
+                            cancellation,
+                        progress = progress,
+                        maxMaterializedBindings =
+                            LOW_MEMORY_BINDING_LIMIT,
+                    )
+                }
             val scanFailure = scan.exceptionOrNull()
             if (scanFailure != null) {
                 if (scanFailure is AnalysisCancelledException) throw scanFailure
@@ -122,6 +155,14 @@ object Il2CppBinaryBindingEngine {
             }
 
             val item = scan.getOrThrow()
+            if (lowMemoryRetry) {
+                warnings +=
+                    candidate.path +
+                        ": low-memory IL2CPP retry succeeded; " +
+                        "exact bindings are capped at " +
+                        LOW_MEMORY_BINDING_LIMIT +
+                        " prioritized methods for this pass."
+            }
             evidence += item
             if (item.exactBindingAvailable) {
                 break

@@ -70,7 +70,7 @@ object Il2CppCodeGenScanner {
     // remaining bounded slots.
     private const val MAX_MATERIALIZED_BINDINGS = 30_000
     private const val MAX_FALLBACK_SCAN_BYTES = 256L * 1024L * 1024L
-    private const val FALLBACK_WINDOW_BYTES = 1 * 1024 * 1024
+    private const val FALLBACK_WINDOW_BYTES = 128 * 1024
     private const val HEARTBEAT_MS = 1_500L
 
     private data class ModuleArrayCandidate(
@@ -84,7 +84,15 @@ object Il2CppCodeGenScanner {
         metadata: Il2CppMetadataModel,
         cancellation: CancellationSignal,
         progress: ProgressSink,
+        maxMaterializedBindings: Int =
+            MAX_MATERIALIZED_BINDINGS,
     ): Il2CppBinaryEvidence {
+        require(
+            maxMaterializedBindings in
+                1..MAX_MATERIALIZED_BINDINGS,
+        ) {
+            "Invalid IL2CPP binding materialization limit."
+        }
         ElfImage.open(
             file = file,
             cancellation = cancellation,
@@ -182,6 +190,8 @@ object Il2CppCodeGenScanner {
                     libraryEntry = libraryEntry,
                     metadataRegistrationVa = metadataRegistration,
                     blockers = blockers,
+                    maxMaterializedBindings =
+                        maxMaterializedBindings,
                 )
             } else {
                 emptyList()
@@ -1149,6 +1159,7 @@ object Il2CppCodeGenScanner {
         libraryEntry: String,
         metadataRegistrationVa: Long?,
         blockers: MutableList<String>,
+        maxMaterializedBindings: Int,
     ): List<Il2CppMethodBinaryBinding> {
         val modulesByName =
             modules.groupBy {
@@ -1200,7 +1211,7 @@ object Il2CppCodeGenScanner {
             ArrayList<Il2CppMethodBinaryBinding>(
                 minOf(
                     metadata.methods.size,
-                    MAX_MATERIALIZED_BINDINGS,
+                    maxMaterializedBindings,
                 ),
             )
         var lastHeartbeat = 0L
@@ -1320,11 +1331,11 @@ object Il2CppCodeGenScanner {
             ) {
                 if (
                     out.size >=
-                    MAX_MATERIALIZED_BINDINGS
+                    maxMaterializedBindings
                 ) {
                     blockers +=
                         "BINDING_MATERIALIZATION_LIMIT_REACHED:" +
-                            MAX_MATERIALIZED_BINDINGS
+                            maxMaterializedBindings
                     return out
                 }
                 visited++
