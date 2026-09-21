@@ -59,6 +59,7 @@ import io.github.ffenuss.modkit.runtime.RuntimeScanAlignment
 import io.github.ffenuss.modkit.runtime.RuntimeValueRefinement
 import io.github.ffenuss.modkit.runtime.RuntimeValueScanner
 import io.github.ffenuss.modkit.runtime.RuntimeValueType
+import io.github.ffenuss.modkit.sandbox.SandboxProfileStore
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -95,6 +96,12 @@ fun RootProcessLabScreen(
     val repository =
         remember {
             InstalledAppRepository(
+                appContext,
+            )
+        }
+    val sandboxProfileStore =
+        remember {
+            SandboxProfileStore(
                 appContext,
             )
         }
@@ -600,6 +607,8 @@ fun RootProcessLabScreen(
                                         .packageName,
                                 cancellation =
                                     signal,
+                                expectedPid =
+                                    item.process.pid,
                             )
                     }
                 require(
@@ -645,6 +654,8 @@ fun RootProcessLabScreen(
                                         .packageName,
                                 cancellation =
                                     signal,
+                                expectedPid =
+                                    item.process.pid,
                             )
                     }
                 require(
@@ -1914,6 +1925,39 @@ fun RootProcessLabScreen(
                                 ) {
                                     Text(
                                         "Сохранить профиль выбранных модов",
+                                    )
+                                }
+
+                                OutlinedButton(
+                                    onClick = {
+                                        val app =
+                                            selectedItem.app
+                                        if (app != null) {
+                                            val result =
+                                                runCatching {
+                                                    val text =
+                                                        RootModProfileWriter.build(
+                                                            app = app,
+                                                            discovery = discovery,
+                                                            selectedIds = selectedModIds,
+                                                        )
+                                                    sandboxProfileStore.save(text)
+                                                }
+                                            saveMessage =
+                                                if (result.isSuccess) {
+                                                    "Выбранные моды добавлены в ModKit Sandbox."
+                                                } else {
+                                                    "Не удалось добавить в Sandbox: " +
+                                                        (result.exceptionOrNull()?.message
+                                                            ?: "ошибка профиля")
+                                                }
+                                        }
+                                    },
+                                    enabled = selectedModIds.isNotEmpty(),
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        "Добавить в ModKit Sandbox",
                                     )
                                 }
                             }

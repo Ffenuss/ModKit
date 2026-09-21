@@ -28,6 +28,7 @@ import io.github.ffenuss.modkit.runtime.RootAccessProbeResult
 import io.github.ffenuss.modkit.runtime.RootProcessDiscovery
 import io.github.ffenuss.modkit.ui.screens.RecoveryScreen
 import io.github.ffenuss.modkit.ui.screens.RootProcessLabScreen
+import io.github.ffenuss.modkit.ui.screens.SandboxScreen
 import io.github.ffenuss.modkit.ui.screens.RestoringPartialScreen
 import io.github.ffenuss.modkit.ui.screens.TargetSelectionScreen
 import kotlinx.coroutines.Dispatchers
@@ -39,6 +40,7 @@ private enum class Screen {
     TARGET,
     INSTALLED_APPS,
     ROOT_PROCESS,
+    SANDBOX,
     EXPERT_LAB,
     AUTOMOD,
 }
@@ -355,6 +357,10 @@ fun ModKitApp() {
                     screen =
                         Screen.ROOT_PROCESS
                 },
+                onOpenSandbox = {
+                    screen =
+                        Screen.SANDBOX
+                },
             )
 
             Screen.INSTALLED_APPS -> InstalledAppsScreen(
@@ -380,6 +386,25 @@ fun ModKitApp() {
                         rootProbe,
                     initialPackageName =
                         rootInitialPackage,
+                )
+
+            Screen.SANDBOX ->
+                SandboxScreen(
+                    onBack = {
+                        screen =
+                            Screen.TARGET
+                    },
+                    initialRootProbe =
+                        rootProbe,
+                    onOpenRootRuntime = {
+                        packageName ->
+                        rootInitialPackage =
+                            packageName
+                        rootReturnScreen =
+                            Screen.SANDBOX
+                        screen =
+                            Screen.ROOT_PROCESS
+                    },
                 )
 
             Screen.EXPERT_LAB ->

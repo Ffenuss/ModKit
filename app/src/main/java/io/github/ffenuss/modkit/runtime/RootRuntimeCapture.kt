@@ -322,6 +322,7 @@ object RootRuntimeCaptureCoordinator {
         cancellation: CancellationSignal,
         runner: RootCommandRunner = AndroidRootCommandRunner(),
         maxMapsBytes: Int = ProcMapsCaptureReader.DEFAULT_MAX_BYTES,
+        expectedPid: Int? = null,
     ): RootRuntimeCaptureResult {
         require(validPackageName(packageName)) {
             "Installed package name is invalid for root runtime capture."
@@ -378,7 +379,12 @@ object RootRuntimeCaptureCoordinator {
                 emptyList()
             }
         val candidates =
-            if (
+            if (expectedPid != null) {
+                require(expectedPid > 0) {
+                    "Expected PID must be positive."
+                }
+                listOf(expectedPid)
+            } else if (
                 pidofCandidates
                     .isNotEmpty()
             ) {

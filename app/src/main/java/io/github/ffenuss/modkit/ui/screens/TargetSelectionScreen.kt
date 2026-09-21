@@ -26,6 +26,7 @@ fun TargetSelectionScreen(
     rootChecking: Boolean,
     onCheckRoot: () -> Unit,
     onOpenRootProcessLab: () -> Unit,
+    onOpenSandbox: () -> Unit,
 ) {
     Column(
         modifier = Modifier.fillMaxSize().padding(20.dp),
@@ -109,6 +110,10 @@ fun TargetSelectionScreen(
                 Text("4  С root: формирует runtime-профиль выбранных модов для запуска без изменения исходного APK")
                 Text("5  Полный dump, raw memory и Expert Lab остаются дополнительными инструментами")
             }
+        }
+
+        Button(onClick = onOpenSandbox, modifier = Modifier.fillMaxWidth()) {
+            Text("ModKit Sandbox / ParallelSpace")
         }
 
         OutlinedButton(onClick = onOpenExpertLab, modifier = Modifier.fillMaxWidth()) {
