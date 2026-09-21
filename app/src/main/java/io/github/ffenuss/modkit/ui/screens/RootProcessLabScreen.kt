@@ -39,6 +39,7 @@ import io.github.ffenuss.modkit.runtime.RootAccessProbeResult
 import io.github.ffenuss.modkit.runtime.RootProcessDiscovery
 import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpCoordinator
 import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpExporter
+import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpProgress
 import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpResult
 import io.github.ffenuss.modkit.runtime.RootRunningAppProcess
 import io.github.ffenuss.modkit.runtime.RootRuntimeCaptureCoordinator
@@ -147,6 +148,11 @@ fun RootProcessLabScreen(
             RootProcessMemoryDumpResult?
         >(null)
     }
+    var dumpProgress by remember {
+        mutableStateOf<
+            RootProcessMemoryDumpProgress?
+        >(null)
+    }
 
     var valueType by remember {
         mutableStateOf(
@@ -228,6 +234,7 @@ fun RootProcessLabScreen(
         valueScan = null
         pointerScan = null
         dumpResult = null
+        dumpProgress = null
         writesEnabled = false
         writeValue = ""
         writeMessage = null
@@ -418,6 +425,7 @@ fun RootProcessLabScreen(
             begin(
                 "Runtime dump",
             ) ?: return
+        dumpProgress = null
         scope.launch {
             try {
                 val output =
@@ -448,6 +456,13 @@ fun RootProcessLabScreen(
                                     output,
                                 cancellation =
                                     signal,
+                                progress = {
+                                    update ->
+                                    scope.launch {
+                                        dumpProgress =
+                                            update
+                                    }
+                                },
                             )
                     }
             } catch (_: AnalysisCancelledException) {
@@ -1062,6 +1077,50 @@ fun RootProcessLabScreen(
                                 busyLabel,
                             ),
                         )
+                        if (
+                            busyLabel ==
+                                "Runtime dump"
+                        ) {
+                            dumpProgress
+                                ?.let {
+                                    progress ->
+                                    Text(
+                                        progress.phase +
+                                            " · " +
+                                            (
+                                                progress.fraction *
+                                                    100f
+                                                ).toInt() +
+                                            "% · " +
+                                            (
+                                                progress.processedBytes /
+                                                    (1024L * 1024L)
+                                                ) +
+                                            "/" +
+                                            (
+                                                progress.plannedBytes /
+                                                    (1024L * 1024L)
+                                                ) +
+                                            " MiB · slices " +
+                                            progress.processedSlices +
+                                            "/" +
+                                            progress.totalSlices +
+                                            " · regions " +
+                                            progress.processedRegions +
+                                            "/" +
+                                            progress.totalRegions +
+                                            " · " +
+                                            (
+                                                progress.elapsedMs /
+                                                    1000L
+                                                ) +
+                                            " с",
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                    )
+                                }
+                        }
                         OutlinedButton(
                             onClick = {
                                 cancellation?.cancel()
@@ -1293,6 +1352,7 @@ fun RootProcessLabScreen(
                         Text(
                             "Дамп читается из живой памяти процесса через root. " +
                                 "В ZIP входят maps.txt, индекс сегментов и доступные runtime mapping bytes. " +
+                                "Чтение выполняется пакетами по page-aligned диапазонам; во время дампа выше показывается реальный прогресс. " +
                                 "Это не исходный C#/Java-код, а состояние процесса после загрузки.",
                             style =
                                 MaterialTheme.typography

@@ -3,6 +3,7 @@ package io.github.ffenuss.modkit.runtime
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.Deflater
@@ -20,13 +21,71 @@ data class RootProcessMemoryDumpResult(
     val truncatedByByteLimit: Boolean,
 )
 
+data class RootProcessMemoryDumpProgress(
+    val phase: String,
+    val plannedBytes: Long,
+    val processedBytes: Long,
+    val dumpedBytes: Long,
+    val totalSlices: Int,
+    val processedSlices: Int,
+    val totalRegions: Int,
+    val processedRegions: Int,
+    val elapsedMs: Long,
+) {
+    val fraction: Float
+        get() =
+            if (plannedBytes <= 0L) {
+                0f
+            } else {
+                (
+                    processedBytes
+                        .toDouble() /
+                        plannedBytes
+                            .toDouble()
+                    )
+                    .coerceIn(
+                        0.0,
+                        1.0,
+                    )
+                    .toFloat()
+            }
+}
+
+private data class DumpSlice(
+    val region: ProcMapRegion,
+    val address: Long,
+    val length: Int,
+) {
+    val endExclusive: Long
+        get() =
+            address +
+                length.toLong()
+
+    val fastAligned: Boolean
+        get() =
+            address % FAST_DD_BLOCK_BYTES ==
+                0L &&
+                length %
+                    FAST_DD_BLOCK_BYTES ==
+                0
+}
+
+private const val FAST_DD_BLOCK_BYTES =
+    4 * 1024
+private const val FAST_BATCH_BYTES =
+    8 * 1024 * 1024
+private const val MAX_SLICES_PER_BATCH =
+    48
+private const val DUMP_COMMAND_TIMEOUT_MS =
+    30_000L
+
 /**
  * Creates a bounded ZIP snapshot from the live, root-readable process image.
  *
- * The snapshot is deliberately runtime-first: maps are captured from the
- * selected running process and memory bytes come from /proc/<pid>/mem. This is
- * useful for unpacked/decrypted runtime state without pretending that it is the
- * original source code.
+ * Important performance property: normal /proc/<pid>/maps ranges are page
+ * aligned, so dump reads use 4 KiB dd blocks and batch multiple mappings into
+ * one privileged command. The old bs=1 path caused millions of tiny reads and
+ * could make a 256 MiB snapshot appear hung for many minutes.
  */
 object RootProcessMemoryDumpCoordinator {
     const val DEFAULT_MAX_DUMP_BYTES =
@@ -37,17 +96,44 @@ object RootProcessMemoryDumpCoordinator {
         outputFile: File,
         cancellation: CancellationSignal,
         runner: RootCommandRunner =
-            AndroidRootCommandRunner(),
+            AndroidRootCommandRunner(
+                timeoutMs =
+                    DUMP_COMMAND_TIMEOUT_MS,
+            ),
         maxDumpBytes: Long =
             DEFAULT_MAX_DUMP_BYTES,
+        progress:
+            (
+                RootProcessMemoryDumpProgress,
+            ) -> Unit = { },
     ): RootProcessMemoryDumpResult {
         require(
             maxDumpBytes in
                 1L..
-                    (2L * 1024L * 1024L * 1024L),
+                    (2L *
+                        1024L *
+                        1024L *
+                        1024L),
         ) {
             "Некорректный лимит runtime dump."
         }
+
+        val startedAt =
+            System.currentTimeMillis()
+        progress(
+            RootProcessMemoryDumpProgress(
+                phase =
+                    "Проверка процесса и maps",
+                plannedBytes = 0,
+                processedBytes = 0,
+                dumpedBytes = 0,
+                totalSlices = 0,
+                processedSlices = 0,
+                totalRegions = 0,
+                processedRegions = 0,
+                elapsedMs = 0,
+            ),
+        )
 
         val capture =
             RootRuntimeCaptureCoordinator
@@ -90,6 +176,19 @@ object RootProcessMemoryDumpCoordinator {
             "В процессе нет подходящих readable runtime mappings."
         }
 
+        val plan =
+            buildPlan(
+                candidates =
+                    candidates,
+                maxDumpBytes =
+                    maxDumpBytes,
+            )
+        require(
+            plan.slices.isNotEmpty(),
+        ) {
+            "Не удалось сформировать план runtime dump."
+        }
+
         outputFile.parentFile
             ?.mkdirs()
         val temp =
@@ -101,21 +200,55 @@ object RootProcessMemoryDumpCoordinator {
         temp.delete()
         outputFile.delete()
 
-        val reader =
+        val slowReader =
             RootProcMemRuntimeMemoryReader(
                 pid = capture.pid,
                 runner = runner,
             )
         var dumpedBytes = 0L
-        var dumpedRegions = 0
-        var skippedRegions = 0
-        var truncated = false
+        var processedBytes = 0L
+        var processedSlices = 0
+        val successfulRegions =
+            linkedSetOf<
+                Pair<Long, Long>
+            >()
+        val attemptedRegions =
+            linkedSetOf<
+                Pair<Long, Long>
+            >()
         val index =
             StringBuilder().apply {
                 appendLine(
-                    "start\tend\tpermissions\tfileOffset\tpath\tdumpedBytes\tentry",
+                    "sliceStart\tsliceEnd\tmapStart\tmapEnd\tpermissions\tfileOffset\tpath\tdumpedBytes\tentry",
                 )
             }
+
+        fun publish(
+            phase: String,
+        ) {
+            progress(
+                RootProcessMemoryDumpProgress(
+                    phase = phase,
+                    plannedBytes =
+                        plan.plannedBytes,
+                    processedBytes =
+                        processedBytes,
+                    dumpedBytes =
+                        dumpedBytes,
+                    totalSlices =
+                        plan.slices.size,
+                    processedSlices =
+                        processedSlices,
+                    totalRegions =
+                        plan.plannedRegions,
+                    processedRegions =
+                        attemptedRegions.size,
+                    elapsedMs =
+                        System.currentTimeMillis() -
+                            startedAt,
+                ),
+            )
+        }
 
         try {
             ZipOutputStream(
@@ -145,10 +278,20 @@ object RootProcessMemoryDumpCoordinator {
                                 .capturedAtEpochMs +
                             "\n" +
                             "mapsSha256=" +
-                            capture.capture.sha256 +
+                            capture.capture
+                                .sha256 +
                             "\n" +
                             "maxDumpBytes=" +
                             maxDumpBytes +
+                            "\n" +
+                            "plannedBytes=" +
+                            plan.plannedBytes +
+                            "\n" +
+                            "fastDdBlockBytes=" +
+                            FAST_DD_BLOCK_BYTES +
+                            "\n" +
+                            "fastBatchBytes=" +
+                            FAST_BATCH_BYTES +
                             "\n",
                 )
                 putText(
@@ -158,163 +301,212 @@ object RootProcessMemoryDumpCoordinator {
                         capture.capture.text,
                 )
 
-                regionLoop@ for (
-                    region in candidates
+                publish(
+                    "Чтение runtime memory",
+                )
+
+                var cursor = 0
+                while (
+                    cursor <
+                    plan.slices.size
                 ) {
                     checkCancelled(
                         cancellation,
                     )
-                    val remainingBudget =
-                        maxDumpBytes -
-                            dumpedBytes
+                    val first =
+                        plan.slices[cursor]
+
                     if (
-                        remainingBudget <= 0L
+                        first.fastAligned
                     ) {
-                        truncated = true
-                        break
+                        val batch =
+                            mutableListOf<
+                                DumpSlice
+                            >()
+                        var batchBytes = 0
+                        var scan = cursor
+                        while (
+                            scan <
+                            plan.slices.size &&
+                            batch.size <
+                            MAX_SLICES_PER_BATCH
+                        ) {
+                            val slice =
+                                plan.slices[scan]
+                            if (
+                                !slice.fastAligned ||
+                                batchBytes +
+                                    slice.length >
+                                    FAST_BATCH_BYTES
+                            ) {
+                                break
+                            }
+                            batch += slice
+                            batchBytes +=
+                                slice.length
+                            scan++
+                        }
+
+                        if (
+                            batch.isNotEmpty()
+                        ) {
+                            val bytes =
+                                readFastBatch(
+                                    pid =
+                                        capture.pid,
+                                    slices =
+                                        batch,
+                                    runner =
+                                        runner,
+                                    cancellation =
+                                        cancellation,
+                                )
+                            if (
+                                bytes != null
+                            ) {
+                                var offset = 0
+                                batch.forEach {
+                                    slice ->
+                                    attemptedRegions +=
+                                        slice.region
+                                            .start to
+                                            slice.region
+                                                .endExclusive
+                                    writeSlice(
+                                        zip = zip,
+                                        index =
+                                            index,
+                                        slice =
+                                            slice,
+                                        bytes =
+                                            bytes,
+                                        offset =
+                                            offset,
+                                    )
+                                    successfulRegions +=
+                                        slice.region
+                                            .start to
+                                            slice.region
+                                                .endExclusive
+                                    offset +=
+                                        slice.length
+                                    dumpedBytes +=
+                                        slice.length
+                                    processedBytes +=
+                                        slice.length
+                                    processedSlices++
+                                }
+                                cursor +=
+                                    batch.size
+                                publish(
+                                    "Чтение runtime memory",
+                                )
+                                continue
+                            }
+
+                            // Batch-level failure can happen when one mapping
+                            // changes while the game is running. Retry every
+                            // planned slice independently instead of throwing
+                            // away the whole dump.
+                            batch.forEach {
+                                slice ->
+                                checkCancelled(
+                                    cancellation,
+                                )
+                                attemptedRegions +=
+                                    slice.region
+                                        .start to
+                                        slice.region
+                                            .endExclusive
+                                val individual =
+                                    readFastSlice(
+                                        pid =
+                                            capture.pid,
+                                        slice =
+                                            slice,
+                                        runner =
+                                            runner,
+                                        cancellation =
+                                            cancellation,
+                                    )
+                                if (
+                                    individual !=
+                                    null
+                                ) {
+                                    writeSlice(
+                                        zip = zip,
+                                        index =
+                                            index,
+                                        slice =
+                                            slice,
+                                        bytes =
+                                            individual,
+                                        offset = 0,
+                                    )
+                                    successfulRegions +=
+                                        slice.region
+                                            .start to
+                                            slice.region
+                                                .endExclusive
+                                    dumpedBytes +=
+                                        individual.size
+                                }
+                                processedBytes +=
+                                    slice.length
+                                processedSlices++
+                                publish(
+                                    "Чтение runtime memory",
+                                )
+                            }
+                            cursor +=
+                                batch.size
+                            continue
+                        }
                     }
 
-                    val maxForRegion =
-                        minOf(
-                            region.size,
-                            remainingBudget,
+                    attemptedRegions +=
+                        first.region.start to
+                            first.region
+                                .endExclusive
+                    val bytes =
+                        readSlowSlice(
+                            slice = first,
+                            reader =
+                                slowReader,
+                            cancellation =
+                                cancellation,
                         )
-                    val entryName =
-                        "memory/" +
-                            region.start
-                                .toString(16) +
-                            "-" +
-                            region.endExclusive
-                                .toString(16) +
-                            "-" +
-                            sanitize(
-                                region.path
-                                    ?: "anonymous",
-                            ) +
-                            ".bin"
-
-                    var address =
-                        region.start
-                    var written =
-                        0L
-                    var entryOpened =
-                        false
-                    while (
-                        written <
-                        maxForRegion
+                    if (
+                        bytes != null
                     ) {
-                        checkCancelled(
-                            cancellation,
+                        writeSlice(
+                            zip = zip,
+                            index =
+                                index,
+                            slice = first,
+                            bytes = bytes,
+                            offset = 0,
                         )
-                        val request =
-                            minOf(
-                                maxForRegion -
-                                    written,
-                                ProcMemRuntimeMemoryReader
-                                    .MAX_READ_BYTES
-                                    .toLong(),
-                            ).toInt()
-                        if (request <= 0) {
-                            break
-                        }
-                        val bytes =
-                            reader.read(
-                                address =
-                                    address,
-                                size =
-                                    request,
-                                cancellation =
-                                    cancellation,
-                            )
-                        if (
-                            bytes == null ||
-                            bytes.isEmpty()
-                        ) {
-                            break
-                        }
-                        if (!entryOpened) {
-                            zip.putNextEntry(
-                                ZipEntry(
-                                    entryName,
-                                ),
-                            )
-                            entryOpened = true
-                        }
-                        zip.write(bytes)
-                        written +=
-                            bytes.size
+                        successfulRegions +=
+                            first.region
+                                .start to
+                                first.region
+                                    .endExclusive
                         dumpedBytes +=
                             bytes.size
-                        address +=
-                            bytes.size
-
-                        if (
-                            dumpedBytes >=
-                            maxDumpBytes
-                        ) {
-                            truncated = true
-                            break
-                        }
                     }
-
-                    if (entryOpened) {
-                        zip.closeEntry()
-                        dumpedRegions++
-                    } else {
-                        skippedRegions++
-                    }
-
-                    index.append(
-                        "0x",
-                    ).append(
-                        region.start
-                            .toString(16),
-                    ).append(
-                        '\t',
-                    ).append(
-                        "0x",
-                    ).append(
-                        region.endExclusive
-                            .toString(16),
-                    ).append(
-                        '\t',
-                    ).append(
-                        region.permissions,
-                    ).append(
-                        '\t',
-                    ).append(
-                        "0x",
-                    ).append(
-                        region.fileOffset
-                            .toString(16),
-                    ).append(
-                        '\t',
-                    ).append(
-                        region.path
-                            ?: "",
-                    ).append(
-                        '\t',
-                    ).append(
-                        written,
-                    ).append(
-                        '\t',
-                    ).append(
-                        if (
-                            entryOpened
-                        ) {
-                            entryName
-                        } else {
-                            ""
-                        },
-                    ).appendLine()
-
-                    if (
-                        truncated
-                    ) {
-                        break@regionLoop
-                    }
+                    processedBytes +=
+                        first.length
+                    processedSlices++
+                    cursor++
+                    publish(
+                        "Чтение runtime memory",
+                    )
                 }
 
+                publish(
+                    "Запись индекса",
+                )
                 putText(
                     zip = zip,
                     name =
@@ -322,6 +514,28 @@ object RootProcessMemoryDumpCoordinator {
                     text =
                         index.toString(),
                 )
+            }
+
+            checkCancelled(
+                cancellation,
+            )
+
+            // Re-prove the main process after the potentially long read. A
+            // replaced/reused PID invalidates the snapshot.
+            val after =
+                RootRuntimeCaptureCoordinator
+                    .captureMaps(
+                        packageName =
+                            packageName,
+                        cancellation =
+                            cancellation,
+                        runner = runner,
+                    )
+            require(
+                after.pid ==
+                    capture.pid,
+            ) {
+                "PID процесса изменился во время runtime dump."
             }
 
             require(
@@ -338,6 +552,9 @@ object RootProcessMemoryDumpCoordinator {
                 "Не удалось завершить runtime dump."
             }
 
+            publish(
+                "Готово",
+            )
             return RootProcessMemoryDumpResult(
                 packageName =
                     packageName,
@@ -348,19 +565,418 @@ object RootProcessMemoryDumpCoordinator {
                 mappedRegions =
                     candidates.size,
                 dumpedRegions =
-                    dumpedRegions,
+                    successfulRegions
+                        .size,
                 skippedRegions =
-                    skippedRegions,
+                    attemptedRegions
+                        .count {
+                            it !in
+                                successfulRegions
+                        },
                 dumpedBytes =
                     dumpedBytes,
                 truncatedByByteLimit =
-                    truncated,
+                    plan.truncated,
             )
         } catch (failure: Throwable) {
             temp.delete()
             outputFile.delete()
             throw failure
         }
+    }
+
+    private data class DumpPlan(
+        val slices: List<DumpSlice>,
+        val plannedBytes: Long,
+        val plannedRegions: Int,
+        val truncated: Boolean,
+    )
+
+    private fun buildPlan(
+        candidates:
+            List<ProcMapRegion>,
+        maxDumpBytes: Long,
+    ): DumpPlan {
+        val slices =
+            ArrayList<DumpSlice>()
+        val plannedRegions =
+            linkedSetOf<
+                Pair<Long, Long>
+            >()
+        var remainingBudget =
+            maxDumpBytes
+        var plannedBytes = 0L
+        var truncated = false
+
+        for (
+            region in candidates
+        ) {
+            if (
+                remainingBudget <= 0L
+            ) {
+                truncated = true
+                break
+            }
+            var regionRemaining =
+                minOf(
+                    region.size,
+                    remainingBudget,
+                )
+            if (
+                regionRemaining <
+                region.size
+            ) {
+                truncated = true
+            }
+            var address =
+                region.start
+            while (
+                regionRemaining > 0L
+            ) {
+                val chunk =
+                    minOf(
+                        regionRemaining,
+                        FAST_BATCH_BYTES
+                            .toLong(),
+                    ).toInt()
+                if (chunk <= 0) {
+                    break
+                }
+                slices +=
+                    DumpSlice(
+                        region = region,
+                        address =
+                            address,
+                        length =
+                            chunk,
+                    )
+                plannedRegions +=
+                    region.start to
+                        region.endExclusive
+                address +=
+                    chunk
+                regionRemaining -=
+                    chunk
+                remainingBudget -=
+                    chunk
+                plannedBytes +=
+                    chunk
+                if (
+                    remainingBudget <=
+                    0L
+                ) {
+                    if (
+                        address <
+                        region.endExclusive
+                    ) {
+                        truncated =
+                            true
+                    }
+                    break
+                }
+            }
+        }
+
+        if (
+            plannedRegions.size <
+            candidates.size
+        ) {
+            truncated = true
+        }
+
+        return DumpPlan(
+            slices = slices,
+            plannedBytes =
+                plannedBytes,
+            plannedRegions =
+                plannedRegions.size,
+            truncated = truncated,
+        )
+    }
+
+    private fun readFastBatch(
+        pid: Int,
+        slices: List<DumpSlice>,
+        runner: RootCommandRunner,
+        cancellation:
+            CancellationSignal,
+    ): ByteArray? {
+        if (
+            slices.isEmpty() ||
+            slices.any {
+                !it.fastAligned
+            }
+        ) {
+            return null
+        }
+        val expected =
+            slices.sumOf {
+                it.length
+            }
+        if (
+            expected !in
+            1..FAST_BATCH_BYTES
+        ) {
+            return null
+        }
+
+        val command =
+            slices.joinToString(
+                separator = "; ",
+            ) {
+                slice ->
+                fastDdCommand(
+                    pid = pid,
+                    address =
+                        slice.address,
+                    length =
+                        slice.length,
+                ) +
+                    " || exit 91"
+            }
+        val result =
+            try {
+                runner.run(
+                    command = command,
+                    maxOutputBytes =
+                        expected,
+                    cancellation =
+                        cancellation,
+                )
+            } catch (
+                failure:
+                    AnalysisCancelledException,
+            ) {
+                throw failure
+            } catch (_: Throwable) {
+                return null
+            }
+        if (
+            result.exitCode != 0 ||
+            result.truncated ||
+            result.output.size !=
+                expected
+        ) {
+            return null
+        }
+        return result.output
+    }
+
+    private fun readFastSlice(
+        pid: Int,
+        slice: DumpSlice,
+        runner: RootCommandRunner,
+        cancellation:
+            CancellationSignal,
+    ): ByteArray? {
+        if (!slice.fastAligned) {
+            return null
+        }
+        val result =
+            try {
+                runner.run(
+                    command =
+                        fastDdCommand(
+                            pid = pid,
+                            address =
+                                slice.address,
+                            length =
+                                slice.length,
+                        ),
+                    maxOutputBytes =
+                        slice.length,
+                    cancellation =
+                        cancellation,
+                )
+            } catch (
+                failure:
+                    AnalysisCancelledException,
+            ) {
+                throw failure
+            } catch (_: Throwable) {
+                return null
+            }
+        return result.output
+            .takeIf {
+                result.exitCode == 0 &&
+                    !result.truncated &&
+                    it.size ==
+                        slice.length
+            }
+    }
+
+    private fun fastDdCommand(
+        pid: Int,
+        address: Long,
+        length: Int,
+    ): String {
+        require(
+            address %
+                FAST_DD_BLOCK_BYTES ==
+                0L &&
+                length %
+                    FAST_DD_BLOCK_BYTES ==
+                    0
+        )
+        return "dd if=/proc/" +
+            pid +
+            "/mem bs=" +
+            FAST_DD_BLOCK_BYTES +
+            " skip=" +
+            (
+                address /
+                    FAST_DD_BLOCK_BYTES
+                ) +
+            " count=" +
+            (
+                length /
+                    FAST_DD_BLOCK_BYTES
+                ) +
+            " status=none 2>/dev/null"
+    }
+
+    private fun readSlowSlice(
+        slice: DumpSlice,
+        reader: RuntimeMemoryReader,
+        cancellation:
+            CancellationSignal,
+    ): ByteArray? {
+        val output =
+            ByteArrayOutputStream(
+                slice.length,
+            )
+        var address =
+            slice.address
+        var remaining =
+            slice.length
+        while (
+            remaining > 0
+        ) {
+            val request =
+                minOf(
+                    remaining,
+                    ProcMemRuntimeMemoryReader
+                        .MAX_READ_BYTES,
+                )
+            val bytes =
+                reader.read(
+                    address =
+                        address,
+                    size = request,
+                    cancellation =
+                        cancellation,
+                ) ?: return null
+            if (
+                bytes.size !=
+                request
+            ) {
+                return null
+            }
+            output.write(bytes)
+            remaining -=
+                bytes.size
+            address +=
+                bytes.size
+        }
+        return output.toByteArray()
+    }
+
+    private fun writeSlice(
+        zip: ZipOutputStream,
+        index: StringBuilder,
+        slice: DumpSlice,
+        bytes: ByteArray,
+        offset: Int,
+    ) {
+        require(
+            offset >= 0 &&
+                offset +
+                    slice.length <=
+                bytes.size
+        )
+        val entryName =
+            "memory/" +
+                slice.address
+                    .toString(16) +
+                "-" +
+                slice.endExclusive
+                    .toString(16) +
+                "-" +
+                sanitize(
+                    slice.region.path
+                        ?: "anonymous",
+                ) +
+                ".bin"
+        zip.putNextEntry(
+            ZipEntry(
+                entryName,
+            ),
+        )
+        zip.write(
+            bytes,
+            offset,
+            slice.length,
+        )
+        zip.closeEntry()
+
+        index.append(
+            "0x",
+        ).append(
+            slice.address
+                .toString(16),
+        ).append(
+            '\t',
+        ).append(
+            "0x",
+        ).append(
+            slice.endExclusive
+                .toString(16),
+        ).append(
+            '\t',
+        ).append(
+            "0x",
+        ).append(
+            slice.region.start
+                .toString(16),
+        ).append(
+            '\t',
+        ).append(
+            "0x",
+        ).append(
+            slice.region
+                .endExclusive
+                .toString(16),
+        ).append(
+            '\t',
+        ).append(
+            slice.region
+                .permissions,
+        ).append(
+            '\t',
+        ).append(
+            "0x",
+        ).append(
+            (
+                slice.region.fileOffset +
+                    (
+                        slice.address -
+                            slice.region.start
+                        )
+                ).toString(16),
+        ).append(
+            '\t',
+        ).append(
+            slice.region.path
+                ?: "",
+        ).append(
+            '\t',
+        ).append(
+            slice.length,
+        ).append(
+            '\t',
+        ).append(
+            entryName,
+        ).appendLine()
     }
 
     private fun includeRegion(

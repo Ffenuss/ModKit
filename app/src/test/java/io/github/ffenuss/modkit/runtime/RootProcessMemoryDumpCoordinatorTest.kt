@@ -2,6 +2,7 @@ package io.github.ffenuss.modkit.runtime
 
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.CancellationSignal
+import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.util.zip.ZipFile
 import org.junit.Assert.assertEquals
@@ -23,6 +24,10 @@ class RootProcessMemoryDumpCoordinatorTest {
                     "dump.zip",
                 )
 
+            val progress =
+                mutableListOf<
+                    RootProcessMemoryDumpProgress
+                >()
             val result =
                 RootProcessMemoryDumpCoordinator
                     .dump(
@@ -34,9 +39,25 @@ class RootProcessMemoryDumpCoordinatorTest {
                             AtomicCancellationSignal(),
                         runner = runner,
                         maxDumpBytes = 8192,
+                        progress = {
+                            progress += it
+                        },
                     )
 
             assertTrue(output.isFile)
+            assertTrue(
+                progress.any {
+                    it.processedBytes > 0L
+                },
+            )
+            assertTrue(
+                progress.last()
+                    .fraction >= 1f,
+            )
+            assertEquals(
+                1,
+                runner.memoryReadCommands,
+            )
             assertTrue(
                 result.dumpedRegions >= 1,
             )
@@ -84,6 +105,8 @@ class RootProcessMemoryDumpCoordinatorTest {
 
     private class FakeProcessRunner :
         RootCommandRunner {
+        var memoryReadCommands =
+            0
         private val memory =
             ByteArray(8192) {
                 index ->
@@ -138,37 +161,69 @@ class RootProcessMemoryDumpCoordinatorTest {
         private fun readMemory(
             command: String,
         ): RootCommandResult {
-            val skip =
-                Regex("""skip=(\d+)""")
-                    .find(command)
-                    ?.groupValues
-                    ?.get(1)
-                    ?.toLong()
-                    ?: return fail()
-            val count =
-                Regex("""count=(\d+)""")
-                    .find(command)
-                    ?.groupValues
-                    ?.get(1)
-                    ?.toInt()
-                    ?: return fail()
-            val offset =
-                (skip - 0x1000L)
-                    .toInt()
-            if (
-                offset < 0 ||
-                offset + count >
-                    memory.size
-            ) {
+            memoryReadCommands++
+            val regex =
+                Regex(
+                    "dd if=/proc/" +
+                        PID +
+                        "/mem bs=(\\d+) skip=(\\d+) count=(\\d+)",
+                )
+            val matches =
+                regex.findAll(
+                    command,
+                ).toList()
+            if (matches.isEmpty()) {
                 return fail()
+            }
+            val output =
+                ByteArrayOutputStream()
+            for (match in matches) {
+                val blockSize =
+                    match.groupValues[1]
+                        .toLong()
+                val skipBlocks =
+                    match.groupValues[2]
+                        .toLong()
+                val countBlocks =
+                    match.groupValues[3]
+                        .toLong()
+                val address =
+                    skipBlocks *
+                        blockSize
+                val byteCount =
+                    countBlocks *
+                        blockSize
+                if (
+                    blockSize <= 0L ||
+                    byteCount <= 0L ||
+                    byteCount >
+                        Int.MAX_VALUE
+                ) {
+                    return fail()
+                }
+                val offset =
+                    (address -
+                        0x1000L)
+                        .toInt()
+                val count =
+                    byteCount.toInt()
+                if (
+                    offset < 0 ||
+                    offset + count >
+                        memory.size
+                ) {
+                    return fail()
+                }
+                output.write(
+                    memory,
+                    offset,
+                    count,
+                )
             }
             return RootCommandResult(
                 exitCode = 0,
                 output =
-                    memory.copyOfRange(
-                        offset,
-                        offset + count,
-                    ),
+                    output.toByteArray(),
                 truncated = false,
             )
         }
