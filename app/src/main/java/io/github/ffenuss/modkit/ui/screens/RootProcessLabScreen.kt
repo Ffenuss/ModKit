@@ -1,5 +1,7 @@
 package io.github.ffenuss.modkit.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -33,12 +35,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
+import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.data.InstalledAppTarget
+import io.github.ffenuss.modkit.domain.EngineProgress
+import io.github.ffenuss.modkit.patch.RootModDiscoveryCoordinator
+import io.github.ffenuss.modkit.patch.RootModDiscoveryResult
+import io.github.ffenuss.modkit.patch.RootModProfileWriter
 import io.github.ffenuss.modkit.runtime.RootAccessProbeResult
 import io.github.ffenuss.modkit.runtime.RootProcessDiscovery
 import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpCoordinator
-import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpExporter
 import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpProgress
 import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpResult
 import io.github.ffenuss.modkit.runtime.RootRunningAppProcess
@@ -155,7 +161,43 @@ fun RootProcessLabScreen(
         >(null)
     }
     var fullDumpMode by remember {
-        mutableStateOf(true)
+        mutableStateOf(false)
+    }
+
+    var modDiscovery by remember {
+        mutableStateOf<
+            RootModDiscoveryResult?
+        >(null)
+    }
+    var modScanBusy by remember {
+        mutableStateOf(false)
+    }
+    var modScanProgress by remember {
+        mutableStateOf<
+            EngineProgress?
+        >(null)
+    }
+    var modScanError by remember {
+        mutableStateOf<String?>(null)
+    }
+    var modScanSignal by remember {
+        mutableStateOf<
+            AtomicCancellationSignal?
+        >(null)
+    }
+    var selectedModIds by remember {
+        mutableStateOf<Set<String>>(
+            emptySet(),
+        )
+    }
+    var pendingDumpSave by remember {
+        mutableStateOf<File?>(null)
+    }
+    var pendingProfileText by remember {
+        mutableStateOf<String?>(null)
+    }
+    var saveMessage by remember {
+        mutableStateOf<String?>(null)
     }
 
     var valueType by remember {
@@ -205,6 +247,132 @@ fun RootProcessLabScreen(
         mutableStateOf<Long?>(null)
     }
 
+    val dumpSaveLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts
+                .CreateDocument(
+                    "application/zip",
+                ),
+        ) {
+            uri ->
+            val source =
+                pendingDumpSave
+            pendingDumpSave = null
+            if (
+                uri != null &&
+                source != null
+            ) {
+                scope.launch {
+                    val saved =
+                        runCatching {
+                            withContext(
+                                Dispatchers.IO,
+                            ) {
+                                require(
+                                    source.isFile,
+                                ) {
+                                    "Runtime dump больше недоступен."
+                                }
+                                appContext
+                                    .contentResolver
+                                    .openOutputStream(
+                                        uri,
+                                        "w",
+                                    )
+                                    ?.use {
+                                        output ->
+                                        source
+                                            .inputStream()
+                                            .use {
+                                                input ->
+                                                input.copyTo(
+                                                    output,
+                                                    1024 *
+                                                        1024,
+                                                )
+                                            }
+                                    }
+                                    ?: error(
+                                        "Не удалось открыть выбранный файл для записи.",
+                                    )
+                            }
+                        }
+                    saveMessage =
+                        if (
+                            saved.isSuccess
+                        ) {
+                            "Runtime dump сохранён на устройство."
+                        } else {
+                            "Не удалось сохранить runtime dump: " +
+                                (
+                                    saved.exceptionOrNull()
+                                        ?.message
+                                        ?: "ошибка записи"
+                                    )
+                        }
+                }
+            }
+        }
+
+    val profileSaveLauncher =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts
+                .CreateDocument(
+                    RootModProfileWriter
+                        .MIME_TYPE,
+                ),
+        ) {
+            uri ->
+            val text =
+                pendingProfileText
+            pendingProfileText = null
+            if (
+                uri != null &&
+                text != null
+            ) {
+                scope.launch {
+                    val saved =
+                        runCatching {
+                            withContext(
+                                Dispatchers.IO,
+                            ) {
+                                appContext
+                                    .contentResolver
+                                    .openOutputStream(
+                                        uri,
+                                        "w",
+                                    )
+                                    ?.bufferedWriter(
+                                        Charsets.UTF_8,
+                                    )
+                                    ?.use {
+                                        writer ->
+                                        writer.write(
+                                            text,
+                                        )
+                                    }
+                                    ?: error(
+                                        "Не удалось открыть выбранный файл для записи.",
+                                    )
+                            }
+                        }
+                    saveMessage =
+                        if (
+                            saved.isSuccess
+                        ) {
+                            "Профиль модификаций сохранён на устройство."
+                        } else {
+                            "Не удалось сохранить профиль: " +
+                                (
+                                    saved.exceptionOrNull()
+                                        ?.message
+                                        ?: "ошибка записи"
+                                    )
+                        }
+                }
+            }
+        }
+
     fun begin(
         label: String,
     ): AtomicCancellationSignal? {
@@ -239,6 +407,13 @@ fun RootProcessLabScreen(
         pointerScan = null
         dumpResult = null
         dumpProgress = null
+        modScanSignal?.cancel()
+        modScanSignal = null
+        modScanBusy = false
+        modScanProgress = null
+        modScanError = null
+        modDiscovery = null
+        selectedModIds = emptySet()
         writesEnabled = false
         writeValue = ""
         writeMessage = null
@@ -247,6 +422,7 @@ fun RootProcessLabScreen(
     DisposableEffect(Unit) {
         onDispose {
             cancellation?.cancel()
+            modScanSignal?.cancel()
             freezeJob?.cancel()
             RootRuntimeUnknownValueCoordinator
                 .deleteBaseline(
@@ -370,6 +546,85 @@ fun RootProcessLabScreen(
         }
     }
 
+    fun discoverMods(
+        item: RootProcessUiItem,
+    ) {
+        val app =
+            item.app
+                ?: run {
+                    modScanError =
+                        "Для процесса не найден установленный APK."
+                    return
+                }
+        if (modScanBusy) {
+            return
+        }
+
+        val signal =
+            AtomicCancellationSignal()
+        modScanSignal = signal
+        modScanBusy = true
+        modScanProgress = null
+        modScanError = null
+        modDiscovery = null
+        selectedModIds = emptySet()
+
+        scope.launch {
+            try {
+                val discovered =
+                    RootModDiscoveryCoordinator
+                        .discover(
+                            context =
+                                appContext,
+                            app =
+                                app,
+                            cancellation =
+                                signal,
+                            progress =
+                                ProgressSink {
+                                    update ->
+                                    scope.launch {
+                                        modScanProgress =
+                                            update
+                                    }
+                                },
+                        )
+                val currentCapture =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootRuntimeCaptureCoordinator
+                            .captureMaps(
+                                packageName =
+                                    item.process
+                                        .packageName,
+                                cancellation =
+                                    signal,
+                            )
+                    }
+                require(
+                    currentCapture.pid ==
+                        attachedPid
+                ) {
+                    "Процесс перезапустился во время поиска модификаций."
+                }
+                modDiscovery =
+                    discovered
+            } catch (_: AnalysisCancelledException) {
+                modScanError =
+                    "Поиск модификаций отменён."
+            } catch (failure: Throwable) {
+                modScanError =
+                    failure.message
+                        ?: failure.javaClass
+                            .simpleName
+            } finally {
+                modScanBusy = false
+                modScanSignal = null
+            }
+        }
+    }
+
     fun attach(
         item: RootProcessUiItem,
     ) {
@@ -408,6 +663,9 @@ fun RootProcessLabScreen(
                         .count {
                             it.isNotBlank()
                         }
+                discoverMods(
+                    item,
+                )
             } catch (_: AnalysisCancelledException) {
                 error =
                     "Подключение к процессу отменено."
@@ -1181,6 +1439,19 @@ fun RootProcessLabScreen(
             }
         }
 
+        saveMessage
+            ?.let {
+                message ->
+                item {
+                    Text(
+                        message,
+                        style =
+                            MaterialTheme.typography
+                                .bodySmall,
+                    )
+                }
+            }
+
         if (
             processesLoading
         ) {
@@ -1348,7 +1619,7 @@ fun RootProcessLabScreen(
                                     .bodySmall,
                         )
                         Text(
-                            "Подключение уже выполнено. Runtime dump необязателен для Live Memory Scanner — можно сразу искать значения ниже.",
+                            "Подключение уже выполнено. ModKit автоматически ищет модификации по коду установленной версии; runtime dump для этого не нужен.",
                             style =
                                 MaterialTheme.typography
                                     .bodySmall,
@@ -1384,12 +1655,317 @@ fun RootProcessLabScreen(
                             ),
                     ) {
                         Text(
-                            "Runtime dump",
+                            "Автопоиск модификаций",
                             fontWeight =
                                 FontWeight.SemiBold,
                         )
                         Text(
-                            "Дамп читается из живой памяти процесса через root. " +
+                            "Это основной root-режим: ModKit анализирует код установленной версии и сразу ищет категории вроде здоровья, урона, скорости, стамины, кулдаунов, коллизий, камеры и других локальных игровых параметров. Перебирать значения вручную для этого не требуется.",
+                            style =
+                                MaterialTheme.typography
+                                    .bodySmall,
+                        )
+
+                        if (modScanBusy) {
+                            LinearProgressIndicator(
+                                Modifier.fillMaxWidth(),
+                            )
+                            Text(
+                                modScanProgress
+                                    ?.currentTask
+                                    ?: "Анализируем приложение и ищем модификации…",
+                                style =
+                                    MaterialTheme.typography
+                                        .bodySmall,
+                            )
+                            modScanProgress
+                                ?.currentArtifact
+                                ?.let {
+                                    artifact ->
+                                    Text(
+                                        artifact,
+                                        style =
+                                            MaterialTheme.typography
+                                                .bodySmall,
+                                    )
+                                }
+                            OutlinedButton(
+                                onClick = {
+                                    modScanSignal
+                                        ?.cancel()
+                                },
+                                modifier =
+                                    Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    "Отменить поиск модов",
+                                )
+                            }
+                        }
+
+                        modScanError
+                            ?.let {
+                                message ->
+                                Text(
+                                    "Ошибка поиска: " +
+                                        message,
+                                    color =
+                                        MaterialTheme
+                                            .colorScheme
+                                            .error,
+                                    style =
+                                        MaterialTheme
+                                            .typography
+                                            .bodySmall,
+                                )
+                            }
+
+                        modDiscovery
+                            ?.let {
+                                discovery ->
+                                val ready =
+                                    discovery
+                                        .opportunities
+                                        .count {
+                                            it.selectable
+                                        }
+                                Text(
+                                    "Найдено вариантов: " +
+                                        discovery
+                                            .opportunities
+                                            .size +
+                                        " · готовых к профилю: " +
+                                        ready +
+                                        " · " +
+                                        (
+                                            discovery.elapsedMs /
+                                                1000L
+                                            ) +
+                                        " с",
+                                    fontWeight =
+                                        FontWeight
+                                            .SemiBold,
+                                )
+
+                                if (
+                                    discovery
+                                        .opportunities
+                                        .isEmpty()
+                                ) {
+                                    Text(
+                                        "Для этой версии пока нет достаточно подтверждённых gameplay-кандидатов. Это не означает, что модификаций нет: backend для её runtime может быть ещё недостаточно глубоким.",
+                                        style =
+                                            MaterialTheme
+                                                .typography
+                                                .bodySmall,
+                                    )
+                                } else {
+                                    discovery
+                                        .opportunities
+                                        .take(
+                                            48,
+                                        )
+                                        .forEach {
+                                            opportunity ->
+                                            Row(
+                                                modifier =
+                                                    Modifier
+                                                        .fillMaxWidth(),
+                                                verticalAlignment =
+                                                    Alignment
+                                                        .Top,
+                                            ) {
+                                                Checkbox(
+                                                    checked =
+                                                        opportunity
+                                                            .id in
+                                                            selectedModIds,
+                                                    onCheckedChange = {
+                                                        checked ->
+                                                        if (
+                                                            opportunity
+                                                                .selectable
+                                                        ) {
+                                                            selectedModIds =
+                                                                if (
+                                                                    checked
+                                                                ) {
+                                                                    selectedModIds +
+                                                                        opportunity
+                                                                            .id
+                                                                } else {
+                                                                    selectedModIds -
+                                                                        opportunity
+                                                                            .id
+                                                                }
+                                                        }
+                                                    },
+                                                    enabled =
+                                                        opportunity
+                                                            .selectable,
+                                                )
+                                                Column(
+                                                    modifier =
+                                                        Modifier
+                                                            .weight(
+                                                                1f,
+                                                            ),
+                                                ) {
+                                                    Text(
+                                                        opportunity
+                                                            .title,
+                                                        fontWeight =
+                                                            FontWeight
+                                                                .SemiBold,
+                                                    )
+                                                    Text(
+                                                        opportunity
+                                                            .targetDisplayName,
+                                                        style =
+                                                            MaterialTheme
+                                                                .typography
+                                                                .bodySmall,
+                                                    )
+                                                    Text(
+                                                        if (
+                                                            opportunity
+                                                                .selectable
+                                                        ) {
+                                                            "Подтверждённый локальный кандидат"
+                                                        } else {
+                                                            opportunity
+                                                                .blocker
+                                                                ?: "Нужно дополнительное подтверждение"
+                                                        },
+                                                        style =
+                                                            MaterialTheme
+                                                                .typography
+                                                                .bodySmall,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    if (
+                                        discovery
+                                            .opportunities
+                                            .size >
+                                        48
+                                    ) {
+                                        Text(
+                                            "Показаны первые 48 из " +
+                                                discovery
+                                                    .opportunities
+                                                    .size +
+                                                ".",
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .bodySmall,
+                                        )
+                                    }
+                                }
+
+                                Button(
+                                    onClick = {
+                                        val app =
+                                            selectedItem
+                                                .app
+                                        if (
+                                            app != null
+                                        ) {
+                                            val profile =
+                                                runCatching {
+                                                    RootModProfileWriter
+                                                        .build(
+                                                            app =
+                                                                app,
+                                                            discovery =
+                                                                discovery,
+                                                            selectedIds =
+                                                                selectedModIds,
+                                                        )
+                                                }
+                                            if (
+                                                profile.isSuccess
+                                            ) {
+                                                pendingProfileText =
+                                                    profile
+                                                        .getOrThrow()
+                                                profileSaveLauncher
+                                                    .launch(
+                                                        app.packageName +
+                                                            "-mods.modkit.json",
+                                                    )
+                                            } else {
+                                                saveMessage =
+                                                    profile
+                                                        .exceptionOrNull()
+                                                        ?.message
+                                                        ?: "Не удалось сформировать профиль."
+                                            }
+                                        }
+                                    },
+                                    enabled =
+                                        selectedModIds
+                                            .isNotEmpty(),
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        "Сохранить профиль выбранных модов",
+                                    )
+                                }
+                            }
+
+                        if (
+                            !modScanBusy
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    discoverMods(
+                                        selectedItem,
+                                    )
+                                },
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth(),
+                            ) {
+                                Text(
+                                    if (
+                                        modDiscovery ==
+                                        null
+                                    ) {
+                                        "Найти модификации"
+                                    } else {
+                                        "Повторить поиск модификаций"
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement =
+                            Arrangement.spacedBy(
+                                8.dp,
+                            ),
+                    ) {
+                        Text(
+                            "Технический runtime dump",
+                            fontWeight =
+                                FontWeight.SemiBold,
+                        )
+                        Text(
+                            "Для автопоиска модов этот dump не нужен. Он оставлен как технический инструмент диагностики. " +
+                                "Дамп читается из живой памяти процесса через root. " +
                                 "В ZIP входят maps.txt, индекс сегментов, runtime mapping bytes и runtime-artifacts/index.tsv с найденными ELF/DEX/CompactDEX/IL2CPP metadata/WASM/SQLite/ZIP/PE кандидатами. " +
                                 "Чтение выполняется потоково и пакетами; полный режим не имеет искусственного лимита 256 MiB. " +
                                 "Это runtime-снимок и структурный индекс, а не обещание восстановить исходный C#/Java-код один-в-один.",
@@ -1412,9 +1988,9 @@ fun RootProcessLabScreen(
                                 if (
                                     fullDumpMode
                                 ) {
-                                    "Режим: полный runtime dump"
+                                    "Режим: полный технический dump"
                                 } else {
-                                    "Режим: быстрый 256 MiB"
+                                    "Режим: быстрый технический dump"
                                 },
                             )
                         }
@@ -1441,9 +2017,9 @@ fun RootProcessLabScreen(
                                 if (
                                     fullDumpMode
                                 ) {
-                                    "Сделать полный дамп процесса"
+                                    "Сделать полный технический dump"
                                 } else {
-                                    "Сделать быстрый дамп"
+                                    "Сделать быстрый технический dump"
                                 },
                             )
                         }
@@ -1475,17 +2051,21 @@ fun RootProcessLabScreen(
                             )
                             OutlinedButton(
                                 onClick = {
-                                    RootProcessMemoryDumpExporter
-                                        .share(
-                                            appContext,
-                                            dump.file,
+                                    pendingDumpSave =
+                                        dump.file
+                                    dumpSaveLauncher
+                                        .launch(
+                                            selectedItem
+                                                .process
+                                                .packageName +
+                                                "-runtime-dump.zip",
                                         )
                                 },
                                 modifier =
                                     Modifier.fillMaxWidth(),
                             ) {
                                 Text(
-                                    "Экспортировать runtime dump",
+                                    "Сохранить runtime dump на устройство",
                                 )
                             }
                         }
@@ -1505,7 +2085,7 @@ fun RootProcessLabScreen(
                             ),
                     ) {
                         Text(
-                            "Live Memory Scanner",
+                            "Дополнительный ручной сканер памяти",
                             fontWeight =
                                 FontWeight.SemiBold,
                         )
@@ -1513,9 +2093,9 @@ fun RootProcessLabScreen(
                             if (
                                 fullDumpMode
                             ) {
-                                "Полный режим: exact scan и unknown baseline проходят все подходящие writable private ranges, без старых лимитов 128/32 MiB."
+                                "Expert fallback. Полный режим exact scan и unknown baseline проходит все подходящие writable private ranges. Основной сценарий ModKit — автопоиск модификаций выше."
                             } else {
-                                "Быстрый режим: exact scan ограничен 128 MiB, unknown baseline — 32 MiB."
+                                "Expert fallback. Быстрый exact scan ограничен 128 MiB, unknown baseline — 32 MiB. Для обычного поиска модов используйте автоматический список выше."
                             },
                             style =
                                 MaterialTheme.typography

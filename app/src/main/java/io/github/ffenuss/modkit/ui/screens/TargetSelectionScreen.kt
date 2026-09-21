@@ -34,18 +34,22 @@ fun TargetSelectionScreen(
         Text("ModKit", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
         Text("v${BuildConfig.VERSION_NAME}")
         Text(
-            "Выберите приложение. Сначала выполняется быстрый пассивный анализ; глубокие движки запускаются только по найденным runtime и доказательствам.",
+            "Два основных режима: без root — анализ APK и сборка модифицированного APK; с root — подключение к запущенному процессу, автоматический поиск локальных модификаций и runtime-профили без обязательного полного дампа.",
             style = MaterialTheme.typography.bodyMedium,
         )
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Новая проверка", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text("Без root — APK / приложение", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Анализ кода → автоматический поиск доступных модификаций → выбор → патчинг → сборка и проверка APK.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 Button(onClick = onSelectInstalled, modifier = Modifier.fillMaxWidth()) {
-                    Text("Установленное приложение")
+                    Text("Анализировать установленное приложение")
                 }
                 Button(onClick = onSelectFile, modifier = Modifier.fillMaxWidth()) {
-                    Text("APK / APK-set / файл")
+                    Text("Анализировать APK / APK-set / файл")
                 }
             }
         }
@@ -56,7 +60,7 @@ fun TargetSelectionScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
-                    "Root / процесс",
+                    "С root — запущенный процесс",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -90,7 +94,7 @@ fun TargetSelectionScreen(
                     )
                 }
                 Text(
-                    "После подключения можно выбрать запущенную игру/приложение, снять runtime dump, искать и уточнять значения, pointer chain, писать значения и freeze.",
+                    "После подключения ModKit автоматически запускает поиск доступных локальных модификаций по установленной версии. Полный runtime dump — только дополнительный технический инструмент; ручной поиск значений остаётся в Expert-части, а не является основным сценарием.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -98,12 +102,12 @@ fun TargetSelectionScreen(
 
         Card(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text("Как работает основной режим", fontWeight = FontWeight.SemiBold)
-                Text("1  Быстрый анализ и runtime-профиль")
-                Text("2  Понятные выводы и ранние результаты")
-                Text("3  Дополнительное подтверждение только спорных целей")
-                Text("4  Runtime/root только если статики недостаточно")
-                Text("5  Подготовка изменений → сборка → проверенный APK")
+                Text("Целевой поток ModKit", fontWeight = FontWeight.SemiBold)
+                Text("1  Сам определяет runtime и возможные категории модов")
+                Text("2  Показывает список модификаций, а не заставляет искать адреса вручную")
+                Text("3  Без root: применяет подтверждённые изменения и собирает APK")
+                Text("4  С root: формирует runtime-профиль выбранных модов для запуска без изменения исходного APK")
+                Text("5  Полный dump, raw memory и Expert Lab остаются дополнительными инструментами")
             }
         }
 

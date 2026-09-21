@@ -160,7 +160,10 @@ Status: **ACTIVE**
   - [x] Full repacked native trace capability is registered only after passive dlsym, RegisterNatives and JNI_OnLoad invocation executors are concrete
   - [ ] Non-root/root trace capture executors
 - [x] Root live-memory value scanner for exact values and disk-backed unknown-initial-value baselines
-- [x] Dedicated main-menu root workflow: explicit root probe → running app/game process picker → attach → live dump/export → memory analysis/manipulation
+- [x] Dedicated main-menu root workflow: explicit root probe → running app/game process picker → attach → automatic modification discovery → optional dump/memory tools
+- [x] Root modification discovery reuses static/deep cached analysis and confirmation instead of requiring a multi-gigabyte memory dump
+- [x] Root modification profile writer records selected exact local gameplay modifications with package/version/SHA/module/file-offset binding
+- [x] Runtime dump export uses Android CreateDocument so the user saves directly to device storage
 - [x] Full streaming root process snapshot mode without the previous 256 MiB cap, with free-space preflight and explicit quick bounded mode
 - [x] Runtime artifact inventory over live memory: ELF, DEX/CompactDEX, IL2CPP metadata, WASM, SQLite, ZIP/APK/JAR and PE/CLI candidates
 - [x] Full-mode exact/unknown value scans cover the complete eligible writable-private range set; quick mode retains bounded scan limits
@@ -179,6 +182,17 @@ Status: **ACTIVE**
   - [x] Root maps capture is explicit in Expert Lab and never auto-runs
   - [x] Root environment failures are recorded as TARGET_ENVIRONMENT blockers
   - [ ] Root native trace capture executor; ROOT_TRACE_CAPTURE remains false until this exists
+
+## Phase 7B — Runtime profile / sandbox delivery
+Status: **PLANNED / ACTIVE FOUNDATION**
+
+- [x] Exportable root modification profile format for confirmed local gameplay targets
+- [ ] Import and validate profile against package/version/SHA before runtime activation
+- [ ] In-process runtime executor with instruction-cache-safe native patch application and verified rollback
+- [ ] ModKit sandbox/parallel-space host for user-selected apps where platform compatibility permits
+- [ ] Overlay menu generated from confirmed profile controls and bound only to validated targets
+- [ ] Persist selected mod configuration separately from the original APK and re-resolve ASLR/module addresses on every launch
+- [ ] Never expose billing/auth/anti-cheat bypass as an automatic profile action
 
 ## Phase 8 — Non-ARM64 deep completion
 - [ ] ARMv7 / Thumb-2
