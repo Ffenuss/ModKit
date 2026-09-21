@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.10**
+Current application version: **0.0.11**
 
 ## Product flow
 
@@ -80,3 +80,10 @@ gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ## Security / authorization
 
 Use ModKit only for applications and environments you are authorized to assess. Do not publish customer APKs, secrets, access tokens, signing keys or proprietary analysis artifacts in public issues.
+
+
+### Root sandbox live overlay
+
+The primary root flow is now intended to be short: attach to a running game, let ModKit discover modification opportunities automatically, select confirmed gameplay modifications, then press **Launch game with selected mods**. ModKit creates/uses its separate managed-profile sandbox, starts the game there, resolves the exact sandbox PID, applies the selected SHA-bound native-code patches and starts an `MK` floating overlay in the same Android profile. Overlay switches apply or restore each known byte range with PID revalidation, process pause/resume and read-back verification.
+
+Billing, authentication and anti-cheat-related methods remain visible as discovery-only sensitive surfaces. They are intentionally not converted into automatic live bypass actions.

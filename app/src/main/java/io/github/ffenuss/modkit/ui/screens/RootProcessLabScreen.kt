@@ -59,6 +59,8 @@ import io.github.ffenuss.modkit.runtime.RuntimeScanAlignment
 import io.github.ffenuss.modkit.runtime.RuntimeValueRefinement
 import io.github.ffenuss.modkit.runtime.RuntimeValueScanner
 import io.github.ffenuss.modkit.runtime.RuntimeValueType
+import io.github.ffenuss.modkit.sandbox.RootSandboxLaunchCoordinator
+import io.github.ffenuss.modkit.sandbox.RootSandboxRunningSession
 import io.github.ffenuss.modkit.sandbox.SandboxProfileStore
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -205,6 +207,12 @@ fun RootProcessLabScreen(
     }
     var saveMessage by remember {
         mutableStateOf<String?>(null)
+    }
+    var sandboxLaunchBusy by remember {
+        mutableStateOf(false)
+    }
+    var sandboxSession by remember {
+        mutableStateOf<RootSandboxRunningSession?>(null)
     }
 
     var valueType by remember {
@@ -619,6 +627,15 @@ fun RootProcessLabScreen(
                 }
                 modDiscovery =
                     discovered
+                saveMessage =
+                    if (
+                        discovered.opportunities
+                            .any { it.selectable }
+                    ) {
+                        "Моды найдены. Выберите нужные и нажмите «Запустить игру с выбранными модами»."
+                    } else {
+                        saveMessage
+                    }
             } catch (_: AnalysisCancelledException) {
                 modScanError =
                     "Поиск модификаций отменён."
@@ -1960,6 +1977,194 @@ fun RootProcessLabScreen(
                                         "Добавить в ModKit Sandbox",
                                     )
                                 }
+
+                                Row(
+                                    modifier =
+                                        Modifier.fillMaxWidth(),
+                                    horizontalArrangement =
+                                        Arrangement.spacedBy(
+                                            8.dp,
+                                        ),
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            selectedModIds =
+                                                discovery
+                                                    .opportunities
+                                                    .filter {
+                                                        it.selectable
+                                                    }
+                                                    .map {
+                                                        it.id
+                                                    }
+                                                    .toSet()
+                                        },
+                                        enabled =
+                                            !sandboxLaunchBusy &&
+                                                discovery
+                                                    .opportunities
+                                                    .any {
+                                                        it.selectable
+                                                    },
+                                        modifier =
+                                            Modifier.weight(1f),
+                                    ) {
+                                        Text("Выбрать все")
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            selectedModIds =
+                                                emptySet()
+                                        },
+                                        enabled =
+                                            !sandboxLaunchBusy &&
+                                                selectedModIds
+                                                    .isNotEmpty(),
+                                        modifier =
+                                            Modifier.weight(1f),
+                                    ) {
+                                        Text("Снять все")
+                                    }
+                                }
+
+                                Button(
+                                    onClick = {
+                                        val app =
+                                            selectedItem.app
+                                        if (
+                                            app != null &&
+                                            !sandboxLaunchBusy
+                                        ) {
+                                            sandboxLaunchBusy =
+                                                true
+                                            saveMessage =
+                                                "Запускаем ModKit Sandbox, применяем моды и поднимаем MK overlay…"
+                                            scope.launch {
+                                                val result =
+                                                    runCatching {
+                                                        withContext(
+                                                            Dispatchers.IO,
+                                                        ) {
+                                                            val text =
+                                                                RootModProfileWriter.build(
+                                                                    app = app,
+                                                                    discovery = discovery,
+                                                                    selectedIds = selectedModIds,
+                                                                )
+                                                            val stored =
+                                                                sandboxProfileStore.save(
+                                                                    text,
+                                                                )
+                                                            RootSandboxLaunchCoordinator.launch(
+                                                                context = appContext,
+                                                                app = app,
+                                                                profile = stored.profile,
+                                                                cancellation =
+                                                                    AtomicCancellationSignal(),
+                                                            )
+                                                        }
+                                                    }
+                                                result.onSuccess {
+                                                    session ->
+                                                    sandboxSession =
+                                                        session
+                                                    saveMessage =
+                                                        "Готово: игра запущена в Sandbox · PID " +
+                                                            session.pid +
+                                                            " · модов в MK overlay: " +
+                                                            session.overlay.itemCount +
+                                                            ". Переключатели работают в реальном времени."
+                                                }.onFailure {
+                                                    failure ->
+                                                    saveMessage =
+                                                        "Не удалось запустить игру с mod menu: " +
+                                                            (
+                                                                failure.message
+                                                                    ?: failure
+                                                                        .javaClass
+                                                                        .simpleName
+                                                                )
+                                                }
+                                                sandboxLaunchBusy =
+                                                    false
+                                            }
+                                        }
+                                    },
+                                    enabled =
+                                        selectedModIds
+                                            .isNotEmpty() &&
+                                            !sandboxLaunchBusy,
+                                    modifier =
+                                        Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        if (
+                                            sandboxLaunchBusy
+                                        ) {
+                                            "Запускаем Sandbox + MK overlay…"
+                                        } else {
+                                            "Запустить игру с выбранными модами"
+                                        },
+                                    )
+                                }
+
+                                sandboxSession
+                                    ?.let {
+                                        session ->
+                                        OutlinedButton(
+                                            onClick = {
+                                                if (
+                                                    !sandboxLaunchBusy
+                                                ) {
+                                                    sandboxLaunchBusy =
+                                                        true
+                                                    scope.launch {
+                                                        val result =
+                                                            runCatching {
+                                                                withContext(
+                                                                    Dispatchers.IO,
+                                                                ) {
+                                                                    RootSandboxLaunchCoordinator
+                                                                        .stopOverlayAndRollback(
+                                                                            session =
+                                                                                session,
+                                                                            cancellation =
+                                                                                AtomicCancellationSignal(),
+                                                                        )
+                                                                }
+                                                            }
+                                                        if (
+                                                            result.isSuccess
+                                                        ) {
+                                                            sandboxSession =
+                                                                null
+                                                            saveMessage =
+                                                                "MK overlay остановлено, моды текущей sandbox-сессии откатаны."
+                                                        } else {
+                                                            saveMessage =
+                                                                "Rollback sandbox-сессии не подтверждён: " +
+                                                                    (
+                                                                        result
+                                                                            .exceptionOrNull()
+                                                                            ?.message
+                                                                            ?: "ошибка"
+                                                                        )
+                                                        }
+                                                        sandboxLaunchBusy =
+                                                            false
+                                                    }
+                                                }
+                                            },
+                                            enabled =
+                                                !sandboxLaunchBusy,
+                                            modifier =
+                                                Modifier.fillMaxWidth(),
+                                        ) {
+                                            Text(
+                                                "Остановить overlay и откатить эту сессию",
+                                            )
+                                        }
+                                    }
                             }
 
                         if (

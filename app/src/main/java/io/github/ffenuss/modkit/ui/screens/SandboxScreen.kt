@@ -30,10 +30,9 @@ import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.runtime.RootAccessProbeResult
 import io.github.ffenuss.modkit.runtime.RootProcessDiscovery
-import io.github.ffenuss.modkit.sandbox.RootSandboxAndroidProfileManager
-import io.github.ffenuss.modkit.sandbox.RootSandboxRuntimePatchCoordinator
+import io.github.ffenuss.modkit.sandbox.RootSandboxLaunchCoordinator
+import io.github.ffenuss.modkit.sandbox.RootSandboxRunningSession
 import io.github.ffenuss.modkit.sandbox.SandboxProfileStore
-import io.github.ffenuss.modkit.sandbox.SandboxRuntimeActivationSession
 import io.github.ffenuss.modkit.sandbox.StoredSandboxProfile
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -59,7 +58,7 @@ fun SandboxScreen(
     var message by remember { mutableStateOf<String?>(null) }
     var lastLaunchedPackage by remember { mutableStateOf<String?>(null) }
     var activeSession by remember {
-        mutableStateOf<SandboxRuntimeActivationSession?>(null)
+        mutableStateOf<RootSandboxRunningSession?>(null)
     }
 
     fun refresh() {
@@ -134,56 +133,30 @@ fun SandboxScreen(
                     require(app.versionCode == stored.profile.versionCode) {
                         "Версия приложения изменилась: sandbox-профиль нужно пересобрать."
                     }
-                    val signal =
-                        AtomicCancellationSignal()
-                    val launch =
-                        RootSandboxAndroidProfileManager.installExistingAndLaunch(
-                            packageName = stored.profile.packageName,
-                            cancellation = signal,
-                        )
-                    val session =
-                        try {
-                            RootSandboxRuntimePatchCoordinator.activateProfile(
-                                context = appContext,
-                                app = app,
-                                profile = stored.profile,
-                                expectedPid = launch.pid,
-                                cancellation = signal,
-                            )
-                        } catch (failure: Throwable) {
-                            throw IllegalStateException(
-                                "Sandbox-копия запущена (PID " +
-                                    launch.pid +
-                                    "), но выбранные моды не активированы; " +
-                                    "частичные записи откатились: " +
-                                    (failure.message
-                                        ?: failure.javaClass.simpleName),
-                                failure,
-                            )
-                        }
-                    launch to session
+                    RootSandboxLaunchCoordinator.launch(
+                        context = appContext,
+                        app = app,
+                        profile = stored.profile,
+                        cancellation = AtomicCancellationSignal(),
+                    )
                 }
             }
             result.onSuccess {
-                val launch =
-                    it.first
-                val session =
-                    it.second
                 lastLaunchedPackage =
-                    launch.packageName
+                    it.packageName
                 activeSession =
-                    session
+                    it
                 message =
-                    "Sandbox-копия запущена в Android user " +
-                        launch.userId +
+                    "Игра запущена в ModKit Sandbox · Android user " +
+                        it.userId +
                         " · PID " +
-                        launch.pid +
-                        ". Отдельные app-data/сохранения активны; оригинал не удалялся и не очищался. " +
+                        it.pid +
+                        ". Отдельные app-data/сохранения активны. " +
                         "Профиль SHA-проверен: применено " +
-                        session.appliedCount +
+                        it.activation.appliedCount +
                         ", уже было активно " +
-                        session.alreadyActiveCount +
-                        "."
+                        it.activation.alreadyActiveCount +
+                        ". Плавающее MK mod menu запущено поверх игры."
                 rootProbe = RootAccessProbeResult(true, 0, "Root подтверждён: uid=0.")
             }.onFailure {
                 message = "Sandbox не запущен: " +
@@ -227,9 +200,10 @@ fun SandboxScreen(
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Проверить root") }
                     Text(
-                        "Root sandbox теперь SHA-проверяет профиль, останавливает только точный sandbox PID на время code patch, " +
-                            "сверяет исходные bytes, выполняет read-back и автоматически откатывает частично применённый профиль при ошибке. " +
-                            "Без root отдельный clone-package backend будет использовать другой package id и никогда не должен заменять оригинал.",
+                        "Root sandbox SHA-проверяет профиль, запускает отдельную копию игры, привязывается к точному PID, " +
+                            "применяет подтверждённые моды и стартует плавающее MK mod menu в том же sandbox-профиле. " +
+                            "Переключатели меню меняют моды в live-процессе с read-back и fail-closed проверками. " +
+                            "Оригинальная установка и её сохранения не заменяются.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
@@ -278,7 +252,7 @@ fun SandboxScreen(
                         onClick = { launchSandbox(stored) },
                         enabled = !busy && rootProbe?.available == true,
                         modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Запустить отдельную sandbox-копию") }
+                    ) { Text("Запустить игру с MK mod menu") }
                     if (lastLaunchedPackage == stored.profile.packageName) {
                         OutlinedButton(
                             onClick = { onOpenRootRuntime(stored.profile.packageName) },
@@ -301,7 +275,7 @@ fun SandboxScreen(
                                         val rollback =
                                             runCatching {
                                                 withContext(Dispatchers.IO) {
-                                                    RootSandboxRuntimePatchCoordinator.rollbackSession(
+                                                    RootSandboxLaunchCoordinator.stopOverlayAndRollback(
                                                         session = session,
                                                         cancellation = AtomicCancellationSignal(),
                                                     )

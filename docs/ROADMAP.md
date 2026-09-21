@@ -192,10 +192,10 @@ Status: **PLANNED / ACTIVE FOUNDATION**
 - [x] Root process attach accepts an exact PID so original and sandbox processes with the same package name remain distinguishable
 - [x] Root sandbox native-code activation: exact sandbox PID, SHA/version validation, PT_LOAD/load-bias address resolution, stopped-process write/read-back and verified partial-profile rollback\n- [ ] In-process injected runtime executor for non-root/clone-package activation and richer per-control hooks
 - [ ] Non-root clone-package sandbox backend that rewrites package identity safely and never replaces the original package
-- [ ] Overlay menu generated from confirmed sandbox profile controls and bound only to validated targets
+- [x] Overlay menu generated from confirmed sandbox profile controls and bound only to validated targets
 - [x] Persist selected mod configuration separately from the original APK
-- [x] Re-resolve ASLR/module addresses and activate selected root-sandbox modifications on every launch\n- [ ] External overlay controls for per-mod enable/disable while the sandbox game is foreground
-- [ ] Never expose billing/auth/anti-cheat bypass as an automatic profile action
+- [x] Re-resolve ASLR/module addresses and activate selected root-sandbox modifications on every launch\n- [x] External in-profile MK overlay service for per-mod enable/disable while the sandbox game is foreground; live toggles revalidate PID/bytes and verify read-back
+- [x] Keep billing/auth/anti-cheat surfaces visible in discovery while never exposing them as automatic profile/live bypass actions
 
 ## Phase 8 — Non-ARM64 deep completion
 - [ ] ARMv7 / Thumb-2
