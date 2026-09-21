@@ -362,15 +362,23 @@ object RootRuntimeUnknownValueCoordinator {
         }
 
         val capture =
-            RootRuntimeCaptureCoordinator
-                .captureMaps(
-                    packageName =
-                        baseline.packageName,
-                    cancellation =
-                        cancellation,
-                    runner = runner,
-                    expectedPid = baseline.pid,
+            try {
+                RootRuntimeCaptureCoordinator
+                    .captureMaps(
+                        packageName =
+                            baseline.packageName,
+                        cancellation =
+                            cancellation,
+                        runner = runner,
+                        expectedPid =
+                            baseline.pid,
+                    )
+            } catch (failure: Throwable) {
+                throw IllegalArgumentException(
+                    "PID процесса изменился или больше недоступен. Создайте новый unknown-value baseline.",
+                    failure,
                 )
+            }
         require(
             capture.pid ==
                 baseline.pid,
