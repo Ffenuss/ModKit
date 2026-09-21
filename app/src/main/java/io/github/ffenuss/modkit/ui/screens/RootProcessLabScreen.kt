@@ -51,6 +51,7 @@ import io.github.ffenuss.modkit.runtime.RootRuntimeValueScanResult
 import io.github.ffenuss.modkit.runtime.RootRuntimeValueWriteCoordinator
 import io.github.ffenuss.modkit.runtime.RuntimeScanAlignment
 import io.github.ffenuss.modkit.runtime.RuntimeValueRefinement
+import io.github.ffenuss.modkit.runtime.RuntimeValueScanner
 import io.github.ffenuss.modkit.runtime.RuntimeValueType
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -152,6 +153,9 @@ fun RootProcessLabScreen(
         mutableStateOf<
             RootProcessMemoryDumpProgress?
         >(null)
+    }
+    var fullDumpMode by remember {
+        mutableStateOf(true)
     }
 
     var valueType by remember {
@@ -456,6 +460,17 @@ fun RootProcessLabScreen(
                                     output,
                                 cancellation =
                                     signal,
+                                maxDumpBytes =
+                                    if (
+                                        fullDumpMode
+                                    ) {
+                                        null
+                                    } else {
+                                        RootProcessMemoryDumpCoordinator
+                                            .QUICK_MAX_DUMP_BYTES
+                                    },
+                                includeSystemMappings =
+                                    fullDumpMode,
                                 progress = {
                                     update ->
                                     scope.launch {
@@ -506,6 +521,15 @@ fun RootProcessLabScreen(
                                     signal,
                                 alignment =
                                     alignment,
+                                maxScanBytes =
+                                    if (
+                                        fullDumpMode
+                                    ) {
+                                        null
+                                    } else {
+                                        RuntimeValueScanner
+                                            .DEFAULT_MAX_SCAN_BYTES
+                                    },
                             )
                     }
             } catch (_: AnalysisCancelledException) {
@@ -568,6 +592,15 @@ fun RootProcessLabScreen(
                                     file,
                                 cancellation =
                                     signal,
+                                maxBytes =
+                                    if (
+                                        fullDumpMode
+                                    ) {
+                                        null
+                                    } else {
+                                        RootRuntimeUnknownValueCoordinator
+                                            .QUICK_MAX_BASELINE_BYTES
+                                    },
                             )
                     }
                 valueScan = null
@@ -1357,9 +1390,42 @@ fun RootProcessLabScreen(
                         )
                         Text(
                             "Дамп читается из живой памяти процесса через root. " +
-                                "В ZIP входят maps.txt, индекс сегментов и доступные runtime mapping bytes. " +
-                                "Чтение выполняется пакетами по page-aligned диапазонам; во время дампа выше показывается реальный прогресс. " +
-                                "Это не исходный C#/Java-код, а состояние процесса после загрузки.",
+                                "В ZIP входят maps.txt, индекс сегментов, runtime mapping bytes и runtime-artifacts/index.tsv с найденными ELF/DEX/CompactDEX/IL2CPP metadata/WASM/SQLite/ZIP/PE кандидатами. " +
+                                "Чтение выполняется потоково и пакетами; полный режим не имеет искусственного лимита 256 MiB. " +
+                                "Это runtime-снимок и структурный индекс, а не обещание восстановить исходный C#/Java-код один-в-один.",
+                            style =
+                                MaterialTheme.typography
+                                    .bodySmall,
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                fullDumpMode =
+                                    !fullDumpMode
+                                dumpResult = null
+                                dumpProgress = null
+                            },
+                            enabled = !busy,
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (
+                                    fullDumpMode
+                                ) {
+                                    "Режим: полный runtime dump"
+                                } else {
+                                    "Режим: быстрый 256 MiB"
+                                },
+                            )
+                        }
+                        Text(
+                            if (
+                                fullDumpMode
+                            ) {
+                                "Полный режим проходит все readable mappings процесса, кроме специальных kernel mappings, и не останавливается на 256 MiB. Перед стартом проверяется свободное место."
+                            } else {
+                                "Быстрый режим ограничен 256 MiB и приоритизирует app/runtime mappings без системных библиотек.",
+                            },
                             style =
                                 MaterialTheme.typography
                                     .bodySmall,
@@ -1372,7 +1438,13 @@ fun RootProcessLabScreen(
                                 Modifier.fillMaxWidth(),
                         ) {
                             Text(
-                                "Сделать дамп процесса",
+                                if (
+                                    fullDumpMode
+                                ) {
+                                    "Сделать полный дамп процесса"
+                                } else {
+                                    "Сделать быстрый дамп"
+                                },
                             )
                         }
                         dumpResult?.let {
@@ -1393,8 +1465,10 @@ fun RootProcessLabScreen(
                                     ) {
                                         " · достигнут лимит"
                                     } else {
-                                        ""
-                                    },
+                                        " · полный проход"
+                                    } +
+                                    " · runtime artifacts " +
+                                    dump.detectedArtifacts,
                                 style =
                                     MaterialTheme.typography
                                         .bodySmall,
@@ -1434,6 +1508,18 @@ fun RootProcessLabScreen(
                             "Live Memory Scanner",
                             fontWeight =
                                 FontWeight.SemiBold,
+                        )
+                        Text(
+                            if (
+                                fullDumpMode
+                            ) {
+                                "Полный режим: exact scan и unknown baseline проходят все подходящие writable private ranges, без старых лимитов 128/32 MiB."
+                            } else {
+                                "Быстрый режим: exact scan ограничен 128 MiB, unknown baseline — 32 MiB."
+                            },
+                            style =
+                                MaterialTheme.typography
+                                    .bodySmall,
                         )
                         OutlinedButton(
                             onClick = {

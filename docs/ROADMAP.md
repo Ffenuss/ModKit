@@ -161,6 +161,11 @@ Status: **ACTIVE**
   - [ ] Non-root/root trace capture executors
 - [x] Root live-memory value scanner for exact values and disk-backed unknown-initial-value baselines
 - [x] Dedicated main-menu root workflow: explicit root probe → running app/game process picker → attach → live dump/export → memory analysis/manipulation
+- [x] Full streaming root process snapshot mode without the previous 256 MiB cap, with free-space preflight and explicit quick bounded mode
+- [x] Runtime artifact inventory over live memory: ELF, DEX/CompactDEX, IL2CPP metadata, WASM, SQLite, ZIP/APK/JAR and PE/CLI candidates
+- [x] Full-mode exact/unknown value scans cover the complete eligible writable-private range set; quick mode retains bounded scan limits
+- [ ] Reconstruct/carve runtime artifact candidates into standalone files and route each recovered artifact through its matching deep backend
+- [ ] Universal semantic runtime report that merges DEX/ART, ELF/native, IL2CPP, Mono/CLI, script/VM and generic memory evidence without pretending one format can recover original source for every runtime
 - [x] Root process discovery fallback for rooted Android emulators without projected `ps -o` support or working `pidof`
 - [x] Runtime value refinement: exact new value / changed / unchanged / increased / decreased
 - [x] Natural and byte-aligned scans, batched refinement reads and bounded hit/byte limits

@@ -268,7 +268,7 @@ object RuntimeValueScanner {
         require(maxHits in 1..100_000) {
             "Некорректный лимит результатов."
         }
-        require(maxScanBytes in 1..(2L * 1024L * 1024L * 1024L)) {
+        require(maxScanBytes > 0L) {
             "Некорректный лимит сканирования."
         }
         require(
@@ -351,13 +351,23 @@ object RuntimeValueScanner {
                     } else {
                         0
                     }
+                val budgetWithOverlap =
+                    if (
+                        remainingBudget >
+                        Long.MAX_VALUE -
+                            overlap.toLong()
+                    ) {
+                        Long.MAX_VALUE
+                    } else {
+                        remainingBudget +
+                            overlap
+                    }
                 var requestBytes =
                     min(
                         remainingRegion,
                         min(
                             chunkBytes.toLong(),
-                            remainingBudget +
-                                overlap,
+                            budgetWithOverlap,
                         ),
                     ).toInt()
                 if (
@@ -764,6 +774,7 @@ object RootRuntimeValueScanCoordinator {
             RuntimeScanAlignment.NATURAL,
         runner: RootCommandRunner =
             AndroidRootCommandRunner(),
+        maxScanBytes: Long? = null,
     ): RootRuntimeValueScanResult {
         val capture =
             RootRuntimeCaptureCoordinator
@@ -796,6 +807,11 @@ object RootRuntimeValueScanCoordinator {
                 query = query,
                 cancellation = cancellation,
                 alignment = alignment,
+                maxScanBytes =
+                    maxScanBytes
+                        ?: totalRangeBytes(
+                            ranges,
+                        ),
             )
         return RootRuntimeValueScanResult(
             packageName =
@@ -972,8 +988,9 @@ object RootRuntimeValueScanCoordinator {
                     cancellation,
                 maxHits = 2048,
                 maxScanBytes =
-                    RuntimeValueScanner
-                        .DEFAULT_MAX_SCAN_BYTES,
+                    totalRangeBytes(
+                        ranges,
+                    ),
                 chunkBytes =
                     RuntimeValueScanner
                         .DEFAULT_CHUNK_BYTES,
@@ -989,6 +1006,31 @@ object RootRuntimeValueScanCoordinator {
                 System.currentTimeMillis(),
             snapshot = snapshot,
         )
+    }
+
+    private fun totalRangeBytes(
+        ranges: List<ProcMapRegion>,
+    ): Long {
+        var total = 0L
+        for (region in ranges) {
+            if (
+                region.size <= 0L
+            ) {
+                continue
+            }
+            total =
+                if (
+                    Long.MAX_VALUE -
+                        total <
+                    region.size
+                ) {
+                    Long.MAX_VALUE
+                } else {
+                    total +
+                        region.size
+                }
+        }
+        return total.coerceAtLeast(1L)
     }
 
     internal fun candidateRanges(

@@ -19,6 +19,7 @@ data class RootProcessMemoryDumpResult(
     val skippedRegions: Int,
     val dumpedBytes: Long,
     val truncatedByByteLimit: Boolean,
+    val detectedArtifacts: Int = 0,
 )
 
 data class RootProcessMemoryDumpProgress(
@@ -88,8 +89,10 @@ private const val DUMP_COMMAND_TIMEOUT_MS =
  * could make a 256 MiB snapshot appear hung for many minutes.
  */
 object RootProcessMemoryDumpCoordinator {
-    const val DEFAULT_MAX_DUMP_BYTES =
+    const val QUICK_MAX_DUMP_BYTES =
         256L * 1024L * 1024L
+    private const val STORAGE_RESERVE_BYTES =
+        128L * 1024L * 1024L
 
     fun dump(
         packageName: String,
@@ -100,20 +103,16 @@ object RootProcessMemoryDumpCoordinator {
                 timeoutMs =
                     DUMP_COMMAND_TIMEOUT_MS,
             ),
-        maxDumpBytes: Long =
-            DEFAULT_MAX_DUMP_BYTES,
+        maxDumpBytes: Long? = null,
+        includeSystemMappings: Boolean = true,
         progress:
             (
                 RootProcessMemoryDumpProgress,
             ) -> Unit = { },
     ): RootProcessMemoryDumpResult {
         require(
-            maxDumpBytes in
-                1L..
-                    (2L *
-                        1024L *
-                        1024L *
-                        1024L),
+            maxDumpBytes == null ||
+                maxDumpBytes > 0L
         ) {
             "Некорректный лимит runtime dump."
         }
@@ -154,10 +153,17 @@ object RootProcessMemoryDumpCoordinator {
                 .filter {
                     it.readable &&
                         it.size > 0L &&
-                        includeRegion(
-                            it,
-                            packageName,
-                        )
+                        (
+                            includeSystemMappings &&
+                                !isUnsafeSpecialMapping(
+                                    it,
+                                ) ||
+                                !includeSystemMappings &&
+                                includeRegion(
+                                    it,
+                                    packageName,
+                                )
+                            )
                 }
                 .sortedWith(
                     compareBy<ProcMapRegion> {
@@ -191,6 +197,30 @@ object RootProcessMemoryDumpCoordinator {
 
         outputFile.parentFile
             ?.mkdirs()
+        val parent =
+            outputFile.parentFile
+                ?: error(
+                    "Не удалось определить каталог runtime dump.",
+                )
+        val usableSpace =
+            parent.usableSpace
+        val requiredSpace =
+            plan.plannedBytes +
+                STORAGE_RESERVE_BYTES
+        if (
+            usableSpace > 0L &&
+            requiredSpace > 0L &&
+            usableSpace <
+                requiredSpace
+        ) {
+            error(
+                "Недостаточно свободного места для runtime dump: нужно примерно " +
+                    (plan.plannedBytes / (1024L * 1024L)) +
+                    " MiB + резерв, доступно " +
+                    (usableSpace / (1024L * 1024L)) +
+                    " MiB. Переключите режим на быстрый 256 MiB или освободите место.",
+            )
+        }
         val temp =
             File(
                 outputFile.parentFile,
@@ -215,6 +245,14 @@ object RootProcessMemoryDumpCoordinator {
         val attemptedRegions =
             linkedSetOf<
                 Pair<Long, Long>
+            >()
+        val artifacts =
+            LinkedHashMap<
+                Pair<
+                    RootRuntimeArtifactKind,
+                    Long
+                >,
+                RootRuntimeArtifactCandidate
             >()
         val index =
             StringBuilder().apply {
@@ -282,10 +320,17 @@ object RootProcessMemoryDumpCoordinator {
                                 .sha256 +
                             "\n" +
                             "maxDumpBytes=" +
-                            maxDumpBytes +
+                            (
+                                maxDumpBytes
+                                    ?.toString()
+                                    ?: "FULL"
+                                ) +
                             "\n" +
                             "plannedBytes=" +
                             plan.plannedBytes +
+                            "\n" +
+                            "includeSystemMappings=" +
+                            includeSystemMappings +
                             "\n" +
                             "fastDdBlockBytes=" +
                             FAST_DD_BLOCK_BYTES +
@@ -382,6 +427,8 @@ object RootProcessMemoryDumpCoordinator {
                                             bytes,
                                         offset =
                                             offset,
+                                        artifacts =
+                                            artifacts,
                                     )
                                     successfulRegions +=
                                         slice.region
@@ -442,6 +489,8 @@ object RootProcessMemoryDumpCoordinator {
                                         bytes =
                                             individual,
                                         offset = 0,
+                                        artifacts =
+                                            artifacts,
                                     )
                                     successfulRegions +=
                                         slice.region
@@ -486,6 +535,8 @@ object RootProcessMemoryDumpCoordinator {
                             slice = first,
                             bytes = bytes,
                             offset = 0,
+                            artifacts =
+                                artifacts,
                         )
                         successfulRegions +=
                             first.region
@@ -513,6 +564,15 @@ object RootProcessMemoryDumpCoordinator {
                         "memory/index.tsv",
                     text =
                         index.toString(),
+                )
+                putText(
+                    zip = zip,
+                    name =
+                        "runtime-artifacts/index.tsv",
+                    text =
+                        artifactIndex(
+                            artifacts.values,
+                        ),
                 )
             }
 
@@ -577,6 +637,8 @@ object RootProcessMemoryDumpCoordinator {
                     dumpedBytes,
                 truncatedByByteLimit =
                     plan.truncated,
+                detectedArtifacts =
+                    artifacts.size,
             )
         } catch (failure: Throwable) {
             temp.delete()
@@ -595,7 +657,7 @@ object RootProcessMemoryDumpCoordinator {
     private fun buildPlan(
         candidates:
             List<ProcMapRegion>,
-        maxDumpBytes: Long,
+        maxDumpBytes: Long?,
     ): DumpPlan {
         val slices =
             ArrayList<DumpSlice>()
@@ -605,6 +667,7 @@ object RootProcessMemoryDumpCoordinator {
             >()
         var remainingBudget =
             maxDumpBytes
+                ?: Long.MAX_VALUE
         var plannedBytes = 0L
         var truncated = false
 
@@ -887,6 +950,14 @@ object RootProcessMemoryDumpCoordinator {
         slice: DumpSlice,
         bytes: ByteArray,
         offset: Int,
+        artifacts:
+            MutableMap<
+                Pair<
+                    RootRuntimeArtifactKind,
+                    Long
+                >,
+                RootRuntimeArtifactCandidate
+            >,
     ) {
         require(
             offset >= 0 &&
@@ -918,6 +989,26 @@ object RootProcessMemoryDumpCoordinator {
             slice.length,
         )
         zip.closeEntry()
+
+        RootRuntimeArtifactDetector
+            .detect(
+                region =
+                    slice.region,
+                sliceAddress =
+                    slice.address,
+                bytes = bytes,
+                offset = offset,
+                length =
+                    slice.length,
+            )
+            .forEach {
+                candidate ->
+                artifacts.putIfAbsent(
+                    candidate.kind to
+                        candidate.address,
+                    candidate,
+                )
+            }
 
         index.append(
             "0x",
@@ -979,6 +1070,93 @@ object RootProcessMemoryDumpCoordinator {
         ).appendLine()
     }
 
+    private fun artifactIndex(
+        artifacts:
+            Collection<
+                RootRuntimeArtifactCandidate
+            >,
+    ): String =
+        buildString {
+            appendLine(
+                "kind\taddress\tregionStart\tregionEnd\testimatedSize\tpath\tevidence",
+            )
+            artifacts
+                .sortedWith(
+                    compareBy<
+                        RootRuntimeArtifactCandidate
+                    > {
+                        it.address
+                    }.thenBy {
+                        it.kind.name
+                    },
+                )
+                .forEach {
+                    artifact ->
+                    append(
+                        artifact.kind.name,
+                    ).append(
+                        '\t',
+                    ).append(
+                        "0x" +
+                            artifact.address
+                                .toString(16),
+                    ).append(
+                        '\t',
+                    ).append(
+                        "0x" +
+                            artifact.regionStart
+                                .toString(16),
+                    ).append(
+                        '\t',
+                    ).append(
+                        "0x" +
+                            artifact.regionEndExclusive
+                                .toString(16),
+                    ).append(
+                        '\t',
+                    ).append(
+                        artifact.estimatedSize
+                            ?.toString()
+                            .orEmpty(),
+                    ).append(
+                        '\t',
+                    ).append(
+                        artifact.regionPath
+                            .orEmpty()
+                            .replace(
+                                '\t',
+                                ' ',
+                            )
+                            .replace(
+                                '\n',
+                                ' ',
+                            ),
+                    ).append(
+                        '\t',
+                    ).append(
+                        artifact.evidence
+                            .replace(
+                                '\t',
+                                ' ',
+                            )
+                            .replace(
+                                '\n',
+                                ' ',
+                            ),
+                    ).appendLine()
+                }
+        }
+
+    private fun isUnsafeSpecialMapping(
+        region: ProcMapRegion,
+    ): Boolean {
+        val path =
+            region.path.orEmpty()
+        return path == "[vvar]" ||
+            path == "[vdso]" ||
+            path == "[vsyscall]"
+    }
+
     private fun includeRegion(
         region: ProcMapRegion,
         packageName: String,
@@ -986,8 +1164,9 @@ object RootProcessMemoryDumpCoordinator {
         val path =
             region.path.orEmpty()
         if (
-            path == "[vvar]" ||
-            path == "[vdso]"
+            isUnsafeSpecialMapping(
+                region,
+            )
         ) {
             return false
         }

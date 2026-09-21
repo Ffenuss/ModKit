@@ -38,7 +38,6 @@ class RootProcessMemoryDumpCoordinatorTest {
                         cancellation =
                             AtomicCancellationSignal(),
                         runner = runner,
-                        maxDumpBytes = 8192,
                         progress = {
                             progress += it
                         },
@@ -58,11 +57,16 @@ class RootProcessMemoryDumpCoordinatorTest {
                 1,
                 runner.memoryReadCommands,
             )
-            assertTrue(
-                result.dumpedRegions >= 1,
+            assertEquals(
+                2,
+                result.dumpedRegions,
+            )
+            assertEquals(
+                8192L,
+                result.dumpedBytes,
             )
             assertTrue(
-                result.dumpedBytes > 0,
+                !result.truncatedByByteLimit,
             )
             ZipFile(output).use {
                 zip ->
@@ -79,6 +83,11 @@ class RootProcessMemoryDumpCoordinatorTest {
                 assertTrue(
                     zip.getEntry(
                         "memory/index.tsv",
+                    ) != null,
+                )
+                assertTrue(
+                    zip.getEntry(
+                        "runtime-artifacts/index.tsv",
                     ) != null,
                 )
                 val memoryEntries =
@@ -98,6 +107,47 @@ class RootProcessMemoryDumpCoordinatorTest {
                         .isNotEmpty(),
                 )
             }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun quickLimitIsExplicitlyTruncatedWhileFullModeIsNot() {
+        val root =
+            Files.createTempDirectory(
+                "modkit-root-dump-limit-",
+            ).toFile()
+        try {
+            val output =
+                root.resolve(
+                    "quick.zip",
+                )
+            val result =
+                RootProcessMemoryDumpCoordinator
+                    .dump(
+                        packageName =
+                            PACKAGE,
+                        outputFile =
+                            output,
+                        cancellation =
+                            AtomicCancellationSignal(),
+                        runner =
+                            FakeProcessRunner(),
+                        maxDumpBytes = 4096,
+                    )
+
+            assertTrue(
+                result.truncatedByByteLimit,
+            )
+            assertEquals(
+                4096L,
+                result.dumpedBytes,
+            )
+            assertEquals(
+                1,
+                result.dumpedRegions,
+            )
         } finally {
             root.deleteRecursively()
         }

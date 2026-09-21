@@ -181,22 +181,104 @@ class RootProcMemRuntimeMemoryReader(
             throw AnalysisCancelledException()
         }
 
-        val result =
-            try {
-                runner.run(
+        // Fast path: Android process mappings are page based. Reading with
+        // bs=4096 avoids the extremely slow byte-at-a-time dd loop that made
+        // large root scans appear frozen. If the aligned window crosses an
+        // unreadable boundary, fall back to the exact byte-range command.
+        val page =
+            FAST_PROC_MEM_BLOCK_BYTES
+                .toLong()
+        val alignedStart =
+            address -
+                Math.floorMod(
+                    address,
+                    page,
+                )
+        val prefix =
+            (address -
+                alignedStart)
+                .toInt()
+        val needed =
+            prefix.toLong() +
+                size.toLong()
+        val blocks =
+            (
+                (needed +
+                    page -
+                    1L) /
+                    page
+                ).toInt()
+        val fastBytes =
+            blocks *
+                FAST_PROC_MEM_BLOCK_BYTES
+        if (
+            blocks > 0 &&
+            fastBytes > 0
+        ) {
+            val fast =
+                runRootRead(
                     command =
                         "dd if=/proc/" +
                             pid +
-                            "/mem bs=1 skip=" +
-                            address +
+                            "/mem bs=" +
+                            FAST_PROC_MEM_BLOCK_BYTES +
+                            " skip=" +
+                            (
+                                alignedStart /
+                                    page
+                                ) +
                             " count=" +
-                            size +
+                            blocks +
                             " status=none 2>/dev/null",
-                    maxOutputBytes = size,
-                    cancellation = cancellation,
+                    expectedBytes =
+                        fastBytes,
+                    cancellation =
+                        cancellation,
+                )
+            if (
+                fast != null &&
+                prefix + size <=
+                    fast.size
+            ) {
+                return fast.copyOfRange(
+                    prefix,
+                    prefix + size,
+                )
+            }
+        }
+
+        return runRootRead(
+            command =
+                "dd if=/proc/" +
+                    pid +
+                    "/mem bs=1 skip=" +
+                    address +
+                    " count=" +
+                    size +
+                    " status=none 2>/dev/null",
+            expectedBytes = size,
+            cancellation =
+                cancellation,
+        )
+    }
+
+    private fun runRootRead(
+        command: String,
+        expectedBytes: Int,
+        cancellation: CancellationSignal,
+    ): ByteArray? {
+        val result =
+            try {
+                runner.run(
+                    command = command,
+                    maxOutputBytes =
+                        expectedBytes,
+                    cancellation =
+                        cancellation,
                 )
             } catch (
-                failure: AnalysisCancelledException,
+                failure:
+                    AnalysisCancelledException,
             ) {
                 throw failure
             } catch (_: Throwable) {
@@ -206,11 +288,17 @@ class RootProcMemRuntimeMemoryReader(
         if (
             result.exitCode != 0 ||
             result.truncated ||
-            result.output.size != size
+            result.output.size !=
+                expectedBytes
         ) {
             return null
         }
         return result.output
+    }
+
+    companion object {
+        private const val FAST_PROC_MEM_BLOCK_BYTES =
+            4 * 1024
     }
 }
 

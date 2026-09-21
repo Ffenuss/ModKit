@@ -37,8 +37,10 @@ data class RootRuntimeUnknownBaseline(
  * exact/changed/increased/decreased refinement is used.
  */
 object RootRuntimeUnknownValueCoordinator {
-    const val DEFAULT_MAX_BASELINE_BYTES =
+    const val QUICK_MAX_BASELINE_BYTES =
         32L * 1024L * 1024L
+    private const val STORAGE_RESERVE_BYTES =
+        64L * 1024L * 1024L
 
     fun captureBaseline(
         packageName: String,
@@ -49,13 +51,11 @@ object RootRuntimeUnknownValueCoordinator {
         cancellation: CancellationSignal,
         runner: RootCommandRunner =
             AndroidRootCommandRunner(),
-        maxBytes: Long =
-            DEFAULT_MAX_BASELINE_BYTES,
+        maxBytes: Long? = null,
     ): RootRuntimeUnknownBaseline {
         require(
-            maxBytes in
-                1..
-                    (512L * 1024L * 1024L),
+            maxBytes == null ||
+                maxBytes > 0L
         ) {
             "Некорректный лимит unknown-value baseline."
         }
@@ -78,12 +78,43 @@ object RootRuntimeUnknownValueCoordinator {
         require(ranges.isNotEmpty()) {
             "В процессе нет подходящих writable private диапазонов."
         }
+        val totalRangeBytes =
+            totalRangeBytes(
+                ranges,
+            )
+        val effectiveMaxBytes =
+            minOf(
+                maxBytes
+                    ?: totalRangeBytes,
+                totalRangeBytes,
+            )
 
         snapshotFile.parentFile
             ?.mkdirs()
+        val parent =
+            snapshotFile.parentFile
+                ?: error(
+                    "Не удалось определить каталог unknown-value baseline.",
+                )
+        val usableSpace =
+            parent.usableSpace
+        if (
+            usableSpace > 0L &&
+            usableSpace <
+                effectiveMaxBytes +
+                    STORAGE_RESERVE_BYTES
+        ) {
+            error(
+                "Недостаточно свободного места для полного unknown-value baseline: нужно примерно " +
+                    (effectiveMaxBytes / (1024L * 1024L)) +
+                    " MiB + резерв, доступно " +
+                    (usableSpace / (1024L * 1024L)) +
+                    " MiB.",
+            )
+        }
         val temp =
             File(
-                snapshotFile.parentFile,
+                parent,
                 snapshotFile.name +
                     ".tmp",
             )
@@ -122,7 +153,7 @@ object RootRuntimeUnknownValueCoordinator {
                             cancellation,
                         )
                         val budget =
-                            maxBytes -
+                            effectiveMaxBytes -
                                 capturedBytes
                         if (budget <= 0L) {
                             truncated = true
@@ -497,6 +528,31 @@ object RootRuntimeUnknownValueCoordinator {
             ?.snapshotPath
             ?.let(::File)
             ?.delete()
+    }
+
+    private fun totalRangeBytes(
+        ranges: List<ProcMapRegion>,
+    ): Long {
+        var total = 0L
+        for (region in ranges) {
+            if (
+                region.size <= 0L
+            ) {
+                continue
+            }
+            total =
+                if (
+                    Long.MAX_VALUE -
+                        total <
+                    region.size
+                ) {
+                    Long.MAX_VALUE
+                } else {
+                    total +
+                        region.size
+                }
+        }
+        return total.coerceAtLeast(1L)
     }
 
     private fun alignedOffset(
