@@ -2947,9 +2947,12 @@ class LiveProcessOverlayService : Service() {
                             LearnedCandidateSource
                                 .TRAINING &&
                             (
-                                trainingRounds[
-                                    hint
-                                ] ?: 0
+                                hint
+                                    ?.let {
+                                        trainingRounds[
+                                            it
+                                        ]
+                                    } ?: 0
                                 ) >= 2 ->
                             CandidateEvidence
                                 .STABLE
