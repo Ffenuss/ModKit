@@ -116,9 +116,6 @@ fun RootProcessLabScreen(
             initialRootProbe,
         )
     }
-    var rootChecking by remember {
-        mutableStateOf(false)
-    }
     var processesLoading by remember {
         mutableStateOf(false)
     }
@@ -451,45 +448,6 @@ fun RootProcessLabScreen(
                 .deleteBaseline(
                     unknownBaseline,
                 )
-        }
-    }
-
-    fun checkRoot() {
-        val signal =
-            begin(
-                "Проверка root",
-            ) ?: return
-        rootChecking = true
-        scope.launch {
-            try {
-                rootProbe =
-                    withContext(
-                        Dispatchers.IO,
-                    ) {
-                        RootProcessDiscovery
-                            .probe(
-                                cancellation =
-                                    signal,
-                            )
-                    }
-            } catch (_: AnalysisCancelledException) {
-                error =
-                    "Проверка root отменена."
-            } catch (failure: Throwable) {
-                rootProbe =
-                    RootAccessProbeResult(
-                        available = false,
-                        uid = null,
-                        message =
-                            failure.message
-                                ?: failure
-                                    .javaClass
-                                    .simpleName,
-                    )
-            } finally {
-                rootChecking = false
-                finish()
-            }
         }
     }
 
