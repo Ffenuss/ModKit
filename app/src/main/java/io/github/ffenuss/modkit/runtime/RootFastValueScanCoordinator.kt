@@ -150,6 +150,16 @@ object RootFastValueScanCoordinator {
                         "."
                     )
         }
+        RootRuntimeCaptureCoordinator
+            .captureMaps(
+                packageName =
+                    packageName,
+                cancellation =
+                    cancellation,
+                runner = runner,
+                expectedPid = pid,
+            )
+
 
         val hits =
             parsed.hits
