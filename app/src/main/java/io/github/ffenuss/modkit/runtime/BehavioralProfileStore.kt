@@ -254,6 +254,53 @@ class BehavioralProfileStore(
         return profile
     }
 
+    fun removeCandidate(
+        identity: BehavioralArtifactIdentity,
+        anchor: StableRuntimePointerAnchor,
+    ): Boolean {
+        val current =
+            loadExact(
+                packageName =
+                    identity.packageName,
+                artifactSha256 =
+                    identity.artifactSha256,
+            ) ?: return false
+        val remaining =
+            current.candidates
+                .filterNot {
+                    it.anchor ==
+                        anchor
+                }
+        if (
+            remaining.size ==
+            current.candidates.size
+        ) {
+            return false
+        }
+
+        val output =
+            fileFor(
+                packageName =
+                    identity.packageName,
+                artifactSha256 =
+                    identity.artifactSha256,
+            )
+        if (remaining.isEmpty()) {
+            return !output.exists() ||
+                output.delete()
+        }
+
+        write(
+            current.copy(
+                updatedAtEpochMs =
+                    System.currentTimeMillis(),
+                candidates =
+                    remaining,
+            ),
+        )
+        return true
+    }
+
     fun loadExact(
         packageName: String,
         artifactSha256: String,
