@@ -898,6 +898,80 @@ class LiveProcessOverlayService : Service() {
             return
         }
 
+        if (
+            manualUnknownAuto &&
+            manualScan != null
+        ) {
+            manualCount =
+                TextView(this).apply {
+                    setTextColor(
+                        Color.WHITE,
+                    )
+                    textSize = 12f
+                }
+            container.addView(
+                requireNotNull(
+                    manualCount,
+                ),
+            )
+            manualList =
+                LinearLayout(this).apply {
+                    orientation =
+                        LinearLayout.VERTICAL
+                }
+            container.addView(
+                requireNotNull(
+                    manualList,
+                ),
+                matchWidth(),
+            )
+            renderManualScan()
+
+            val count =
+                manualScan
+                    ?.snapshot
+                    ?.hits
+                    ?.size
+                    ?: 0
+            container.addView(
+                hintText(
+                    if (count > 5) {
+                        "Результатов ещё много. Вернись в игру и снова измени интересующий параметр; при следующем открытии MK список автоматически сузится."
+                    } else {
+                        "Осталось мало кандидатов. Нажми подходящий результат, чтобы проверить и изменить его."
+                    },
+                ),
+            )
+            if (count > 5) {
+                container.addView(
+                    Button(this).apply {
+                        text =
+                            "Продолжить наблюдение"
+                        setOnClickListener {
+                            setPanelVisible(
+                                false,
+                            )
+                        }
+                    },
+                    matchWidth(),
+                )
+            }
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Начать заново"
+                    setOnClickListener {
+                        clearManualSearch()
+                        manualUnknownAuto =
+                            false
+                        renderCurrentPage()
+                    }
+                },
+                matchWidth(),
+            )
+            return
+        }
+
         manualQuery =
             EditText(this).apply {
                 hint =
