@@ -807,6 +807,16 @@ class LiveProcessOverlayService : Service() {
             },
             matchWidth(),
         )
+        body.addView(
+            Button(this).apply {
+                text =
+                    "Удалить выбранное из сохранённых"
+                setOnClickListener {
+                    removeSelectedPersistentCandidate()
+                }
+            },
+            matchWidth(),
+        )
 
         val collapse =
             Button(this).apply {
@@ -2333,6 +2343,109 @@ class LiveProcessOverlayService : Service() {
                 actionHint,
             force = false,
         )
+    }
+
+    private fun removeSelectedPersistentCandidate() {
+        val cfg =
+            config ?: return
+        val candidate =
+            selectedCandidate
+                ?: run {
+                    setStatus(
+                        "Сначала выбери сохранённый параметр.",
+                    )
+                    return
+                }
+        val anchor =
+            candidate.anchor
+                ?: run {
+                    setStatus(
+                        "У выбранного параметра нет сохранённого pointer-chain.",
+                    )
+                    return
+                }
+        if (
+            !candidate.persistent ||
+            candidate
+                .requiresConfirmation
+        ) {
+            setStatus(
+                "Этот кандидат ещё не сохранён для текущей версии игры.",
+            )
+            return
+        }
+
+        executor.execute {
+            val result =
+                runCatching {
+                    val identity =
+                        synchronized(
+                            profileLock,
+                        ) {
+                            artifactIdentity
+                                ?: profileStore
+                                    .computeIdentity(
+                                        packageName =
+                                            cfg.packageName,
+                                        cancellation =
+                                            AtomicCancellationSignal(),
+                                    )
+                                    .also {
+                                        artifactIdentity =
+                                            it
+                                    }
+                        }
+                    synchronized(
+                        profileLock,
+                    ) {
+                        profileStore
+                            .removeCandidate(
+                                identity =
+                                    identity,
+                                anchor = anchor,
+                            )
+                    }
+                }
+            main.post {
+                result.onSuccess {
+                    removed ->
+                    if (removed) {
+                        learnedCandidates =
+                            learnedCandidates
+                                .filterNot {
+                                    it.anchor ==
+                                        anchor
+                                }
+                        selectedCandidate =
+                            null
+                        editorTitle?.text =
+                            "Кандидат не выбран"
+                        editorValue?.setText(
+                            "",
+                        )
+                        rebuildLearnedList()
+                        setStatus(
+                            "Сохранённый параметр удалён из профиля этой версии.",
+                        )
+                    } else {
+                        setStatus(
+                            "Сохранённый параметр уже отсутствует.",
+                        )
+                    }
+                }.onFailure {
+                    failure ->
+                    setStatus(
+                        "Не удалось удалить сохранённый параметр: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
     }
 
     private fun persistSelectedCandidate() {
