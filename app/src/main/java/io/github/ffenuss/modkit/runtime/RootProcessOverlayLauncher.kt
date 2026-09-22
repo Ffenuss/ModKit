@@ -113,6 +113,8 @@ object RootProcessOverlayLauncher {
                             label.ifBlank {
                                 packageName
                             },
+                        androidUserId =
+                            userId,
                     ),
                 )
         val service =
