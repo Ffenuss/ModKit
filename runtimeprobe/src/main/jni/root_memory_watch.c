@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/prctl.h>
 #include <sys/ptrace.h>
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -76,6 +77,12 @@ static watch_hit g_hits[MAX_UNIQUE_HITS];
 static size_t g_hit_count = 0;
 static uint32_t g_total_traps = 0;
 static int g_truncated = 0;
+static volatile sig_atomic_t g_stop_requested = 0;
+
+static void request_stop(int signal_number) {
+    (void)signal_number;
+    g_stop_requested = 1;
+}
 
 static int64_t monotonic_ms(void) {
     struct timespec now;
@@ -424,6 +431,9 @@ static void cleanup_threads(void) {
 int main(int argc, char** argv) {
     puts(MODKIT_ROOT_WATCH_V1);
     fflush(stdout);
+    (void)prctl(PR_SET_PDEATHSIG, SIGTERM);
+    signal(SIGTERM, request_stop);
+    signal(SIGINT, request_stop);
 
 #if !defined(__aarch64__)
     puts("ERROR\tUNSUPPORTED_ABI\tHardware watch tracing currently requires arm64-v8a.");
@@ -480,7 +490,8 @@ int main(int argc, char** argv) {
     const int64_t started = monotonic_ms();
     int64_t last_refresh = started;
 
-    while (monotonic_ms() - started < duration_ms &&
+    while (!g_stop_requested &&
+            monotonic_ms() - started < duration_ms &&
             g_total_traps < (uint32_t)max_events) {
         int status = 0;
         const pid_t tid = waitpid(-1, &status, __WALL | WNOHANG);
