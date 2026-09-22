@@ -1171,33 +1171,30 @@ class LiveProcessOverlayService : Service() {
             ).show()
         }
 
-        sample.visibleCandidates
-            .firstOrNull {
-                candidate ->
-                candidate.confidence >=
-                    if (
-                        source ==
-                        LearnedCandidateSource
-                            .TRAINING
-                    ) {
-                        62
-                    } else {
-                        78
-                    } &&
-                    !stabilizationAttempted
-                        .contains(
-                            candidate.id,
-                        )
-            }
-            ?.let {
-                candidate ->
-                stabilizeBehavioralCandidate(
-                    candidate = candidate,
-                    source = source,
-                    actionHint =
-                        actionHint,
-                )
-            }
+        if (
+            source ==
+            LearnedCandidateSource.TRAINING
+        ) {
+            sample.visibleCandidates
+                .firstOrNull {
+                    candidate ->
+                    candidate.confidence >=
+                        62 &&
+                        !stabilizationAttempted
+                            .contains(
+                                candidate.id,
+                            )
+                }
+                ?.let {
+                    candidate ->
+                    stabilizeBehavioralCandidate(
+                        candidate = candidate,
+                        source = source,
+                        actionHint =
+                            actionHint,
+                    )
+                }
+        }
     }
 
     private fun rebuildBehavioralList() {
@@ -1260,6 +1257,11 @@ class LiveProcessOverlayService : Service() {
     ) {
         val cfg =
             config ?: return
+        if (autoSession != null) {
+            stopAutoScan(
+                userRequested = false,
+            )
+        }
         val query =
             manualQuery
                 ?.text
@@ -1440,6 +1442,11 @@ class LiveProcessOverlayService : Service() {
     private fun manualUnknownBaseline() {
         val cfg =
             config ?: return
+        if (autoSession != null) {
+            stopAutoScan(
+                userRequested = false,
+            )
+        }
         clearManualSearch()
         setStatus(
             "Сохраняем baseline неизвестного " +
@@ -1518,6 +1525,11 @@ class LiveProcessOverlayService : Service() {
         refinement:
             RuntimeValueRefinement,
     ) {
+        if (autoSession != null) {
+            stopAutoScan(
+                userRequested = false,
+            )
+        }
         val scan =
             manualScan
         val baseline =
@@ -1846,6 +1858,11 @@ class LiveProcessOverlayService : Service() {
         }
         val cfg =
             config ?: return
+        if (autoSession != null) {
+            stopAutoScan(
+                userRequested = false,
+            )
+        }
         freezeTarget =
             candidate
         freezeValue =
@@ -1856,7 +1873,8 @@ class LiveProcessOverlayService : Service() {
             "Freeze включён: " +
                 candidate.title +
                 " = " +
-                value,
+                value +
+                ". Автоскан на время Freeze не выполняется.",
         )
         freezeTask =
             executor.scheduleWithFixedDelay(
