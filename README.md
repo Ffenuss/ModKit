@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.15**
+Current application version: **0.0.16**
 
 ## Product flow
 
@@ -123,3 +123,12 @@ The root overlay has been redesigned around user-facing tasks rather than raw sc
 Guided manual search uses automatic numeric type selection and a native root scanner for the initial exact-value pass. Integer values such as item counts are searched as integer types before Float/Double. The native scanner reads writable private process memory in large blocks, bounds the quick pass, and revalidates the exact target PID after scanning. The older Kotlin/root-shell scanner remains a bounded fallback.
 
 Automatic behavioral discovery now requires repeated, stable evidence before surfacing candidates and suppresses obvious background/noise values. Repeated action training narrows candidates across rounds. Candidate cards open a dedicated page for editing, Freeze, code-access tracing and saving. Saved mods can be renamed, revalidated or deleted when a binding is wrong.
+
+
+### Behavioral evidence v3
+
+Behavioral discovery now distinguishes **preliminary**, **stable** and **confirmed** evidence. The first training round never presents raw memory changes as a mod. A second round must reproduce the same candidate; if too many survive, ModKit asks for a third round and requires three-way overlap before showing the shortlist. Large pointer-like integer artifacts and duplicate interpretations of the same address are suppressed from the normal UI and remain available only through Expert tools.
+
+Auto discovery reports observation progress and the number of emerging repeated patterns instead of silently showing an empty result. A stable unknown pattern is labeled honestly as a repeated-action candidate; the user can optionally classify it as movement, attack, taking damage, resource change or another action. Semantic names such as movement speed or health are used only after stronger confirmation.
+
+Behavioral findings are automatically added to **My mods** only when a live code trace confirms a writer for the selected value. Editing a value by itself no longer silently persists a binding. Non-confirmed candidates can still be saved explicitly if the user has independently verified their effect, and saved bindings can be renamed, revalidated or removed.

@@ -15,37 +15,46 @@ enum class BehavioralScanMode {
 enum class BehavioralActionHint(
     val title: String,
     val candidateTitle: String,
+    val confirmedTitle: String,
 ) {
     MOVEMENT(
         "Ходьба / движение",
+        "Кандидат движения",
         "Скорость / движение",
     ),
     ATTACK(
         "Атака",
+        "Кандидат атаки",
         "Урон / атака",
     ),
     DAMAGE_TAKEN(
         "Получение урона",
+        "Кандидат здоровья",
         "Здоровье / получаемый урон",
     ),
     STAMINA(
         "Выносливость",
+        "Кандидат выносливости",
         "Выносливость / энергия",
     ),
     COOLDOWN(
         "Cooldown / перезарядка",
+        "Кандидат cooldown",
         "Cooldown / таймер способности",
     ),
     RESOURCE_CHANGE(
         "Покупка / продажа / ресурс",
+        "Кандидат ресурса",
         "Ресурс / валюта",
     ),
     ITEM_CHANGE(
         "Предмет / подбор",
+        "Кандидат количества предмета",
         "Количество предмета",
     ),
     OTHER(
         "Другое действие",
+        "Кандидат действия",
         "Параметр действия",
     ),
 }
@@ -77,6 +86,7 @@ data class BehavioralScanSample(
     val visibleCandidates: List<BehavioralRuntimeCandidate>,
     val hiddenAsNoise: Int,
     val elapsedMs: Long,
+    val emergingCandidates: Int = 0,
 )
 
 internal data class BehavioralTrack(
@@ -146,7 +156,7 @@ object RootBehavioralScanCoordinator {
     private const val DISTINCT_VALUE_LIMIT =
         16
     private const val AUTO_VISIBLE_THRESHOLD =
-        78
+        70
     private const val TRAINING_VISIBLE_THRESHOLD =
         46
 
@@ -357,16 +367,44 @@ object RootBehavioralScanCoordinator {
                 }
                 .filter {
                     candidate ->
-                    session.mode !=
-                        BehavioralScanMode.AUTO ||
-                        autoCandidateRelevant(
-                            candidate,
-                        )
+                    when (
+                        session.mode
+                    ) {
+                        BehavioralScanMode.AUTO ->
+                            autoCandidateRelevant(
+                                candidate,
+                            )
+
+                        BehavioralScanMode.TRAINING ->
+                            trainingCandidateRelevant(
+                                candidate,
+                            )
+                    }
                 }
                 .take(
                     visibleLimit,
                 )
                 .toList()
+
+        val emerging =
+            ranked.count {
+                candidate ->
+                candidate.confidence >=
+                    52 &&
+                    when (
+                        session.mode
+                    ) {
+                        BehavioralScanMode.AUTO ->
+                            emergingAutoCandidateRelevant(
+                                candidate,
+                            )
+
+                        BehavioralScanMode.TRAINING ->
+                            trainingCandidateRelevant(
+                                candidate,
+                            )
+                    }
+            }
 
         if (
             session.mode ==
@@ -403,6 +441,8 @@ object RootBehavioralScanCoordinator {
             elapsedMs =
                 System.currentTimeMillis() -
                     started,
+            emergingCandidates =
+                emerging,
         )
     }
 
@@ -821,8 +861,9 @@ object RootBehavioralScanCoordinator {
                     observedSamples,
                 )
         if (
-            observedSamples >= 4 &&
-            changedRatio > 0.92
+            observedSamples >= 6 &&
+            changedRatio > 0.96 &&
+            stableCount == 0
         ) {
             score -= 24
         }
@@ -979,7 +1020,34 @@ object RootBehavioralScanCoordinator {
             return "Состояние / флаг"
         }
 
-        return "Повторяющийся параметр игрока"
+        return "Повторяющееся действие обнаружено"
+    }
+
+    internal fun trainingCandidateRelevant(
+        candidate:
+            BehavioralRuntimeCandidate,
+    ): Boolean =
+        semanticValueRelevant(
+            candidate =
+                candidate,
+            strict = false,
+        )
+
+    internal fun emergingAutoCandidateRelevant(
+        candidate:
+            BehavioralRuntimeCandidate,
+    ): Boolean {
+        if (
+            candidate.observedSamples < 3 ||
+            candidate.changeCount < 2
+        ) {
+            return false
+        }
+        return semanticValueRelevant(
+            candidate =
+                candidate,
+            strict = true,
+        )
     }
 
     private fun autoCandidateRelevant(
@@ -995,6 +1063,18 @@ object RootBehavioralScanCoordinator {
             return false
         }
 
+        return semanticValueRelevant(
+            candidate =
+                candidate,
+            strict = true,
+        )
+    }
+
+    private fun semanticValueRelevant(
+        candidate:
+            BehavioralRuntimeCandidate,
+        strict: Boolean,
+    ): Boolean {
         return when (
             candidate.valueType
         ) {
@@ -1003,19 +1083,29 @@ object RootBehavioralScanCoordinator {
                     candidate.value
                         .toIntOrNull()
                         ?: return false
-                if (
-                    value < 0 &&
-                    kotlin.math.abs(
-                        value.toLong(),
-                    ) >
-                    1_000_000L
-                ) {
-                    return false
-                }
+                val limit =
+                    if (strict) {
+                        20_000_000L
+                    } else {
+                        50_000_000L
+                    }
+                val negativeLimit =
+                    if (strict) {
+                        250_000L
+                    } else {
+                        1_000_000L
+                    }
                 kotlin.math.abs(
                     value.toLong(),
                 ) <=
-                    100_000_000L
+                    limit &&
+                    (
+                        value >= 0 ||
+                            kotlin.math.abs(
+                                value.toLong(),
+                            ) <=
+                            negativeLimit
+                        )
             }
 
             RuntimeValueType.INT64 -> {
@@ -1023,19 +1113,29 @@ object RootBehavioralScanCoordinator {
                     candidate.value
                         .toLongOrNull()
                         ?: return false
-                if (
-                    value < 0L &&
+                val magnitude =
                     kotlin.math.abs(
                         value.toDouble(),
-                    ) >
-                    1.0e7
-                ) {
-                    return false
-                }
-                kotlin.math.abs(
-                    value.toDouble(),
-                ) <=
-                    1.0e11
+                    )
+                val limit =
+                    if (strict) {
+                        20_000_000.0
+                    } else {
+                        50_000_000.0
+                    }
+                val negativeLimit =
+                    if (strict) {
+                        250_000.0
+                    } else {
+                        1_000_000.0
+                    }
+                magnitude <=
+                    limit &&
+                    (
+                        value >= 0L ||
+                            magnitude <=
+                            negativeLimit
+                        )
             }
 
             RuntimeValueType.FLOAT32,
@@ -1046,10 +1146,21 @@ object RootBehavioralScanCoordinator {
                         .toDoubleOrNull()
                         ?: return false
                 value.isFinite() &&
+                    (
+                        value == 0.0 ||
+                            kotlin.math.abs(
+                                value,
+                            ) >=
+                            1.0e-7
+                        ) &&
                     kotlin.math.abs(
                         value,
                     ) <=
-                    1.0e6
+                    if (strict) {
+                        100_000.0
+                    } else {
+                        1_000_000.0
+                    }
             }
         }
     }

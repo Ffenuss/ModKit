@@ -160,6 +160,11 @@ class LiveProcessOverlayService : Service() {
             String,
             List<RootCodeAccessSite>
         >()
+    private val behavioralHintOverrides =
+        mutableMapOf<
+            String,
+            BehavioralActionHint
+        >()
 
     private var manualType =
         RuntimeValueType.INT32
@@ -197,6 +202,20 @@ class LiveProcessOverlayService : Service() {
         MODS,
         CANDIDATE,
         EXPERT,
+    }
+
+    private enum class CandidateEvidence(
+        val title: String,
+    ) {
+        PRELIMINARY(
+            "Предварительно",
+        ),
+        STABLE(
+            "Устойчивый кандидат",
+        ),
+        CONFIRMED(
+            "Подтверждено",
+        ),
     }
 
     override fun onCreate() {
@@ -1263,10 +1282,41 @@ class LiveProcessOverlayService : Service() {
             ),
         )
 
+        container.addView(
+            hintText(
+                when (
+                    candidate.evidence
+                ) {
+                    CandidateEvidence.PRELIMINARY ->
+                        "Это предварительное совпадение памяти. ModKit ещё не считает его модом."
+
+                    CandidateEvidence.STABLE ->
+                        if (
+                            candidate.actionHint !=
+                            null
+                        ) {
+                            "Значение повторялось в нескольких раундах «" +
+                                candidate.actionHint.title +
+                                "». Это ещё не означает, что само значение является " +
+                                candidate.actionHint.confirmedTitle +
+                                "; проверь изменение/Freeze или найди код, который его меняет."
+                        } else {
+                            "Паттерн повторяется устойчиво, но ModKit пока не знает его смысл. Можно уточнить действие и проверить эффект."
+                        }
+
+                    CandidateEvidence.CONFIRMED ->
+                        "Связь усилена live code trace: найден код, который записывает это значение. Привязку всё равно можно удалить из «Мои моды», если эффект оказался не тем."
+                },
+            ),
+        )
+
         editorTitle =
             TextView(this).apply {
                 text =
-                    "Сейчас: " +
+                    "Статус: " +
+                        candidate.evidence
+                            .title +
+                        "\nСейчас: " +
                         candidate.value +
                         " · " +
                         candidate.valueType
@@ -1290,6 +1340,48 @@ class LiveProcessOverlayService : Service() {
                 editorTitle,
             ),
         )
+
+        if (
+            candidate.source ==
+                LearnedCandidateSource.AUTO &&
+            candidate.actionHint == null
+        ) {
+            container.addView(
+                sectionTitle(
+                    "Что ты сейчас повторял?",
+                ),
+            )
+            container.addView(
+                hintText(
+                    "Это нужно только для понятного названия. Сам кандидат найден по повторяемому поведению.",
+                ),
+            )
+            listOf(
+                "🏃 Ходьба / движение" to
+                    BehavioralActionHint.MOVEMENT,
+                "⚔ Атака" to
+                    BehavioralActionHint.ATTACK,
+                "❤️ Получал урон" to
+                    BehavioralActionHint.DAMAGE_TAKEN,
+                "💰 Ресурс / предмет" to
+                    BehavioralActionHint.RESOURCE_CHANGE,
+                "🎯 Другое" to
+                    BehavioralActionHint.OTHER,
+            ).forEach {
+                (label, hint) ->
+                container.addView(
+                    Button(this).apply {
+                        text = label
+                        setOnClickListener {
+                            classifySelectedCandidate(
+                                hint,
+                            )
+                        }
+                    },
+                    matchWidth(),
+                )
+            }
+        }
 
         editorValue =
             EditText(this).apply {
@@ -1418,8 +1510,13 @@ class LiveProcessOverlayService : Service() {
                         candidate.persistent
                     ) {
                         "Перепроверить и обновить привязку"
+                    } else if (
+                        candidate.evidence ==
+                            CandidateEvidence.CONFIRMED
+                    ) {
+                        "Сохранить подтверждённый мод"
                     } else {
-                        "Сохранить в «Мои моды»"
+                        "Сохранить вручную (ещё не подтверждено)"
                     }
                 setOnClickListener {
                     persistSelectedCandidate()
@@ -1427,6 +1524,17 @@ class LiveProcessOverlayService : Service() {
             },
             matchWidth(),
         )
+        if (
+            !candidate.persistent &&
+            candidate.evidence !=
+                CandidateEvidence.CONFIRMED
+        ) {
+            container.addView(
+                hintText(
+                    "Автоматически в «Мои моды» попадают только подтверждённые находки. Ручное сохранение оставлено на случай, если ты уже проверил эффект сам.",
+                ),
+            )
+        }
 
         if (candidate.persistent) {
             renameValue =
@@ -1797,46 +1905,58 @@ class LiveProcessOverlayService : Service() {
 
     private fun candidateDisplayTitle(
         candidate: EditableRuntimeCandidate,
-    ): String =
-        when {
+    ): String {
+        val semanticTitle =
+            if (
+                candidate.evidence ==
+                CandidateEvidence.CONFIRMED
+            ) {
+                candidate.actionHint
+                    ?.confirmedTitle
+                    ?: candidate.title
+            } else {
+                candidate.title
+            }
+        return when {
             candidate.actionHint ==
                 BehavioralActionHint
                     .DAMAGE_TAKEN ->
                 "❤️ " +
-                    candidate.title
+                    semanticTitle
             candidate.actionHint ==
                 BehavioralActionHint
                     .ATTACK ->
                 "⚔ " +
-                    candidate.title
+                    semanticTitle
             candidate.actionHint ==
                 BehavioralActionHint
                     .MOVEMENT ->
                 "🏃 " +
-                    candidate.title
+                    semanticTitle
             candidate.actionHint ==
                 BehavioralActionHint
                     .STAMINA ->
                 "⚡ " +
-                    candidate.title
+                    semanticTitle
             candidate.actionHint ==
                 BehavioralActionHint
                     .COOLDOWN ->
                 "⏱ " +
-                    candidate.title
+                    semanticTitle
             candidate.actionHint ==
                 BehavioralActionHint
                     .RESOURCE_CHANGE ->
                 "💰 " +
-                    candidate.title
+                    semanticTitle
             candidate.actionHint ==
                 BehavioralActionHint
                     .ITEM_CHANGE ->
                 "🎒 " +
-                    candidate.title
+                    semanticTitle
             else ->
-                candidate.title
+                semanticTitle
         }
+    }
 
     private fun writerActionTitle(
         candidate:
@@ -2278,7 +2398,7 @@ class LiveProcessOverlayService : Service() {
                             cancellation =
                                 AtomicCancellationSignal(),
                             visibleLimit =
-                                64,
+                                100,
                         )
                 }
             RootBehavioralScanCoordinator
@@ -2307,24 +2427,51 @@ class LiveProcessOverlayService : Service() {
                         actionHint =
                             hint,
                     )
+                    val round =
+                        trainingRounds[
+                            hint
+                        ] ?: 1
+                    val overlap =
+                        trainingAggregates[
+                            hint
+                        ]?.size ?: 0
                     setStatus(
-                        "Обучение «" +
-                            hint.title +
-                            "»: раунд " +
-                            (
-                                trainingRounds[
-                                    hint
-                                ] ?: 1
-                                ) +
-                            " · после фильтра " +
+                        when {
+                            round <= 1 ->
+                                "Обучение «" +
+                                    hint.title +
+                                    "»: первый раунд · предварительных " +
+                                    sample
+                                        .visibleCandidates
+                                        .size +
+                                    ". Пока ничего не считаю модом. Повтори то же действие ещё раз."
+
+                            round == 2 &&
+                                overlap > 5 ->
+                                "Обучение «" +
+                                    hint.title +
+                                    "»: совпали " +
+                                    overlap +
+                                    " кандидатов в двух раундах. Это ещё много — повтори действие третий раз."
+
                             consolidated
                                 .visibleCandidates
-                                .size +
-                            " кандидатов из " +
-                            sample
-                                .visibleCandidates
-                                .size +
-                            ". Повтори то же действие, чтобы сузить список дальше.",
+                                .isEmpty() ->
+                                "Обучение «" +
+                                    hint.title +
+                                    "»: устойчивых совпадений пока нет. Повтори действие ещё раз в тех же условиях."
+
+                            else ->
+                                "Обучение «" +
+                                    hint.title +
+                                    "»: раунд " +
+                                    round +
+                                    " · устойчивых кандидатов " +
+                                    consolidated
+                                        .visibleCandidates
+                                        .size +
+                                    ". Это ещё кандидаты, а не подтверждённые моды."
+                        },
                     )
                 }.onFailure {
                     failure ->
@@ -2351,7 +2498,7 @@ class LiveProcessOverlayService : Service() {
         sample: BehavioralScanSample,
         hint: BehavioralActionHint,
     ): BehavioralScanSample {
-        val round =
+        var round =
             (
                 trainingRounds[
                     hint
@@ -2369,85 +2516,91 @@ class LiveProcessOverlayService : Service() {
                 ) {
                     linkedMapOf()
                 }
-        sample.visibleCandidates
-            .forEach {
-                candidate ->
-                val previous =
-                    aggregates[
-                        candidate.id
-                    ]
-                val seenRounds =
-                    (
-                        previous
-                            ?.seenRounds
-                            ?: 0
-                        ) +
-                        1
-                val boosted =
-                    candidate.copy(
-                        confidence =
-                            (
-                                maxOf(
-                                    candidate
-                                        .confidence,
-                                    previous
-                                        ?.candidate
-                                        ?.confidence
-                                        ?: 0,
-                                ) +
-                                    minOf(
-                                        24,
-                                        (
-                                            seenRounds -
-                                                1
-                                            ) *
-                                            8,
-                                    )
-                                ).coerceAtMost(
-                                99,
-                            ),
-                        changeCount =
-                            candidate
-                                .changeCount +
-                                (
-                                    previous
-                                        ?.candidate
-                                        ?.changeCount
-                                        ?: 0
-                                    ),
-                        stableCount =
-                            candidate
-                                .stableCount +
-                                (
-                                    previous
-                                        ?.candidate
-                                        ?.stableCount
-                                        ?: 0
-                                    ),
-                        observedSamples =
-                            candidate
-                                .observedSamples +
-                                (
-                                    previous
-                                        ?.candidate
-                                        ?.observedSamples
-                                        ?: 0
-                                    ),
-                    )
+        val incoming =
+            dedupeTrainingCandidates(
+                candidates =
+                    sample.visibleCandidates,
+                hint = hint,
+            )
+
+        incoming.forEach {
+            candidate ->
+            val previous =
                 aggregates[
                     candidate.id
-                ] =
-                    TrainingAggregate(
-                        candidate =
-                            boosted,
-                        seenRounds =
-                            seenRounds,
-                    )
-            }
+                ]
+            val seenRounds =
+                (
+                    previous
+                        ?.seenRounds
+                        ?: 0
+                    ) +
+                    1
+            val boosted =
+                candidate.copy(
+                    confidence =
+                        (
+                            maxOf(
+                                candidate
+                                    .confidence,
+                                previous
+                                    ?.candidate
+                                    ?.confidence
+                                    ?: 0,
+                            ) +
+                                minOf(
+                                    24,
+                                    (
+                                        seenRounds -
+                                            1
+                                        ) *
+                                        8,
+                                )
+                            ).coerceAtMost(
+                            99,
+                        ),
+                    changeCount =
+                        candidate
+                            .changeCount +
+                            (
+                                previous
+                                    ?.candidate
+                                    ?.changeCount
+                                    ?: 0
+                                ),
+                    stableCount =
+                        candidate
+                            .stableCount +
+                            (
+                                previous
+                                    ?.candidate
+                                    ?.stableCount
+                                    ?: 0
+                                ),
+                    observedSamples =
+                        candidate
+                            .observedSamples +
+                            (
+                                previous
+                                    ?.candidate
+                                    ?.observedSamples
+                                    ?: 0
+                                ),
+                )
+            aggregates[
+                candidate.id
+            ] =
+                TrainingAggregate(
+                    candidate =
+                        boosted,
+                    seenRounds =
+                        seenRounds,
+                )
+        }
 
         if (round > 1) {
             val minimumSeen =
-                if (round <= 2) {
+                if (round <= 3) {
                     round
                 } else {
                     round - 1
@@ -2472,44 +2625,61 @@ class LiveProcessOverlayService : Service() {
         }
 
         if (
+            round > 1 &&
             aggregates.isEmpty() &&
-            sample.visibleCandidates
-                .isNotEmpty()
+            incoming.isNotEmpty()
         ) {
+            aggregates.clear()
+            incoming.forEach {
+                candidate ->
+                aggregates[
+                    candidate.id
+                ] =
+                    TrainingAggregate(
+                        candidate =
+                            candidate,
+                        seenRounds = 1,
+                    )
+            }
+            round = 1
             trainingRounds[
                 hint
-            ] = 1
-            sample.visibleCandidates
-                .forEach {
-                    candidate ->
-                    aggregates[
-                        candidate.id
-                    ] =
-                        TrainingAggregate(
-                            candidate =
-                                candidate,
-                            seenRounds = 1,
-                        )
-                }
+            ] = round
         }
 
+        val stable =
+            dedupeTrainingCandidates(
+                candidates =
+                    aggregates
+                        .values
+                        .sortedWith(
+                            compareByDescending<
+                                TrainingAggregate
+                            > {
+                                it.seenRounds
+                            }.thenByDescending {
+                                it.candidate
+                                    .confidence
+                            },
+                        )
+                        .map {
+                            it.candidate
+                        },
+                hint = hint,
+            )
+
         val visible =
-            aggregates
-                .values
-                .sortedWith(
-                    compareByDescending<
-                        TrainingAggregate
-                    > {
-                        it.seenRounds
-                    }.thenByDescending {
-                        it.candidate
-                            .confidence
-                    },
-                )
-                .map {
-                    it.candidate
-                }
-                .take(8)
+            when {
+                round <= 1 ->
+                    emptyList()
+
+                round == 2 &&
+                    stable.size > 5 ->
+                    emptyList()
+
+                else ->
+                    stable.take(5)
+            }
 
         return sample.copy(
             visibleCandidates =
@@ -2518,13 +2688,105 @@ class LiveProcessOverlayService : Service() {
                 sample.hiddenAsNoise +
                     maxOf(
                         0,
-                        sample
-                            .visibleCandidates
-                            .size -
+                        incoming.size -
                             visible.size,
                     ),
+            emergingCandidates =
+                stable.size,
         )
     }
+
+    private fun dedupeTrainingCandidates(
+        candidates:
+            List<BehavioralRuntimeCandidate>,
+        hint: BehavioralActionHint,
+    ): List<BehavioralRuntimeCandidate> =
+        candidates
+            .groupBy {
+                it.address
+            }
+            .values
+            .map {
+                sameAddress ->
+                sameAddress.minWithOrNull(
+                    compareBy<
+                        BehavioralRuntimeCandidate
+                    > {
+                        trainingTypePriority(
+                            hint =
+                                hint,
+                            candidate = it,
+                        )
+                    }.thenByDescending {
+                        it.confidence
+                    },
+                ) ?: sameAddress.first()
+            }
+            .sortedWith(
+                compareByDescending<
+                    BehavioralRuntimeCandidate
+                > {
+                    it.confidence
+                }.thenByDescending {
+                    it.changeCount
+                },
+            )
+
+    private fun trainingTypePriority(
+        hint: BehavioralActionHint,
+        candidate:
+            BehavioralRuntimeCandidate,
+    ): Int =
+        when (
+            hint
+        ) {
+            BehavioralActionHint.MOVEMENT,
+            BehavioralActionHint.COOLDOWN,
+            -> when (
+                candidate.valueType
+            ) {
+                RuntimeValueType.FLOAT32 ->
+                    0
+                RuntimeValueType.FLOAT64 ->
+                    1
+                RuntimeValueType.INT32 ->
+                    2
+                RuntimeValueType.INT64 ->
+                    3
+            }
+
+            BehavioralActionHint.RESOURCE_CHANGE,
+            BehavioralActionHint.ITEM_CHANGE,
+            BehavioralActionHint.DAMAGE_TAKEN,
+            -> when (
+                candidate.valueType
+            ) {
+                RuntimeValueType.INT32 ->
+                    0
+                RuntimeValueType.FLOAT32 ->
+                    1
+                RuntimeValueType.INT64 ->
+                    2
+                RuntimeValueType.FLOAT64 ->
+                    3
+            }
+
+            BehavioralActionHint.ATTACK,
+            BehavioralActionHint.STAMINA,
+            BehavioralActionHint.OTHER,
+            -> when (
+                candidate.valueType
+            ) {
+                RuntimeValueType.FLOAT32 ->
+                    0
+                RuntimeValueType.INT32 ->
+                    1
+                RuntimeValueType.FLOAT64 ->
+                    2
+                RuntimeValueType.INT64 ->
+                    3
+            }
+        }
 
     private fun collapseAutoActivityGroups(
         candidates:
@@ -2600,30 +2862,50 @@ class LiveProcessOverlayService : Service() {
                     behavioralCandidates
                         .size
             }
-        setStatus(
-            if (
-                source ==
-                LearnedCandidateSource.TRAINING
-            ) {
-                "Обучение: найдено " +
-                    sample.visibleCandidates
-                        .size +
-                    " устойчивых кандидатов."
-            } else {
-                "Автоскан: подтверждаемых " +
+
+        if (
+            source ==
+            LearnedCandidateSource.AUTO
+        ) {
+            val progress =
+                if (
+                    sample.cycle >= 20
+                ) {
+                    "20+/20"
+                } else {
+                    sample.cycle
+                        .coerceAtLeast(
+                            1,
+                        )
+                        .toString() +
+                        "/20"
+                }
+            setStatus(
+                if (
                     behavioralCandidates
-                        .size +
-                    " · скрыто шумных " +
-                    sample.hiddenAsNoise +
-                    "."
-            },
-        )
+                        .isEmpty()
+                ) {
+                    "Автопоиск: наблюдение " +
+                        progress +
+                        " · повторяющихся паттернов " +
+                        sample.emergingCandidates +
+                        ". Пока данных недостаточно — продолжай играть и повторять действия."
+                } else {
+                    "Автопоиск: наблюдение " +
+                        progress +
+                        " · устойчивых паттернов " +
+                        behavioralCandidates
+                            .size +
+                        ". Открой карточку, чтобы проверить или уточнить действие."
+                },
+            )
+        }
 
         val fresh =
             behavioralCandidates
                 .firstOrNull {
                     it.confidence >=
-                        70 &&
+                        75 &&
                         announcedIds.add(
                             it.id,
                         )
@@ -2631,38 +2913,13 @@ class LiveProcessOverlayService : Service() {
         if (fresh != null) {
             Toast.makeText(
                 this,
-                "ModKit: " +
+                "ModKit: устойчивый кандидат · " +
                     fresh.title +
                     " · " +
                     fresh.confidence +
                     "%",
                 Toast.LENGTH_SHORT,
             ).show()
-        }
-
-        if (
-            source ==
-            LearnedCandidateSource.TRAINING
-        ) {
-            sample.visibleCandidates
-                .firstOrNull {
-                    candidate ->
-                    candidate.confidence >=
-                        62 &&
-                        !stabilizationAttempted
-                            .contains(
-                                candidate.id,
-                            )
-                }
-                ?.let {
-                    candidate ->
-                    stabilizeBehavioralCandidate(
-                        candidate = candidate,
-                        source = source,
-                        actionHint =
-                            actionHint,
-                    )
-                }
         }
     }
 
@@ -2677,7 +2934,15 @@ class LiveProcessOverlayService : Service() {
         ) {
             list.addView(
                 hintText(
-                    "Пока нет кандидатов выше порога уверенности.",
+                    if (
+                        behavioralSource ==
+                        LearnedCandidateSource
+                            .TRAINING
+                    ) {
+                        "Сырые результаты скрыты. Повтори выбранное действие: ModKit покажет только совпадения между раундами."
+                    } else {
+                        "Пока нет устойчивых кандидатов. Продолжай играть и повторять действия."
+                    },
                 ),
             )
             return
@@ -2686,13 +2951,63 @@ class LiveProcessOverlayService : Service() {
             .take(5)
             .forEach {
                 candidate ->
+                val capturedSites =
+                    behavioralCodeSites[
+                        candidate.id
+                    ].orEmpty()
+                val hasWriter =
+                    capturedSites.any {
+                        it.accessKind ==
+                            RuntimeCodeAccessKind
+                                .WRITE
+                    }
+                val hint =
+                    behavioralHintOverrides[
+                        candidate.id
+                    ] ?: behavioralActionHint
+                val evidence =
+                    when {
+                        hasWriter ->
+                            CandidateEvidence
+                                .CONFIRMED
+
+                        behavioralSource ==
+                            LearnedCandidateSource
+                                .TRAINING &&
+                            (
+                                hint
+                                    ?.let {
+                                        trainingRounds[
+                                            it
+                                        ]
+                                    } ?: 0
+                                ) >= 2 ->
+                            CandidateEvidence
+                                .STABLE
+
+                        behavioralSource ==
+                            LearnedCandidateSource
+                                .AUTO ->
+                            CandidateEvidence
+                                .STABLE
+
+                        else ->
+                            CandidateEvidence
+                                .PRELIMINARY
+                    }
                 list.addView(
                     candidateRow(
                         EditableRuntimeCandidate(
                             id =
                                 candidate.id,
                             title =
-                                candidate.title,
+                                if (
+                                    hint != null
+                                ) {
+                                    hint.candidateTitle
+                                } else {
+                                    candidate.title
+                                },
                             address =
                                 candidate.address,
                             valueType =
@@ -2701,19 +3016,14 @@ class LiveProcessOverlayService : Service() {
                             value =
                                 candidate.value,
                             subtitle =
-                                "Уверенность " +
+                                evidence.title +
+                                    " · уверенность " +
                                     candidate.confidence +
-                                    "% · повторений изменения " +
+                                    "% · повторений " +
                                     candidate.changeCount +
-                                    " · " +
-                                    candidate
-                                        .valueType
-                                        .title +
                                     (
-                                        behavioralCodeSites[
-                                            candidate.id
-                                        ]
-                                            ?.takeIf {
+                                        capturedSites
+                                            .takeIf {
                                                 it.isNotEmpty()
                                             }
                                             ?.let {
@@ -2727,7 +3037,9 @@ class LiveProcessOverlayService : Service() {
                             source =
                                 behavioralSource,
                             actionHint =
-                                behavioralActionHint,
+                                hint,
+                            evidence =
+                                evidence,
                         ),
                     ),
                 )
@@ -3995,6 +4307,34 @@ class LiveProcessOverlayService : Service() {
         }
     }
 
+    private fun classifySelectedCandidate(
+        hint: BehavioralActionHint,
+    ) {
+        val candidate =
+            selectedCandidate
+                ?: return
+        behavioralHintOverrides[
+            candidate.id
+        ] = hint
+        selectedCandidate =
+            candidate.copy(
+                title =
+                    hint.candidateTitle,
+                actionHint = hint,
+                subtitle =
+                    candidate.evidence
+                        .title +
+                        " · пользователь уточнил действие: " +
+                        hint.title,
+            )
+        setStatus(
+            "Действие отмечено как «" +
+                hint.title +
+                "». Теперь можно проверить значение или найти код, который его меняет.",
+        )
+        renderCurrentPage()
+    }
+
     private fun traceSelectedCodeAccess() {
         val cfg =
             config ?: return
@@ -4123,18 +4463,53 @@ class LiveProcessOverlayService : Service() {
                             }
                             .take(16)
                             .toList()
+                    behavioralCodeSites[
+                        candidate.id
+                    ] =
+                        trace.sites
+                    val writers =
+                        trace.sites
+                            .count {
+                                it.accessKind ==
+                                    RuntimeCodeAccessKind
+                                        .WRITE
+                            }
+                    val hasWriter =
+                        writers > 0
                     val updatedCandidate =
                         candidate.copy(
+                            title =
+                                if (
+                                    hasWriter &&
+                                    candidate.actionHint !=
+                                        null
+                                ) {
+                                    candidate
+                                        .actionHint
+                                        .confirmedTitle
+                                } else {
+                                    candidate.title
+                                },
                             learnedCodeSites =
                                 learnedSites,
                             requiresConfirmation =
                                 false,
+                            evidence =
+                                if (hasWriter) {
+                                    CandidateEvidence
+                                        .CONFIRMED
+                                } else {
+                                    candidate.evidence
+                                },
                         )
                     selectedCandidate =
                         updatedCandidate
                     rebuildCodeAccessList()
+                    rebuildBehavioralList()
                     if (
-                        learnedSites.isNotEmpty()
+                        hasWriter &&
+                        candidate.source !=
+                        LearnedCandidateSource.MANUAL
                     ) {
                         stabilizeEditableCandidate(
                             candidate =
@@ -4142,9 +4517,10 @@ class LiveProcessOverlayService : Service() {
                             source =
                                 candidate.source
                                     ?: LearnedCandidateSource
-                                        .MANUAL,
+                                        .TRAINING,
                             actionHint =
-                                candidate.actionHint,
+                                updatedCandidate
+                                    .actionHint,
                             force = true,
                         )
                     }
@@ -4154,13 +4530,6 @@ class LiveProcessOverlayService : Service() {
                         sites =
                             trace.sites,
                     )
-                    val writers =
-                        trace.sites
-                            .count {
-                                it.accessKind ==
-                                    RuntimeCodeAccessKind
-                                        .WRITE
-                            }
                     val readers =
                         trace.sites
                             .count {
@@ -4855,17 +5224,6 @@ class LiveProcessOverlayService : Service() {
                         )
                     selectedCandidate =
                         updatedCandidate
-                    stabilizeEditableCandidate(
-                        candidate =
-                            updatedCandidate,
-                        source =
-                            candidate.source
-                                ?: LearnedCandidateSource
-                                    .MANUAL,
-                        actionHint =
-                            candidate.actionHint,
-                        force = true,
-                    )
                     setStatus(
                         "Значение изменено: " +
                             written.oldValue +
@@ -5069,6 +5427,7 @@ class LiveProcessOverlayService : Service() {
         announcedIds.clear()
         autoCodeTraceAttempted.clear()
         behavioralCodeSites.clear()
+        behavioralHintOverrides.clear()
         selectedCandidate = null
         codeAccessSites =
             emptyList()
@@ -5257,6 +5616,22 @@ class LiveProcessOverlayService : Service() {
                                                 emptyList()
                                             } else {
                                                 saved.codeAccessSites
+                                            },
+                                        evidence =
+                                            if (
+                                                !migrated &&
+                                                saved.codeAccessSites
+                                                    .any {
+                                                        it.accessKind ==
+                                                            RuntimeCodeAccessKind
+                                                                .WRITE
+                                                    }
+                                            ) {
+                                                CandidateEvidence
+                                                    .CONFIRMED
+                                            } else {
+                                                CandidateEvidence
+                                                    .STABLE
                                             },
                                     )
                                 }.getOrNull()
@@ -6318,6 +6693,9 @@ class LiveProcessOverlayService : Service() {
         val learnedCodeSites:
             List<LearnedCodeAccessSite> =
             emptyList(),
+        val evidence:
+            CandidateEvidence =
+            CandidateEvidence.PRELIMINARY,
     )
 
     companion object {

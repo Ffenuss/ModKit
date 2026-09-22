@@ -80,14 +80,14 @@ jobs:
           test "$(od -An -tx1 -N4 ModKit-root-memory-watch-arm64 | tr -d ' \n')" = "7f454c46"
           grep -aFq "MODKIT_ROOT_WATCH_V1" ModKit-root-memory-watch-arm64
           "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
-          cp "$APK" ModKit-v0.0.15-debug.apk
-          sha256sum ModKit-v0.0.15-debug.apk > ModKit-v0.0.15-debug.apk.sha256
+          cp "$APK" ModKit-v0.0.16-debug.apk
+          sha256sum ModKit-v0.0.16-debug.apk > ModKit-v0.0.16-debug.apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ModKit-v0.0.15-debug
+          name: ModKit-v0.0.16-debug
           path: |
-            ModKit-v0.0.15-debug.apk
-            ModKit-v0.0.15-debug.apk.sha256
+            ModKit-v0.0.16-debug.apk
+            ModKit-v0.0.16-debug.apk.sha256
           if-no-files-found: error
