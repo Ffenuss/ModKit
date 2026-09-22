@@ -40,6 +40,66 @@ class RootBehavioralScanCoordinatorTest {
     }
 
     @Test
+    fun trainingHidesPointerLikeLargeIntegers() {
+        val noisy =
+            BehavioralRuntimeCandidate(
+                id = "n",
+                address = 0x1000,
+                valueType =
+                    RuntimeValueType.INT32,
+                value =
+                    "1895537896",
+                previousValue = null,
+                title = "Кандидат движения",
+                confidence = 70,
+                changeCount = 4,
+                stableCount = 2,
+                increaseCount = 2,
+                decreaseCount = 2,
+                observedSamples = 6,
+                regionPath = "[heap]",
+                activityTransitions = 2,
+            )
+
+        assertTrue(
+            !RootBehavioralScanCoordinator
+                .trainingCandidateRelevant(
+                    noisy,
+                ),
+        )
+    }
+
+    @Test
+    fun emergingAutoAcceptsRepeatedPlausibleGameplayValue() {
+        val plausible =
+            BehavioralRuntimeCandidate(
+                id = "p",
+                address = 0x2000,
+                valueType =
+                    RuntimeValueType.INT32,
+                value = "87",
+                previousValue = "91",
+                title =
+                    "Повторяющееся действие обнаружено",
+                confidence = 65,
+                changeCount = 3,
+                stableCount = 2,
+                increaseCount = 0,
+                decreaseCount = 3,
+                observedSamples = 5,
+                regionPath = "[heap]",
+                activityTransitions = 2,
+            )
+
+        assertTrue(
+            RootBehavioralScanCoordinator
+                .emergingAutoCandidateRelevant(
+                    plausible,
+                ),
+        )
+    }
+
+    @Test
     fun implausibleValuesAreNotRanked() {
         val score =
             RootBehavioralScanCoordinator
