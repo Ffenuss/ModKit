@@ -156,7 +156,7 @@ object RootBehavioralScanCoordinator {
     private const val DISTINCT_VALUE_LIMIT =
         16
     private const val AUTO_VISIBLE_THRESHOLD =
-        78
+        70
     private const val TRAINING_VISIBLE_THRESHOLD =
         46
 
@@ -861,8 +861,9 @@ object RootBehavioralScanCoordinator {
                     observedSamples,
                 )
         if (
-            observedSamples >= 4 &&
-            changedRatio > 0.92
+            observedSamples >= 6 &&
+            changedRatio > 0.96 &&
+            stableCount == 0
         ) {
             score -= 24
         }
