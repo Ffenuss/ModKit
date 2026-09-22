@@ -2379,21 +2379,31 @@ class LiveProcessOverlayService : Service() {
                 .trim()
         if (query.isBlank()) {
             setStatus(
-                "Введите значение для ручного поиска.",
+                "Введи значение для поиска.",
             )
             return
         }
+
         setStatus(
             if (refine) {
-                "Уточняем ручной поиск…"
+                "Уточняем результаты по новому значению " +
+                    query +
+                    "…"
+            } else if (
+                manualAutoType
+            ) {
+                "Быстрый поиск " +
+                    query +
+                    " · тип определится автоматически…"
             } else {
-                "Ищем " +
+                "Поиск " +
                     manualType.title +
                     " = " +
                     query +
                     "…"
             },
         )
+
         executor.execute {
             val result =
                 runCatching {
@@ -2402,138 +2412,41 @@ class LiveProcessOverlayService : Service() {
                         manualScan !=
                         null
                     ) {
-                        RootRuntimeValueScanCoordinator
-                            .refineExact(
-                                previous =
-                                    requireNotNull(
-                                        manualScan,
-                                    ),
-                                query =
-                                    query,
-                                cancellation =
-                                    AtomicCancellationSignal(),
-                            )
+                        manualType to
+                            RootRuntimeValueScanCoordinator
+                                .refineExact(
+                                    previous =
+                                        requireNotNull(
+                                            manualScan,
+                                        ),
+                                    query =
+                                        query,
+                                    cancellation =
+                                        AtomicCancellationSignal(),
+                                )
+                    } else if (
+                        manualAutoType
+                    ) {
+                        fastAutoExactScan(
+                            cfg = cfg,
+                            query = query,
+                        )
                     } else {
-                        when {
-                            "," in query -> {
-                                val values =
-                                    query
-                                        .split(",")
-                                        .map {
-                                            it.trim()
-                                        }
-                                        .filter {
-                                            it.isNotBlank()
-                                        }
-                                RootRuntimeAdvancedValueScanCoordinator
-                                    .scanGroup(
-                                        packageName =
-                                            cfg.packageName,
-                                        expectedPid =
-                                            cfg.pid,
-                                        valueType =
-                                            manualType,
-                                        queryTexts =
-                                            values,
-                                        cancellation =
-                                            AtomicCancellationSignal(),
-                                        maxScanBytes =
-                                            manualScanByteLimit(),
-
-                                    )
-                            }
-
-                            ".." in query -> {
-                                val bounds =
-                                    query.split(
-                                        "..",
-                                        limit = 2,
-                                    )
-                                require(
-                                    bounds.size == 2 &&
-                                        bounds.all {
-                                            it.trim()
-                                                .isNotBlank()
-                                        },
-                                ) {
-                                    "Диапазон вводится как минимум..максимум, например 90..110."
-                                }
-                                RootRuntimeAdvancedValueScanCoordinator
-                                    .scanRange(
-                                        packageName =
-                                            cfg.packageName,
-                                        expectedPid =
-                                            cfg.pid,
-                                        valueType =
-                                            manualType,
-                                        minText =
-                                            bounds[0],
-                                        maxText =
-                                            bounds[1],
-                                        cancellation =
-                                            AtomicCancellationSignal(),
-                                        maxScanBytes =
-                                            manualScanByteLimit(),
-
-                                    )
-                            }
-
-                            "~" in query -> {
-                                val fuzzy =
-                                    query.split(
-                                        "~",
-                                        limit = 2,
-                                    )
-                                require(
-                                    fuzzy.size == 2 &&
-                                        fuzzy.all {
-                                            it.trim()
-                                                .isNotBlank()
-                                        },
-                                ) {
-                                    "Fuzzy вводится как значение~допуск, например 1.0~0.05."
-                                }
-                                RootRuntimeAdvancedValueScanCoordinator
-                                    .scanFuzzy(
-                                        packageName =
-                                            cfg.packageName,
-                                        expectedPid =
-                                            cfg.pid,
-                                        valueType =
-                                            manualType,
-                                        queryText =
-                                            fuzzy[0],
-                                        toleranceText =
-                                            fuzzy[1],
-                                        cancellation =
-                                            AtomicCancellationSignal(),
-                                        maxScanBytes =
-                                            manualScanByteLimit(),
-
-                                    )
-                            }
-
-                            else ->
-                                RootRuntimeValueScanCoordinator
-                                    .scanExact(
-                                        packageName =
-                                            cfg.packageName,
-                                        valueType =
-                                            manualType,
-                                        query = query,
-                                        cancellation =
-                                            AtomicCancellationSignal(),
-                                        maxScanBytes =
-                                            manualScanByteLimit(),
-                                        expectedPid =
-                                            cfg.pid,
-                                    )
-                        }
+                        manualType to
+                            expertInitialScan(
+                                cfg = cfg,
+                                query = query,
+                            )
                     }
                 }
+
             main.post {
                 result.onSuccess {
-                    scan ->
+                    (resolvedType, scan) ->
+                    manualType =
+                        resolvedType
+                    manualScan =
+                        scan
                     manualBaseline?.let {
                         RootRuntimeUnknownValueCoordinator
                             .deleteBaseline(
@@ -2541,12 +2454,33 @@ class LiveProcessOverlayService : Service() {
                             )
                     }
                     manualBaseline = null
-                    manualScan = scan
-                    renderManualScan()
+                    manualUnknownAuto =
+                        false
+                    setStatus(
+                        "Найдено: " +
+                            scan.snapshot
+                                .hits
+                                .size +
+                            " · " +
+                            resolvedType.title +
+                            " · просмотрено " +
+                            humanBytes(
+                                scan.snapshot
+                                    .scannedBytes,
+                            ),
+                    )
+                    if (
+                        currentPage ==
+                        OverlayPage.MANUAL ||
+                        currentPage ==
+                        OverlayPage.EXPERT
+                    ) {
+                        renderCurrentPage()
+                    }
                 }.onFailure {
                     failure ->
                     setStatus(
-                        "Ручной поиск: " +
+                        "Поиск не выполнен: " +
                             (
                                 failure.message
                                     ?: failure
@@ -2558,6 +2492,294 @@ class LiveProcessOverlayService : Service() {
             }
         }
     }
+
+    private fun fastAutoExactScan(
+        cfg: ProcessOverlayConfig,
+        query: String,
+    ): Pair<
+        RuntimeValueType,
+        RootRuntimeValueScanResult
+    > {
+        val types =
+            autoManualTypes(
+                query,
+            )
+        var last:
+            RootRuntimeValueScanResult? =
+            null
+        var lastType =
+            types.first()
+
+        for (type in types) {
+            val scan =
+                runCatching {
+                    RootFastValueScanCoordinator
+                        .scanExact(
+                            context =
+                                applicationContext,
+                            packageName =
+                                cfg.packageName,
+                            pid = cfg.pid,
+                            valueType =
+                                type,
+                            query = query,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                            maxScanBytes =
+                                RootFastValueScanCoordinator
+                                    .QUICK_MAX_BYTES,
+                        )
+                }.getOrElse {
+                    RootRuntimeValueScanCoordinator
+                        .scanExact(
+                            packageName =
+                                cfg.packageName,
+                            valueType =
+                                type,
+                            query = query,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                            maxScanBytes =
+                                RootFastValueScanCoordinator
+                                    .QUICK_MAX_BYTES,
+                            expectedPid =
+                                cfg.pid,
+                        )
+                }
+            last =
+                scan
+            lastType =
+                type
+            if (
+                scan.snapshot
+                    .hits
+                    .isNotEmpty()
+            ) {
+                return type to
+                    scan
+            }
+        }
+        return lastType to
+            requireNotNull(last)
+    }
+
+    private fun autoManualTypes(
+        query: String,
+    ): List<RuntimeValueType> {
+        val normalized =
+            query.trim()
+        val integer =
+            normalized.toLongOrNull()
+        if (integer != null) {
+            return if (
+                integer in
+                Int.MIN_VALUE
+                    .toLong()..
+                    Int.MAX_VALUE
+                        .toLong()
+            ) {
+                listOf(
+                    RuntimeValueType
+                        .INT32,
+                    RuntimeValueType
+                        .INT64,
+                )
+            } else {
+                listOf(
+                    RuntimeValueType
+                        .INT64,
+                )
+            }
+        }
+        val decimal =
+            normalized
+                .toDoubleOrNull()
+                ?: error(
+                    "Не удалось распознать число.",
+                )
+        require(
+            decimal.isFinite()
+        ) {
+            "NaN/Infinity не поддерживаются."
+        }
+        return listOf(
+            RuntimeValueType.FLOAT32,
+            RuntimeValueType.FLOAT64,
+        )
+    }
+
+    private fun expertInitialScan(
+        cfg: ProcessOverlayConfig,
+        query: String,
+    ): RootRuntimeValueScanResult =
+        when {
+            "," in query -> {
+                val values =
+                    query
+                        .split(",")
+                        .map {
+                            it.trim()
+                        }
+                        .filter {
+                            it.isNotBlank()
+                        }
+                RootRuntimeAdvancedValueScanCoordinator
+                    .scanGroup(
+                        packageName =
+                            cfg.packageName,
+                        expectedPid =
+                            cfg.pid,
+                        valueType =
+                            manualType,
+                        queryTexts =
+                            values,
+                        cancellation =
+                            AtomicCancellationSignal(),
+                        maxScanBytes =
+                            manualScanByteLimit(),
+                    )
+            }
+
+            ".." in query -> {
+                val bounds =
+                    query.split(
+                        "..",
+                        limit = 2,
+                    )
+                require(
+                    bounds.size == 2 &&
+                        bounds.all {
+                            it.trim()
+                                .isNotBlank()
+                        },
+                ) {
+                    "Диапазон: минимум..максимум, например 90..110."
+                }
+                RootRuntimeAdvancedValueScanCoordinator
+                    .scanRange(
+                        packageName =
+                            cfg.packageName,
+                        expectedPid =
+                            cfg.pid,
+                        valueType =
+                            manualType,
+                        minText =
+                            bounds[0],
+                        maxText =
+                            bounds[1],
+                        cancellation =
+                            AtomicCancellationSignal(),
+                        maxScanBytes =
+                            manualScanByteLimit(),
+                    )
+            }
+
+            "~" in query -> {
+                val fuzzy =
+                    query.split(
+                        "~",
+                        limit = 2,
+                    )
+                require(
+                    fuzzy.size == 2 &&
+                        fuzzy.all {
+                            it.trim()
+                                .isNotBlank()
+                        },
+                ) {
+                    "Fuzzy: значение~допуск, например 1.0~0.05."
+                }
+                RootRuntimeAdvancedValueScanCoordinator
+                    .scanFuzzy(
+                        packageName =
+                            cfg.packageName,
+                        expectedPid =
+                            cfg.pid,
+                        valueType =
+                            manualType,
+                        queryText =
+                            fuzzy[0],
+                        toleranceText =
+                            fuzzy[1],
+                        cancellation =
+                            AtomicCancellationSignal(),
+                        maxScanBytes =
+                            manualScanByteLimit(),
+                    )
+            }
+
+            else ->
+                runCatching {
+                    RootFastValueScanCoordinator
+                        .scanExact(
+                            context =
+                                applicationContext,
+                            packageName =
+                                cfg.packageName,
+                            pid = cfg.pid,
+                            valueType =
+                                manualType,
+                            query = query,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                            maxScanBytes =
+                                manualScanByteLimit(),
+                        )
+                }.getOrElse {
+                    RootRuntimeValueScanCoordinator
+                        .scanExact(
+                            packageName =
+                                cfg.packageName,
+                            valueType =
+                                manualType,
+                            query = query,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                            maxScanBytes =
+                                manualScanByteLimit(),
+                            expectedPid =
+                                cfg.pid,
+                        )
+                }
+        }
+
+    private fun humanBytes(
+        bytes: Long,
+    ): String =
+        when {
+            bytes >=
+                1024L *
+                    1024L *
+                    1024L ->
+                String.format(
+                    java.util.Locale.US,
+                    "%.1f GiB",
+                    bytes.toDouble() /
+                        (
+                            1024.0 *
+                                1024.0 *
+                                1024.0
+                            ),
+                )
+            bytes >=
+                1024L *
+                    1024L ->
+                String.format(
+                    java.util.Locale.US,
+                    "%.1f MiB",
+                    bytes.toDouble() /
+                        (
+                            1024.0 *
+                                1024.0
+                            ),
+                )
+            else ->
+                (
+                    bytes /
+                        1024L
+                    ).toString() +
+                    " KiB"
+        }
 
     private fun manualUnknownBaseline() {
         val cfg =
