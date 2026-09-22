@@ -64,6 +64,8 @@ data class BehavioralRuntimeCandidate(
     val decreaseCount: Int,
     val observedSamples: Int,
     val regionPath: String?,
+    val activityTransitions: Int = 0,
+    val recentChangeMask: Int = 0,
 )
 
 data class BehavioralScanSample(
@@ -91,6 +93,8 @@ internal data class BehavioralTrack(
     var increaseCount: Int = 0,
     var decreaseCount: Int = 0,
     var observedSamples: Int = 1,
+    var recentChangeMask: Int = 1,
+    var patternSamples: Int = 1,
     val distinctBits: LinkedHashSet<Long> =
         linkedSetOf(),
 ) {
@@ -631,9 +635,28 @@ object RootBehavioralScanCoordinator {
             track.lastBits
         track.previousBits =
             old
-        if (
-            old == newBits
-        ) {
+        val changed =
+            old != newBits
+        track.recentChangeMask =
+            (
+                (
+                    track.recentChangeMask
+                        shl 1
+                    ) or
+                    if (changed) {
+                        1
+                    } else {
+                        0
+                    }
+                ) and
+                0xffff
+        track.patternSamples =
+            min(
+                16,
+                track.patternSamples +
+                    1,
+            )
+        if (!changed) {
             track.stableCount++
         } else {
             track.changeCount++
@@ -728,6 +751,13 @@ object RootBehavioralScanCoordinator {
                 track.observedSamples,
             regionPath =
                 track.regionPath,
+            activityTransitions =
+                activityTransitions(
+                    track.recentChangeMask,
+                    track.patternSamples,
+                ),
+            recentChangeMask =
+                track.recentChangeMask,
         )
     }
 
@@ -813,36 +843,92 @@ object RootBehavioralScanCoordinator {
     private fun confidence(
         track: BehavioralTrack,
         mode: BehavioralScanMode,
-    ): Int =
-        confidence(
-            changeCount =
-                track.changeCount,
-            stableCount =
-                track.stableCount,
-            increaseCount =
-                track.increaseCount,
-            decreaseCount =
-                track.decreaseCount,
-            observedSamples =
-                track.observedSamples,
-            distinctValueCount =
-                track.distinctBits.size,
-            preferredRegion =
-                preferredRegion(
-                    track.regionPath,
-                ),
-            plausibleValue =
-                plausible(
-                    type =
-                        track.valueType,
-                    bits =
-                        track.lastBits,
-                ),
-            training =
-                mode ==
-                    BehavioralScanMode
-                        .TRAINING,
+    ): Int {
+        var score =
+            confidence(
+                changeCount =
+                    track.changeCount,
+                stableCount =
+                    track.stableCount,
+                increaseCount =
+                    track.increaseCount,
+                decreaseCount =
+                    track.decreaseCount,
+                observedSamples =
+                    track.observedSamples,
+                distinctValueCount =
+                    track.distinctBits.size,
+                preferredRegion =
+                    preferredRegion(
+                        track.regionPath,
+                    ),
+                plausibleValue =
+                    plausible(
+                        type =
+                            track.valueType,
+                        bits =
+                            track.lastBits,
+                    ),
+                training =
+                    mode ==
+                        BehavioralScanMode
+                            .TRAINING,
+            )
+        val transitions =
+            activityTransitions(
+                track.recentChangeMask,
+                track.patternSamples,
+            )
+        if (transitions >= 4) {
+            score += 10
+        } else if (transitions >= 2) {
+            score += 6
+        }
+        if (
+            track.patternSamples >= 8 &&
+            transitions == 0
+        ) {
+            score -= 18
+        }
+        return score.coerceIn(
+            1,
+            99,
         )
+    }
+
+    private fun activityTransitions(
+        mask: Int,
+        samples: Int,
+    ): Int {
+        val count =
+            samples.coerceIn(
+                0,
+                16,
+            )
+        if (count <= 1) {
+            return 0
+        }
+        var transitions = 0
+        var previous =
+            mask and 1
+        for (
+            index in
+            1 until count
+        ) {
+            val current =
+                (
+                    mask ushr
+                        index
+                    ) and
+                    1
+            if (current != previous) {
+                transitions++
+            }
+            previous =
+                current
+        }
+        return transitions
+    }
 
     private fun candidateTitle(
         track: BehavioralTrack,
@@ -903,7 +989,8 @@ object RootBehavioralScanCoordinator {
         if (
             candidate.observedSamples < 6 ||
             candidate.changeCount < 4 ||
-            candidate.stableCount < 1
+            candidate.stableCount < 1 ||
+            candidate.activityTransitions < 2
         ) {
             return false
         }
