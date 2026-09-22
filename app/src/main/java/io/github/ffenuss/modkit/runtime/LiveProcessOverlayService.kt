@@ -557,7 +557,7 @@ class LiveProcessOverlayService : Service() {
         )
         manualQuery =
             EditText(this).apply {
-                hint = "Значение"
+                hint = "100 · 10..20 · 1.0~0.1 · 10,20"
                 setSingleLine(true)
                 setTextColor(
                     Color.WHITE,
@@ -1303,18 +1303,110 @@ class LiveProcessOverlayService : Service() {
                                     AtomicCancellationSignal(),
                             )
                     } else {
-                        RootRuntimeValueScanCoordinator
-                            .scanExact(
-                                packageName =
-                                    cfg.packageName,
-                                valueType =
-                                    manualType,
-                                query = query,
-                                cancellation =
-                                    AtomicCancellationSignal(),
-                                expectedPid =
-                                    cfg.pid,
-                            )
+                        when {
+                            "," in query -> {
+                                val values =
+                                    query
+                                        .split(",")
+                                        .map {
+                                            it.trim()
+                                        }
+                                        .filter {
+                                            it.isNotBlank()
+                                        }
+                                RootRuntimeAdvancedValueScanCoordinator
+                                    .scanGroup(
+                                        packageName =
+                                            cfg.packageName,
+                                        expectedPid =
+                                            cfg.pid,
+                                        valueType =
+                                            manualType,
+                                        queryTexts =
+                                            values,
+                                        cancellation =
+                                            AtomicCancellationSignal(),
+                                    )
+                            }
+
+                            ".." in query -> {
+                                val bounds =
+                                    query.split(
+                                        "..",
+                                        limit = 2,
+                                    )
+                                require(
+                                    bounds.size == 2 &&
+                                        bounds.all {
+                                            it.trim()
+                                                .isNotBlank()
+                                        },
+                                ) {
+                                    "Диапазон вводится как минимум..максимум, например 90..110."
+                                }
+                                RootRuntimeAdvancedValueScanCoordinator
+                                    .scanRange(
+                                        packageName =
+                                            cfg.packageName,
+                                        expectedPid =
+                                            cfg.pid,
+                                        valueType =
+                                            manualType,
+                                        minText =
+                                            bounds[0],
+                                        maxText =
+                                            bounds[1],
+                                        cancellation =
+                                            AtomicCancellationSignal(),
+                                    )
+                            }
+
+                            "~" in query -> {
+                                val fuzzy =
+                                    query.split(
+                                        "~",
+                                        limit = 2,
+                                    )
+                                require(
+                                    fuzzy.size == 2 &&
+                                        fuzzy.all {
+                                            it.trim()
+                                                .isNotBlank()
+                                        },
+                                ) {
+                                    "Fuzzy вводится как значение~допуск, например 1.0~0.05."
+                                }
+                                RootRuntimeAdvancedValueScanCoordinator
+                                    .scanFuzzy(
+                                        packageName =
+                                            cfg.packageName,
+                                        expectedPid =
+                                            cfg.pid,
+                                        valueType =
+                                            manualType,
+                                        queryText =
+                                            fuzzy[0],
+                                        toleranceText =
+                                            fuzzy[1],
+                                        cancellation =
+                                            AtomicCancellationSignal(),
+                                    )
+                            }
+
+                            else ->
+                                RootRuntimeValueScanCoordinator
+                                    .scanExact(
+                                        packageName =
+                                            cfg.packageName,
+                                        valueType =
+                                            manualType,
+                                        query = query,
+                                        cancellation =
+                                            AtomicCancellationSignal(),
+                                        expectedPid =
+                                            cfg.pid,
+                                    )
+                        }
                     }
                 }
             main.post {
