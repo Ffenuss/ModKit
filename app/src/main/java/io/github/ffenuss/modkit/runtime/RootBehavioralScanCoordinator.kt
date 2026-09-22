@@ -136,7 +136,7 @@ object RootBehavioralScanCoordinator {
     private const val AUTO_VISIBLE_THRESHOLD =
         56
     private const val TRAINING_VISIBLE_THRESHOLD =
-        48
+        40
 
     private val sweepOrder =
         listOf(
