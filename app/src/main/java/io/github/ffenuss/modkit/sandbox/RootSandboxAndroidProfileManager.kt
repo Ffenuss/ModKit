@@ -52,12 +52,30 @@ object RootSandboxAndroidProfileManager {
         cancellation: CancellationSignal,
         runner: RootCommandRunner = AndroidRootCommandRunner(),
     ): RootSandboxAndroidProfile {
-        val existing = list(cancellation, runner).singleOrNull {
-            it.name == PROFILE_NAME
+        val parentUserId =
+            android.os.Process.myUid() /
+                PER_USER_RANGE
+        val matching =
+            list(
+                cancellation,
+                runner,
+            ).filter {
+                it.name ==
+                    PROFILE_NAME
+            }
+        require(
+            matching.size <= 1
+        ) {
+            "Найдено несколько профилей ModKit Sandbox; автоматическое создание остановлено, чтобы не выбрать неверный Android user."
         }
+        val existing =
+            matching.singleOrNull()
         val userId = existing?.userId ?: run {
             val create = runner.run(
-                command = "pm create-user --profileOf 0 --managed 'ModKit Sandbox'",
+                command =
+                    "pm create-user --profileOf " +
+                        parentUserId +
+                        " --managed 'ModKit Sandbox'",
                 maxOutputBytes = 16 * 1024,
                 cancellation = cancellation,
             )
@@ -70,8 +88,12 @@ object RootSandboxAndroidProfileManager {
                 ?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: error("Android создал профиль, но его userId не удалось определить.")
         }
-        require(userId > 0) {
-            "Sandbox не может использовать основной Android user 0."
+        require(
+            userId >= 0 &&
+                userId !=
+                parentUserId
+        ) {
+            "Sandbox не может использовать тот же Android user, в котором запущен ModKit."
         }
         val start = runner.run(
             command = "am start-user -w " + userId,

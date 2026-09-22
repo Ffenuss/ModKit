@@ -18,6 +18,29 @@ data class RootRunningAppProcess(
     val isMainProcess: Boolean
         get() =
             processName == packageName
+
+    val androidUserId: Int?
+        get() {
+            val named =
+                Regex(
+                    "^u(\\d+)_",
+                ).find(
+                    user,
+                )
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.toIntOrNull()
+            if (named != null) {
+                return named
+            }
+            return user
+                .toIntOrNull()
+                ?.let {
+                    uid ->
+                    uid /
+                        PER_USER_RANGE
+                }
+        }
 }
 
 /**
@@ -27,6 +50,9 @@ data class RootRunningAppProcess(
  * ps projection for PID/USER/NAME; only package-like main app processes are
  * returned, so system daemons do not pollute the picker.
  */
+private const val PER_USER_RANGE =
+    100_000
+
 object RootProcessDiscovery {
     private val packageRegex =
         Regex(

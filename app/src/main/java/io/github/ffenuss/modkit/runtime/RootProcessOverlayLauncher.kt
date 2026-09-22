@@ -13,8 +13,6 @@ data class RootProcessOverlayLaunchResult(
 object RootProcessOverlayLauncher {
     const val CONFIG_EXTRA =
         "modkit_process_overlay_b64"
-    private const val OVERLAY_USER_ID =
-        0
     private const val PER_USER_RANGE =
         100_000
 
@@ -51,11 +49,14 @@ object RootProcessOverlayLauncher {
                 runner = runner,
             )
 
+        val overlayUserId =
+            android.os.Process.myUid() /
+                PER_USER_RANGE
         val appOps =
             runner.run(
                 command =
                     "appops set --user " +
-                        OVERLAY_USER_ID +
+                        overlayUserId +
                         " " +
                         BuildConfig.APPLICATION_ID +
                         " SYSTEM_ALERT_WINDOW allow",
@@ -121,7 +122,7 @@ object RootProcessOverlayLauncher {
         runner.run(
             command =
                 "am stopservice --user " +
-                    OVERLAY_USER_ID +
+                    overlayUserId +
                     " -n " +
                     service,
             maxOutputBytes =
@@ -133,7 +134,7 @@ object RootProcessOverlayLauncher {
             runner.run(
                 command =
                     "am start-foreground-service --user " +
-                        OVERLAY_USER_ID +
+                        overlayUserId +
                         " -n " +
                         service +
                         " --es " +

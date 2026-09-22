@@ -112,11 +112,26 @@ class LiveProcessOverlayService : Service() {
         LearnedCandidateSource.AUTO
     private var behavioralActionHint:
         BehavioralActionHint? = null
+    private val trainingRounds =
+        mutableMapOf<
+            BehavioralActionHint,
+            Int
+        >()
+    private val trainingAggregates =
+        mutableMapOf<
+            BehavioralActionHint,
+            MutableMap<
+                String,
+                TrainingAggregate
+            >
+        >()
     private val announcedIds =
         linkedSetOf<String>()
 
     private var manualType =
         RuntimeValueType.INT32
+    private var manualFullScan =
+        false
     private var manualScan:
         RootRuntimeValueScanResult? = null
     private var manualBaseline:
@@ -192,6 +207,9 @@ class LiveProcessOverlayService : Service() {
         resetRuntimeState()
         removeOverlay()
         executor.shutdownNow()
+        stopForeground(
+            STOP_FOREGROUND_REMOVE,
+        )
         super.onDestroy()
     }
 
@@ -246,11 +264,33 @@ class LiveProcessOverlayService : Service() {
                     View.GONE
             }
         panel = builtPanel
+        val display =
+            resources.displayMetrics
+        val panelWidth =
+            kotlin.math.min(
+                dp(340),
+                (
+                    display.widthPixels -
+                        dp(20)
+                    ).coerceAtLeast(
+                    dp(96),
+                ),
+            )
+        val panelHeight =
+            kotlin.math.min(
+                dp(590),
+                (
+                    display.heightPixels -
+                        dp(170)
+                    ).coerceAtLeast(
+                    dp(64),
+                ),
+            )
         root.addView(
             builtPanel,
             LinearLayout.LayoutParams(
-                dp(340),
-                dp(590),
+                panelWidth,
+                panelHeight,
             ).apply {
                 topMargin =
                     dp(4)
@@ -580,6 +620,27 @@ class LiveProcessOverlayService : Service() {
             matchWidth(),
         )
 
+        body.addView(
+            Button(this).apply {
+                text =
+                    "Объём: быстрый"
+                setOnClickListener {
+                    manualFullScan =
+                        !manualFullScan
+                    text =
+                        if (
+                            manualFullScan
+                        ) {
+                            "Объём: полный"
+                        } else {
+                            "Объём: быстрый"
+                        }
+                    clearManualSearch()
+                }
+            },
+            matchWidth(),
+        )
+
         val exactRow =
             LinearLayout(this).apply {
                 orientation =
@@ -759,6 +820,16 @@ class LiveProcessOverlayService : Service() {
             },
             matchWidth(),
         )
+        body.addView(
+            Button(this).apply {
+                text =
+                    "Удалить выбранное из сохранённых"
+                setOnClickListener {
+                    removeSelectedPersistentCandidate()
+                }
+            },
+            matchWidth(),
+        )
 
         val collapse =
             Button(this).apply {
@@ -772,6 +843,17 @@ class LiveProcessOverlayService : Service() {
             }
         body.addView(
             collapse,
+            matchWidth(),
+        )
+
+        body.addView(
+            Button(this).apply {
+                text =
+                    "Закрыть MK и остановить сканеры"
+                setOnClickListener {
+                    stopSelf()
+                }
+            },
             matchWidth(),
         )
 
@@ -1062,7 +1144,7 @@ class LiveProcessOverlayService : Service() {
                             cancellation =
                                 AtomicCancellationSignal(),
                             visibleLimit =
-                                5,
+                                64,
                         )
                 }
             RootBehavioralScanCoordinator
@@ -1073,23 +1155,42 @@ class LiveProcessOverlayService : Service() {
                 )
                 result.onSuccess {
                     sample ->
+                    val hint =
+                        requireNotNull(
+                            session.actionHint,
+                        )
+                    val consolidated =
+                        consolidateTrainingSample(
+                            sample = sample,
+                            hint = hint,
+                        )
                     applyBehavioralSample(
-                        sample = sample,
+                        sample =
+                            consolidated,
                         source =
                             LearnedCandidateSource
                                 .TRAINING,
                         actionHint =
-                            session.actionHint,
+                            hint,
                     )
                     setStatus(
-                        "Обучение завершено: кандидатов " +
+                        "Обучение «" +
+                            hint.title +
+                            "»: раунд " +
+                            (
+                                trainingRounds[
+                                    hint
+                                ] ?: 1
+                                ) +
+                            " · после фильтра " +
+                            consolidated
+                                .visibleCandidates
+                                .size +
+                            " кандидатов из " +
                             sample
                                 .visibleCandidates
                                 .size +
-                            ", отслеживается " +
-                            sample
-                                .trackedCandidates +
-                            ". Повтори обучение, если кандидатов пока слишком много.",
+                            ". Повтори то же действие, чтобы сузить список дальше.",
                     )
                 }.onFailure {
                     failure ->
@@ -1110,6 +1211,185 @@ class LiveProcessOverlayService : Service() {
                 }
             }
         }
+    }
+
+    private fun consolidateTrainingSample(
+        sample: BehavioralScanSample,
+        hint: BehavioralActionHint,
+    ): BehavioralScanSample {
+        val round =
+            (
+                trainingRounds[
+                    hint
+                ] ?: 0
+                ) +
+                1
+        trainingRounds[
+            hint
+        ] = round
+
+        val aggregates =
+            trainingAggregates
+                .getOrPut(
+                    hint,
+                ) {
+                    linkedMapOf()
+                }
+        sample.visibleCandidates
+            .forEach {
+                candidate ->
+                val previous =
+                    aggregates[
+                        candidate.id
+                    ]
+                val seenRounds =
+                    (
+                        previous
+                            ?.seenRounds
+                            ?: 0
+                        ) +
+                        1
+                val boosted =
+                    candidate.copy(
+                        confidence =
+                            (
+                                maxOf(
+                                    candidate
+                                        .confidence,
+                                    previous
+                                        ?.candidate
+                                        ?.confidence
+                                        ?: 0,
+                                ) +
+                                    minOf(
+                                        24,
+                                        (
+                                            seenRounds -
+                                                1
+                                            ) *
+                                            8,
+                                    )
+                                ).coerceAtMost(
+                                99,
+                            ),
+                        changeCount =
+                            candidate
+                                .changeCount +
+                                (
+                                    previous
+                                        ?.candidate
+                                        ?.changeCount
+                                        ?: 0
+                                    ),
+                        stableCount =
+                            candidate
+                                .stableCount +
+                                (
+                                    previous
+                                        ?.candidate
+                                        ?.stableCount
+                                        ?: 0
+                                    ),
+                        observedSamples =
+                            candidate
+                                .observedSamples +
+                                (
+                                    previous
+                                        ?.candidate
+                                        ?.observedSamples
+                                        ?: 0
+                                    ),
+                    )
+                aggregates[
+                    candidate.id
+                ] =
+                    TrainingAggregate(
+                        candidate =
+                            boosted,
+                        seenRounds =
+                            seenRounds,
+                    )
+            }
+
+        if (round > 1) {
+            val minimumSeen =
+                if (round <= 2) {
+                    round
+                } else {
+                    round - 1
+                }
+            val iterator =
+                aggregates
+                    .entries
+                    .iterator()
+            while (
+                iterator.hasNext()
+            ) {
+                val entry =
+                    iterator.next()
+                if (
+                    entry.value
+                        .seenRounds <
+                    minimumSeen
+                ) {
+                    iterator.remove()
+                }
+            }
+        }
+
+        if (
+            aggregates.isEmpty() &&
+            sample.visibleCandidates
+                .isNotEmpty()
+        ) {
+            trainingRounds[
+                hint
+            ] = 1
+            sample.visibleCandidates
+                .forEach {
+                    candidate ->
+                    aggregates[
+                        candidate.id
+                    ] =
+                        TrainingAggregate(
+                            candidate =
+                                candidate,
+                            seenRounds = 1,
+                        )
+                }
+        }
+
+        val visible =
+            aggregates
+                .values
+                .sortedWith(
+                    compareByDescending<
+                        TrainingAggregate
+                    > {
+                        it.seenRounds
+                    }.thenByDescending {
+                        it.candidate
+                            .confidence
+                    },
+                )
+                .map {
+                    it.candidate
+                }
+                .take(8)
+
+        return sample.copy(
+            visibleCandidates =
+                visible,
+            hiddenAsNoise =
+                sample.hiddenAsNoise +
+                    maxOf(
+                        0,
+                        sample
+                            .visibleCandidates
+                            .size -
+                            visible.size,
+                    ),
+        )
     }
 
     private fun applyBehavioralSample(
@@ -1171,33 +1451,30 @@ class LiveProcessOverlayService : Service() {
             ).show()
         }
 
-        sample.visibleCandidates
-            .firstOrNull {
-                candidate ->
-                candidate.confidence >=
-                    if (
-                        source ==
-                        LearnedCandidateSource
-                            .TRAINING
-                    ) {
-                        62
-                    } else {
-                        78
-                    } &&
-                    !stabilizationAttempted
-                        .contains(
-                            candidate.id,
-                        )
-            }
-            ?.let {
-                candidate ->
-                stabilizeBehavioralCandidate(
-                    candidate = candidate,
-                    source = source,
-                    actionHint =
-                        actionHint,
-                )
-            }
+        if (
+            source ==
+            LearnedCandidateSource.TRAINING
+        ) {
+            sample.visibleCandidates
+                .firstOrNull {
+                    candidate ->
+                    candidate.confidence >=
+                        62 &&
+                        !stabilizationAttempted
+                            .contains(
+                                candidate.id,
+                            )
+                }
+                ?.let {
+                    candidate ->
+                    stabilizeBehavioralCandidate(
+                        candidate = candidate,
+                        source = source,
+                        actionHint =
+                            actionHint,
+                    )
+                }
+        }
     }
 
     private fun rebuildBehavioralList() {
@@ -1260,6 +1537,11 @@ class LiveProcessOverlayService : Service() {
     ) {
         val cfg =
             config ?: return
+        if (autoSession != null) {
+            stopAutoScan(
+                userRequested = false,
+            )
+        }
         val query =
             manualQuery
                 ?.text
@@ -1326,6 +1608,9 @@ class LiveProcessOverlayService : Service() {
                                             values,
                                         cancellation =
                                             AtomicCancellationSignal(),
+                                        maxScanBytes =
+                                            manualScanByteLimit(),
+
                                     )
                             }
 
@@ -1358,6 +1643,9 @@ class LiveProcessOverlayService : Service() {
                                             bounds[1],
                                         cancellation =
                                             AtomicCancellationSignal(),
+                                        maxScanBytes =
+                                            manualScanByteLimit(),
+
                                     )
                             }
 
@@ -1390,6 +1678,9 @@ class LiveProcessOverlayService : Service() {
                                             fuzzy[1],
                                         cancellation =
                                             AtomicCancellationSignal(),
+                                        maxScanBytes =
+                                            manualScanByteLimit(),
+
                                     )
                             }
 
@@ -1403,6 +1694,8 @@ class LiveProcessOverlayService : Service() {
                                         query = query,
                                         cancellation =
                                             AtomicCancellationSignal(),
+                                        maxScanBytes =
+                                            manualScanByteLimit(),
                                         expectedPid =
                                             cfg.pid,
                                     )
@@ -1440,6 +1733,11 @@ class LiveProcessOverlayService : Service() {
     private fun manualUnknownBaseline() {
         val cfg =
             config ?: return
+        if (autoSession != null) {
+            stopAutoScan(
+                userRequested = false,
+            )
+        }
         clearManualSearch()
         setStatus(
             "Сохраняем baseline неизвестного " +
@@ -1480,9 +1778,14 @@ class LiveProcessOverlayService : Service() {
                             cancellation =
                                 AtomicCancellationSignal(),
                             maxBytes =
-                                32L *
-                                    1024L *
-                                    1024L,
+                                if (
+                                    manualFullScan
+                                ) {
+                                    null
+                                } else {
+                                    RootRuntimeUnknownValueCoordinator
+                                        .QUICK_MAX_BASELINE_BYTES
+                                },
                             expectedPid =
                                 cfg.pid,
                         )
@@ -1518,6 +1821,11 @@ class LiveProcessOverlayService : Service() {
         refinement:
             RuntimeValueRefinement,
     ) {
+        if (autoSession != null) {
+            stopAutoScan(
+                userRequested = false,
+            )
+        }
         val scan =
             manualScan
         val baseline =
@@ -1846,6 +2154,11 @@ class LiveProcessOverlayService : Service() {
         }
         val cfg =
             config ?: return
+        if (autoSession != null) {
+            stopAutoScan(
+                userRequested = false,
+            )
+        }
         freezeTarget =
             candidate
         freezeValue =
@@ -1856,7 +2169,8 @@ class LiveProcessOverlayService : Service() {
             "Freeze включён: " +
                 candidate.title +
                 " = " +
-                value,
+                value +
+                ". Автоскан на время Freeze не выполняется.",
         )
         freezeTask =
             executor.scheduleWithFixedDelay(
@@ -1956,6 +2270,7 @@ class LiveProcessOverlayService : Service() {
         }
         manualBaseline = null
         manualScan = null
+        manualFullScan = false
         learnedCandidates =
             emptyList()
         behavioralCandidates =
@@ -1968,6 +2283,8 @@ class LiveProcessOverlayService : Service() {
         behavioralSource =
             LearnedCandidateSource.AUTO
         behavioralActionHint = null
+        trainingRounds.clear()
+        trainingAggregates.clear()
         announcedIds.clear()
         selectedCandidate = null
     }
@@ -2239,6 +2556,109 @@ class LiveProcessOverlayService : Service() {
                 actionHint,
             force = false,
         )
+    }
+
+    private fun removeSelectedPersistentCandidate() {
+        val cfg =
+            config ?: return
+        val candidate =
+            selectedCandidate
+                ?: run {
+                    setStatus(
+                        "Сначала выбери сохранённый параметр.",
+                    )
+                    return
+                }
+        val anchor =
+            candidate.anchor
+                ?: run {
+                    setStatus(
+                        "У выбранного параметра нет сохранённого pointer-chain.",
+                    )
+                    return
+                }
+        if (
+            !candidate.persistent ||
+            candidate
+                .requiresConfirmation
+        ) {
+            setStatus(
+                "Этот кандидат ещё не сохранён для текущей версии игры.",
+            )
+            return
+        }
+
+        executor.execute {
+            val result =
+                runCatching {
+                    val identity =
+                        synchronized(
+                            profileLock,
+                        ) {
+                            artifactIdentity
+                                ?: profileStore
+                                    .computeIdentity(
+                                        packageName =
+                                            cfg.packageName,
+                                        cancellation =
+                                            AtomicCancellationSignal(),
+                                    )
+                                    .also {
+                                        artifactIdentity =
+                                            it
+                                    }
+                        }
+                    synchronized(
+                        profileLock,
+                    ) {
+                        profileStore
+                            .removeCandidate(
+                                identity =
+                                    identity,
+                                anchor = anchor,
+                            )
+                    }
+                }
+            main.post {
+                result.onSuccess {
+                    removed ->
+                    if (removed) {
+                        learnedCandidates =
+                            learnedCandidates
+                                .filterNot {
+                                    it.anchor ==
+                                        anchor
+                                }
+                        selectedCandidate =
+                            null
+                        editorTitle?.text =
+                            "Кандидат не выбран"
+                        editorValue?.setText(
+                            "",
+                        )
+                        rebuildLearnedList()
+                        setStatus(
+                            "Сохранённый параметр удалён из профиля этой версии.",
+                        )
+                    } else {
+                        setStatus(
+                            "Сохранённый параметр уже отсутствует.",
+                        )
+                    }
+                }.onFailure {
+                    failure ->
+                    setStatus(
+                        "Не удалось удалить сохранённый параметр: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
     }
 
     private fun persistSelectedCandidate() {
@@ -2545,6 +2965,16 @@ class LiveProcessOverlayService : Service() {
             ),
         )
     }
+
+    private fun manualScanByteLimit():
+        Long? =
+        if (manualFullScan) {
+            null
+        } else {
+            64L *
+                1024L *
+                1024L
+        }
 
     private fun trainingButton(
         title: String,
@@ -2888,6 +3318,12 @@ class LiveProcessOverlayService : Service() {
                 resources.displayMetrics
                     .density
             ).toInt()
+
+    private data class TrainingAggregate(
+        val candidate:
+            BehavioralRuntimeCandidate,
+        val seenRounds: Int,
+    )
 
     private data class EditableRuntimeCandidate(
         val id: String,

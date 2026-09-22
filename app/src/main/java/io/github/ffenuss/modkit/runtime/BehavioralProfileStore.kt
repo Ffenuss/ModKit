@@ -66,31 +66,54 @@ class BehavioralProfileStore(
                 ?: error(
                     "Installed package is unavailable for learned-profile identity.",
                 )
-        val sources =
+        val apkFiles =
             app.apkFiles
-                .map {
-                    file ->
-                    if (
-                        cancellation
-                            .isCancelled()
-                    ) {
-                        throw AnalysisCancelledException()
-                    }
-                    Triple(
-                        file.name,
-                        file.length(),
-                        sha256(
-                            file,
-                            cancellation,
-                        ),
-                    )
+                .sortedBy {
+                    it.absolutePath
                 }
-
         require(
-            sources.isNotEmpty(),
+            apkFiles.isNotEmpty()
         ) {
             "Installed package has no readable APK files."
         }
+        val sourceFingerprint =
+            sourceMetadataFingerprint(
+                versionCode =
+                    app.versionCode,
+                files =
+                    apkFiles,
+            )
+        loadIdentityCache(
+            packageName =
+                app.packageName,
+            label =
+                app.label,
+            versionCode =
+                app.versionCode,
+            sourceFingerprint =
+                sourceFingerprint,
+        )?.let {
+            return it
+        }
+
+        val sources =
+            apkFiles.map {
+                file ->
+                if (
+                    cancellation
+                        .isCancelled()
+                ) {
+                    throw AnalysisCancelledException()
+                }
+                Triple(
+                    file.name,
+                    file.length(),
+                    sha256(
+                        file,
+                        cancellation,
+                    ),
+                )
+            }
 
         val artifactSha =
             if (sources.size == 1) {
@@ -154,15 +177,23 @@ class BehavioralProfileStore(
                     .toHex()
             }
 
-        return BehavioralArtifactIdentity(
-            packageName =
-                app.packageName,
-            label = app.label,
-            versionCode =
-                app.versionCode,
-            artifactSha256 =
-                artifactSha,
+        val identity =
+            BehavioralArtifactIdentity(
+                packageName =
+                    app.packageName,
+                label = app.label,
+                versionCode =
+                    app.versionCode,
+                artifactSha256 =
+                    artifactSha,
+            )
+        saveIdentityCache(
+            identity =
+                identity,
+            sourceFingerprint =
+                sourceFingerprint,
         )
+        return identity
     }
 
     fun saveCandidate(
@@ -221,6 +252,60 @@ class BehavioralProfileStore(
             )
         write(profile)
         return profile
+    }
+
+    fun removeCandidate(
+        identity: BehavioralArtifactIdentity,
+        anchor: StableRuntimePointerAnchor,
+    ): Boolean {
+        val current =
+            loadExact(
+                packageName =
+                    identity.packageName,
+                artifactSha256 =
+                    identity.artifactSha256,
+            ) ?: return false
+        val remaining =
+            current.candidates
+                .filterNot {
+                    it.anchor ==
+                        anchor
+                }
+        if (
+            remaining.size ==
+            current.candidates.size
+        ) {
+            return false
+        }
+
+        val output =
+            fileFor(
+                packageName =
+                    identity.packageName,
+                artifactSha256 =
+                    identity.artifactSha256,
+            )
+        if (remaining.isEmpty()) {
+            if (!output.exists()) {
+                return true
+            }
+            check(
+                output.delete(),
+            ) {
+                "Could not remove the learned ModKit runtime profile."
+            }
+            return true
+        }
+
+        write(
+            current.copy(
+                updatedAtEpochMs =
+                    System.currentTimeMillis(),
+                candidates =
+                    remaining,
+            ),
+        )
+        return true
     }
 
     fun loadExact(
@@ -687,6 +772,183 @@ class BehavioralProfileStore(
                     ",",
                 )
 
+    private fun sourceMetadataFingerprint(
+        versionCode: Long,
+        files: List<File>,
+    ): String {
+        val digest =
+            MessageDigest
+                .getInstance(
+                    "SHA-256",
+                )
+        digest.update(
+            versionCode
+                .toString()
+                .toByteArray(
+                    Charsets.US_ASCII,
+                ),
+        )
+        digest.update(
+            0.toByte(),
+        )
+        files.forEach {
+            file ->
+            require(
+                file.isFile &&
+                    file.canRead(),
+            ) {
+                "APK source is not readable: " +
+                    file.absolutePath
+            }
+            listOf(
+                file.absolutePath,
+                file.length()
+                    .toString(),
+                file.lastModified()
+                    .toString(),
+            ).forEach {
+                value ->
+                digest.update(
+                    value.toByteArray(
+                        Charsets.UTF_8,
+                    ),
+                )
+                digest.update(
+                    0.toByte(),
+                )
+            }
+        }
+        return digest.digest()
+            .toHex()
+    }
+
+    private fun loadIdentityCache(
+        packageName: String,
+        label: String,
+        versionCode: Long,
+        sourceFingerprint: String,
+    ): BehavioralArtifactIdentity? {
+        val cache =
+            identityCacheFile(
+                packageName,
+            )
+        if (
+            !cache.isFile ||
+            !cache.canRead()
+        ) {
+            return null
+        }
+        return runCatching {
+            val json =
+                JSONObject(
+                    cache.readText(
+                        Charsets.UTF_8,
+                    ),
+                )
+            require(
+                json.optString(
+                    "schema",
+                ) ==
+                    IDENTITY_CACHE_SCHEMA
+            )
+            require(
+                json.getString(
+                    "packageName",
+                ) ==
+                    packageName
+            )
+            require(
+                json.getLong(
+                    "versionCode",
+                ) ==
+                    versionCode
+            )
+            require(
+                json.getString(
+                    "sourceFingerprint",
+                ) ==
+                    sourceFingerprint
+            )
+            val sha =
+                json.getString(
+                    "artifactSha256",
+                ).lowercase()
+            require(
+                sha.matches(
+                    SHA_REGEX,
+                ),
+            )
+            BehavioralArtifactIdentity(
+                packageName =
+                    packageName,
+                label = label,
+                versionCode =
+                    versionCode,
+                artifactSha256 =
+                    sha,
+            )
+        }.getOrNull()
+    }
+
+    private fun saveIdentityCache(
+        identity: BehavioralArtifactIdentity,
+        sourceFingerprint: String,
+    ) {
+        val cache =
+            identityCacheFile(
+                identity.packageName,
+            )
+        val temp =
+            File(
+                cache.parentFile,
+                cache.name +
+                    ".tmp",
+            )
+        val json =
+            JSONObject()
+                .put(
+                    "schema",
+                    IDENTITY_CACHE_SCHEMA,
+                )
+                .put(
+                    "packageName",
+                    identity.packageName,
+                )
+                .put(
+                    "versionCode",
+                    identity.versionCode,
+                )
+                .put(
+                    "sourceFingerprint",
+                    sourceFingerprint,
+                )
+                .put(
+                    "artifactSha256",
+                    identity
+                        .artifactSha256,
+                )
+        temp.writeText(
+            json.toString(),
+            Charsets.UTF_8,
+        )
+        if (cache.exists()) {
+            cache.delete()
+        }
+        if (!temp.renameTo(cache)) {
+            temp.delete()
+        }
+    }
+
+    private fun identityCacheFile(
+        packageName: String,
+    ): File =
+        File(
+            packageFolder(
+                packageName,
+            ),
+            "identity.cache",
+        )
+
     private fun sha256(
         file: File,
         cancellation:
@@ -751,6 +1013,8 @@ class BehavioralProfileStore(
     companion object {
         private const val SCHEMA =
             "modkit/behavioral-profile/1"
+        private const val IDENTITY_CACHE_SCHEMA =
+            "modkit/behavioral-identity-cache/1"
         private const val MAX_CANDIDATES_PER_PROFILE =
             32
         private val PACKAGE_REGEX =

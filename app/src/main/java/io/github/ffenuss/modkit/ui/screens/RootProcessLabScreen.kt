@@ -23,6 +23,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -114,9 +115,6 @@ fun RootProcessLabScreen(
         mutableStateOf(
             initialRootProbe,
         )
-    }
-    var rootChecking by remember {
-        mutableStateOf(false)
     }
     var processesLoading by remember {
         mutableStateOf(false)
@@ -453,45 +451,6 @@ fun RootProcessLabScreen(
         }
     }
 
-    fun checkRoot() {
-        val signal =
-            begin(
-                "Проверка root",
-            ) ?: return
-        rootChecking = true
-        scope.launch {
-            try {
-                rootProbe =
-                    withContext(
-                        Dispatchers.IO,
-                    ) {
-                        RootProcessDiscovery
-                            .probe(
-                                cancellation =
-                                    signal,
-                            )
-                    }
-            } catch (_: AnalysisCancelledException) {
-                error =
-                    "Проверка root отменена."
-            } catch (failure: Throwable) {
-                rootProbe =
-                    RootAccessProbeResult(
-                        available = false,
-                        uid = null,
-                        message =
-                            failure.message
-                                ?: failure
-                                    .javaClass
-                                    .simpleName,
-                    )
-            } finally {
-                rootChecking = false
-                finish()
-            }
-        }
-    }
-
     fun loadProcesses() {
         val signal =
             begin(
@@ -556,8 +515,15 @@ fun RootProcessLabScreen(
                                 it.label
                             },
                         )
+                val currentAndroidUserId =
+                    android.os.Process.myUid() /
+                        100_000
                 val runningPackages =
                     snapshot.first
+                        .filter {
+                            it.androidUserId ==
+                                currentAndroidUserId
+                        }
                         .map {
                             it.packageName
                         }
@@ -587,10 +553,19 @@ fun RootProcessLabScreen(
                 error =
                     "Получение процессов отменено."
             } catch (failure: Throwable) {
-                error =
+                val message =
                     failure.message
                         ?: failure.javaClass
                             .simpleName
+                rootProbe =
+                    RootAccessProbeResult(
+                        available = false,
+                        uid = null,
+                        message =
+                            "Root/список процессов недоступен: " +
+                                message,
+                    )
+                error = message
             } finally {
                 processesLoading =
                     false
@@ -1387,6 +1362,16 @@ fun RootProcessLabScreen(
         }
     }
 
+    LaunchedEffect(Unit) {
+        if (
+            selected == null &&
+            processItems.isEmpty() &&
+            launchableApps.isEmpty()
+        ) {
+            loadProcesses()
+        }
+    }
+
     val normalizedQuery =
         processQuery.trim()
             .lowercase()
@@ -1499,31 +1484,21 @@ fun RootProcessLabScreen(
                             ?: "Root ещё не проверен.",
                     )
                     Button(
-                        onClick = ::checkRoot,
-                        enabled = !busy,
-                        modifier =
-                            Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            if (rootChecking) {
-                                "Проверяется…"
-                            } else {
-                                "Проверить root"
-                            },
-                        )
-                    }
-                    Button(
                         onClick =
                             ::loadProcesses,
                         enabled =
-                            rootProbe?.available ==
-                                true &&
-                                !busy,
+                            !busy,
                         modifier =
                             Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            "Подключиться к процессу",
+                            if (
+                                processesLoading
+                            ) {
+                                "Загружаем список…"
+                            } else {
+                                "Обновить игры и процессы"
+                            },
                         )
                     }
                 }

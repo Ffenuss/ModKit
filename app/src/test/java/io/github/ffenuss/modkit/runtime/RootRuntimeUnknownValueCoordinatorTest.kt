@@ -82,6 +82,89 @@ class RootRuntimeUnknownValueCoordinatorTest {
     }
 
     @Test
+    fun verifiedReaderCanReuseAnAlreadyProvenProcessCycle() {
+        val root =
+            Files.createTempDirectory(
+                "modkit-unknown-verified-",
+            ).toFile()
+        try {
+            val base = 0x4800L
+            val memory =
+                ByteArray(64)
+            putInt(memory, 0, 20)
+            val runner =
+                MemoryRunner(
+                    base = base,
+                    memory = memory,
+                )
+            val baseline =
+                RootRuntimeUnknownValueCoordinator
+                    .captureBaseline(
+                        packageName = PACKAGE,
+                        valueType =
+                            RuntimeValueType.INT32,
+                        snapshotFile =
+                            root.resolve(
+                                "baseline.bin",
+                            ),
+                        cancellation =
+                            AtomicCancellationSignal(),
+                        runner = runner,
+                        maxBytes = 64,
+                    )
+
+            putInt(memory, 0, 21)
+            val reader =
+                RuntimeMemoryReader {
+                        address,
+                        size,
+                        _,
+                    ->
+                    val offset =
+                        (address - base)
+                            .toInt()
+                    if (
+                        offset < 0 ||
+                        offset + size >
+                        memory.size
+                    ) {
+                        null
+                    } else {
+                        memory.copyOfRange(
+                            offset,
+                            offset + size,
+                        )
+                    }
+                }
+
+            val result =
+                RootRuntimeUnknownValueCoordinator
+                    .compareBaselineVerified(
+                        baseline = baseline,
+                        refinement =
+                            RuntimeValueRefinement
+                                .CHANGED,
+                        reader = reader,
+                        cancellation =
+                            AtomicCancellationSignal(),
+                    )
+
+            assertEquals(
+                1,
+                result.snapshot.hits.size,
+            )
+            assertEquals(
+                base,
+                result.snapshot.hits
+                    .single()
+                    .address,
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun baselineFailsClosedWhenPidChanges() {
         val root =
             Files.createTempDirectory(

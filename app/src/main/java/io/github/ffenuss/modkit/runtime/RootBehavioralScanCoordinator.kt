@@ -236,10 +236,33 @@ object RootBehavioralScanCoordinator {
         val started =
             System.currentTimeMillis()
 
+        val capture =
+            RootRuntimeCaptureCoordinator
+                .captureMaps(
+                    packageName =
+                        session.packageName,
+                    cancellation =
+                        cancellation,
+                    runner = runner,
+                    expectedPid =
+                        session.pid,
+                )
+        require(
+            capture.pid ==
+                session.pid
+        ) {
+            "Behavioral scan PID changed."
+        }
+        val reader =
+            RootProcMemRuntimeMemoryReader(
+                pid = session.pid,
+                runner = runner,
+            )
+
         refreshExisting(
             session = session,
             cancellation = cancellation,
-            runner = runner,
+            reader = reader,
         )
 
         val sweptTypes =
@@ -260,7 +283,7 @@ object RootBehavioralScanCoordinator {
                 session = session,
                 type = type,
                 cancellation = cancellation,
-                runner = runner,
+                reader = reader,
             )
         }
 
@@ -406,7 +429,7 @@ object RootBehavioralScanCoordinator {
     private fun refreshExisting(
         session: RootBehavioralScanSession,
         cancellation: CancellationSignal,
-        runner: RootCommandRunner,
+        reader: RuntimeMemoryReader,
     ) {
         if (
             session.tracks.isEmpty()
@@ -442,51 +465,40 @@ object RootBehavioralScanCoordinator {
                         )
                     }
                 val previous =
-                    RootRuntimeValueScanResult(
-                        packageName =
-                            session.packageName,
-                        pid = session.pid,
-                        capturedAtEpochMs =
-                            System
-                                .currentTimeMillis(),
-                        snapshot =
-                            RuntimeValueScanSnapshot(
-                                valueType = type,
-                                hits = hits,
-                                alignment =
-                                    RuntimeScanAlignment
-                                        .NATURAL,
-                                scannedBytes =
-                                    hits.size
-                                        .toLong() *
-                                        type.byteWidth,
-                                scannedRegions =
-                                    hits
-                                        .map {
-                                            it.regionStart to
-                                                it.regionEndExclusive
-                                        }
-                                        .distinct()
-                                        .size,
-                                truncatedByHitLimit =
-                                    false,
-                                truncatedByByteLimit =
-                                    false,
-                            ),
+                    RuntimeValueScanSnapshot(
+                        valueType = type,
+                        hits = hits,
+                        alignment =
+                            RuntimeScanAlignment
+                                .NATURAL,
+                        scannedBytes =
+                            hits.size
+                                .toLong() *
+                                type.byteWidth,
+                        scannedRegions =
+                            hits
+                                .map {
+                                    it.regionStart to
+                                        it.regionEndExclusive
+                                }
+                                .distinct()
+                                .size,
+                        truncatedByHitLimit =
+                            false,
+                        truncatedByByteLimit =
+                            false,
                     )
                 val refreshed =
-                    RootRuntimeValueScanCoordinator
+                    RuntimeValueScanner
                         .refresh(
                             previous =
                                 previous,
+                            reader = reader,
                             cancellation =
                                 cancellation,
-                            runner = runner,
                         )
                 val nowByAddress =
-                    refreshed
-                        .snapshot
-                        .hits
+                    refreshed.hits
                         .associateBy {
                             it.address
                         }
@@ -496,7 +508,18 @@ object RootBehavioralScanCoordinator {
                     val now =
                         nowByAddress[
                             track.address
-                        ] ?: return@forEach
+                        ]
+                    if (now == null) {
+                        session.tracks.remove(
+                            key(
+                                type =
+                                    track.valueType,
+                                address =
+                                    track.address,
+                            ),
+                        )
+                        return@forEach
+                    }
                     updateTrack(
                         track = track,
                         newBits = now.bits,
@@ -509,7 +532,7 @@ object RootBehavioralScanCoordinator {
         session: RootBehavioralScanSession,
         type: RuntimeValueType,
         cancellation: CancellationSignal,
-        runner: RootCommandRunner,
+        reader: RuntimeMemoryReader,
     ) {
         val typedBaseline =
             session.baseline.copy(
@@ -517,15 +540,15 @@ object RootBehavioralScanCoordinator {
             )
         val changed =
             RootRuntimeUnknownValueCoordinator
-                .compareBaseline(
+                .compareBaselineVerified(
                     baseline =
                         typedBaseline,
                     refinement =
                         RuntimeValueRefinement
                             .CHANGED,
+                    reader = reader,
                     cancellation =
                         cancellation,
-                    runner = runner,
                     maxHits =
                         MAX_NEW_HITS_PER_SWEEP,
                 )
