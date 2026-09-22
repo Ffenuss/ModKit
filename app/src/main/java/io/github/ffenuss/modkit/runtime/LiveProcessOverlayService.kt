@@ -4692,7 +4692,11 @@ class LiveProcessOverlayService : Service() {
         }
         manualBaseline = null
         manualScan = null
+        manualAutoType = true
+        manualUnknownAuto = false
         manualFullScan = false
+        currentPage =
+            OverlayPage.HOME
         learnedCandidates =
             emptyList()
         behavioralCandidates =
