@@ -3766,6 +3766,9 @@ class LiveProcessOverlayService : Service() {
         currentPage =
             OverlayPage.CANDIDATE
         renderCurrentPage()
+        refreshSelectedCandidateValue(
+            candidate,
+        )
         if (
             candidate.learnedCodeSites
                 .isNotEmpty() &&
@@ -3775,6 +3778,56 @@ class LiveProcessOverlayService : Service() {
             resolvePersistedCodeSites(
                 candidate,
             )
+        }
+    }
+
+    private fun refreshSelectedCandidateValue(
+        candidate:
+            EditableRuntimeCandidate,
+    ) {
+        val cfg =
+            config ?: return
+        executor.execute {
+            val refreshed =
+                runCatching {
+                    val address =
+                        resolveCandidateAddress(
+                            candidate =
+                                candidate,
+                            cfg = cfg,
+                        )
+                    candidate.copy(
+                        address = address,
+                        value =
+                            readRuntimeValue(
+                                cfg = cfg,
+                                address =
+                                    address,
+                                type =
+                                    candidate
+                                        .valueType,
+                            ),
+                    )
+                }
+            main.post {
+                refreshed.onSuccess {
+                    updated ->
+                    if (
+                        selectedCandidate
+                            ?.id ==
+                        candidate.id
+                    ) {
+                        selectedCandidate =
+                            updated
+                        if (
+                            currentPage ==
+                            OverlayPage.CANDIDATE
+                        ) {
+                            renderCurrentPage()
+                        }
+                    }
+                }
+            }
         }
     }
 
