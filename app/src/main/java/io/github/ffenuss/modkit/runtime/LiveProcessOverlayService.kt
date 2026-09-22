@@ -5196,17 +5196,6 @@ class LiveProcessOverlayService : Service() {
                         )
                     selectedCandidate =
                         updatedCandidate
-                    stabilizeEditableCandidate(
-                        candidate =
-                            updatedCandidate,
-                        source =
-                            candidate.source
-                                ?: LearnedCandidateSource
-                                    .MANUAL,
-                        actionHint =
-                            candidate.actionHint,
-                        force = true,
-                    )
                     setStatus(
                         "Значение изменено: " +
                             written.oldValue +
