@@ -246,11 +246,33 @@ class LiveProcessOverlayService : Service() {
                     View.GONE
             }
         panel = builtPanel
+        val display =
+            resources.displayMetrics
+        val panelWidth =
+            kotlin.math.min(
+                dp(340),
+                (
+                    display.widthPixels -
+                        dp(20)
+                    ).coerceAtLeast(
+                    dp(240),
+                ),
+            )
+        val panelHeight =
+            kotlin.math.min(
+                dp(590),
+                (
+                    display.heightPixels -
+                        dp(170)
+                    ).coerceAtLeast(
+                    dp(180),
+                ),
+            )
         root.addView(
             builtPanel,
             LinearLayout.LayoutParams(
-                dp(340),
-                dp(590),
+                panelWidth,
+                panelHeight,
             ).apply {
                 topMargin =
                     dp(4)
