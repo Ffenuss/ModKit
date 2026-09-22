@@ -24,12 +24,16 @@ import android.widget.TextView
 import android.widget.Toast
 import io.github.ffenuss.modkit.R
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
+import io.github.ffenuss.modkit.analysis.ProgressSink
+import io.github.ffenuss.modkit.data.InstalledAppRepository
+import io.github.ffenuss.modkit.patch.RootModDiscoveryCoordinator
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.runBlocking
 
 class LiveProcessOverlayService : Service() {
     private val executor =
@@ -46,6 +50,10 @@ class LiveProcessOverlayService : Service() {
         AtomicBoolean(false)
     private val codePatchBusy =
         AtomicBoolean(false)
+    private val staticEnrichmentBusy =
+        AtomicBoolean(false)
+    private var staticEnrichmentAttempted =
+        false
     private val stabilizationBusy =
         AtomicBoolean(false)
     private val profileStore by lazy {
@@ -2594,6 +2602,12 @@ class LiveProcessOverlayService : Service() {
                             force = true,
                         )
                     }
+                    maybeEnrichIl2CppCodeSites(
+                        candidate =
+                            updatedCandidate,
+                        sites =
+                            trace.sites,
+                    )
                     val writers =
                         trace.sites
                             .count {
@@ -2789,6 +2803,207 @@ class LiveProcessOverlayService : Service() {
                     },
                 )
             }
+    }
+
+    private fun maybeEnrichIl2CppCodeSites(
+        candidate:
+            EditableRuntimeCandidate,
+        sites:
+            List<RootCodeAccessSite>,
+    ) {
+        val cfg =
+            config ?: return
+        if (
+            staticEnrichmentAttempted ||
+            !sites.any {
+                it.moduleName.equals(
+                    "libil2cpp.so",
+                    ignoreCase = true,
+                ) &&
+                    it.moduleFileOffset !=
+                    null &&
+                    it.managedMethodCandidate ==
+                    null
+            } ||
+            !staticEnrichmentBusy
+                .compareAndSet(
+                    false,
+                    true,
+                )
+        ) {
+            return
+        }
+        staticEnrichmentAttempted =
+            true
+        setStatus(
+            "Native writer найден. В фоне достраиваем IL2CPP bindings, чтобы определить managed-метод…",
+        )
+
+        executor.execute {
+            val result =
+                runCatching {
+                    val app =
+                        InstalledAppRepository(
+                            applicationContext,
+                        ).find(
+                            cfg.packageName,
+                        ) ?: error(
+                            "Установленный APK недоступен для IL2CPP correlation.",
+                        )
+                    val discovery =
+                        runBlocking {
+                            RootModDiscoveryCoordinator
+                                .discover(
+                                    context =
+                                        applicationContext,
+                                    app = app,
+                                    cancellation =
+                                        AtomicCancellationSignal(),
+                                    progress =
+                                        ProgressSink {
+                                            // Static enrichment intentionally
+                                            // stays in the background; the
+                                            // overlay remains responsive.
+                                        },
+                                )
+                        }
+                    sites.map {
+                        site ->
+                        val offset =
+                            site.moduleFileOffset
+                        if (
+                            offset == null ||
+                            site.managedMethodCandidate !=
+                            null
+                        ) {
+                            site
+                        } else {
+                            site.copy(
+                                managedMethodCandidate =
+                                    RootMemoryWatchCoordinator
+                                        .correlateManagedMethod(
+                                            cachedAnalysis =
+                                                discovery
+                                                    .analysisResult,
+                                            moduleName =
+                                                site.moduleName,
+                                            fileOffset =
+                                                offset,
+                                        ),
+                            )
+                        }
+                    }
+                }
+
+            main.post {
+                staticEnrichmentBusy.set(
+                    false,
+                )
+                result.onSuccess {
+                    enriched ->
+                    val current =
+                        selectedCandidate
+                    if (
+                        current == null ||
+                        current.id !=
+                        candidate.id
+                    ) {
+                        return@onSuccess
+                    }
+                    codeAccessSites =
+                        enriched
+                    selectedCodeSite =
+                        enriched
+                            .firstOrNull {
+                                eligibleWriterSite(
+                                    it,
+                                )
+                            }
+                    val learned =
+                        enriched
+                            .mapNotNull {
+                                site ->
+                                val offset =
+                                    site.moduleFileOffset
+                                        ?: return@mapNotNull null
+                                if (
+                                    site.moduleName
+                                        .startsWith(
+                                            "<",
+                                        )
+                                ) {
+                                    return@mapNotNull null
+                                }
+                                LearnedCodeAccessSite(
+                                    moduleIdentity =
+                                        site.moduleName,
+                                    moduleFileOffset =
+                                        offset,
+                                    accessKind =
+                                        site.accessKind,
+                                    instructionWord =
+                                        site.instructionWord,
+                                    instructionText =
+                                        site.instructionText,
+                                    managedMethodCandidate =
+                                        site.managedMethodCandidate,
+                                    observedCount =
+                                        site.count,
+                                )
+                            }
+                            .distinctBy {
+                                it.moduleIdentity +
+                                    ":" +
+                                    it.moduleFileOffset
+                            }
+                            .take(16)
+                    val updated =
+                        current.copy(
+                            learnedCodeSites =
+                                learned,
+                        )
+                    selectedCandidate =
+                        updated
+                    rebuildCodeAccessList()
+                    if (
+                        learned.any {
+                            it.managedMethodCandidate !=
+                                null
+                        }
+                    ) {
+                        setStatus(
+                            "IL2CPP correlation готов: найденные native reader/writer подписаны managed-методами там, где binding однозначен.",
+                        )
+                        stabilizeEditableCandidate(
+                            candidate =
+                                updated,
+                            source =
+                                updated.source
+                                    ?: LearnedCandidateSource
+                                        .MANUAL,
+                            actionHint =
+                                updated.actionHint,
+                            force = true,
+                        )
+                    } else {
+                        setStatus(
+                            "Code trace подтверждён, но однозначный managed-метод для этих offsets не доказан.",
+                        )
+                    }
+                }.onFailure {
+                    failure ->
+                    setStatus(
+                        "Code trace сохранён; IL2CPP-подпись не достроена: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
     }
 
     private fun eligibleWriterSite(
@@ -3300,6 +3515,11 @@ class LiveProcessOverlayService : Service() {
         codePatchBusy.set(
             false,
         )
+        staticEnrichmentBusy.set(
+            false,
+        )
+        staticEnrichmentAttempted =
+            false
         codePatchButton?.text =
             "Writer block: OFF"
         codeAccessList
