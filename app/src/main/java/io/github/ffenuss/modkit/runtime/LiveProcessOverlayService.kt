@@ -28,6 +28,7 @@ import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 class LiveProcessOverlayService : Service() {
@@ -41,6 +42,22 @@ class LiveProcessOverlayService : Service() {
         )
     private val behavioralBusy =
         AtomicBoolean(false)
+    private val stabilizationBusy =
+        AtomicBoolean(false)
+    private val profileStore by lazy {
+        BehavioralProfileStore(
+            applicationContext,
+        )
+    }
+    private val profileLock =
+        Any()
+    private val stabilizationAttempted =
+        ConcurrentHashMap
+            .newKeySet<String>()
+
+    @Volatile
+    private var artifactIdentity:
+        BehavioralArtifactIdentity? = null
 
     private var config:
         ProcessOverlayConfig? = null
@@ -57,6 +74,8 @@ class LiveProcessOverlayService : Service() {
 
     private var statusView:
         TextView? = null
+    private var learnedList:
+        LinearLayout? = null
     private var behavioralList:
         LinearLayout? = null
     private var manualList:
@@ -85,8 +104,14 @@ class LiveProcessOverlayService : Service() {
     private var trainingWasAuto =
         false
 
+    private var learnedCandidates =
+        emptyList<EditableRuntimeCandidate>()
     private var behavioralCandidates =
         emptyList<BehavioralRuntimeCandidate>()
+    private var behavioralSource =
+        LearnedCandidateSource.AUTO
+    private var behavioralActionHint:
+        BehavioralActionHint? = null
     private val announcedIds =
         linkedSetOf<String>()
 
@@ -157,6 +182,9 @@ class LiveProcessOverlayService : Service() {
             ),
         )
         showOverlay(parsed)
+        loadLearnedProfile(
+            parsed,
+        )
         return START_NOT_STICKY
     }
 
@@ -357,6 +385,22 @@ class LiveProcessOverlayService : Service() {
         body.addView(
             statusView,
         )
+
+        body.addView(
+            sectionTitle(
+                "Сохранённые моды",
+            ),
+        )
+        learnedList =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
+            }
+        body.addView(
+            learnedList,
+            matchWidth(),
+        )
+        rebuildLearnedList()
 
         val auto =
             Button(this).apply {
@@ -705,6 +749,17 @@ class LiveProcessOverlayService : Service() {
             matchWidth(),
         )
 
+        body.addView(
+            Button(this).apply {
+                text =
+                    "Закрепить для следующих запусков"
+                setOnClickListener {
+                    persistSelectedCandidate()
+                }
+            },
+            matchWidth(),
+        )
+
         val collapse =
             Button(this).apply {
                 text =
@@ -840,7 +895,11 @@ class LiveProcessOverlayService : Service() {
                         result.onSuccess {
                             sample ->
                             applyBehavioralSample(
-                                sample,
+                                sample = sample,
+                                source =
+                                    LearnedCandidateSource
+                                        .AUTO,
+                                actionHint = null,
                             )
                         }.onFailure {
                             failure ->
@@ -1015,7 +1074,12 @@ class LiveProcessOverlayService : Service() {
                 result.onSuccess {
                     sample ->
                     applyBehavioralSample(
-                        sample,
+                        sample = sample,
+                        source =
+                            LearnedCandidateSource
+                                .TRAINING,
+                        actionHint =
+                            session.actionHint,
                     )
                     setStatus(
                         "Обучение завершено: кандидатов " +
@@ -1050,9 +1114,15 @@ class LiveProcessOverlayService : Service() {
 
     private fun applyBehavioralSample(
         sample: BehavioralScanSample,
+        source: LearnedCandidateSource,
+        actionHint: BehavioralActionHint?,
     ) {
         behavioralCandidates =
             sample.visibleCandidates
+        behavioralSource =
+            source
+        behavioralActionHint =
+            actionHint
         rebuildBehavioralList()
         floating?.text =
             if (
@@ -1100,6 +1170,34 @@ class LiveProcessOverlayService : Service() {
                 Toast.LENGTH_SHORT,
             ).show()
         }
+
+        sample.visibleCandidates
+            .firstOrNull {
+                candidate ->
+                candidate.confidence >=
+                    if (
+                        source ==
+                        LearnedCandidateSource
+                            .TRAINING
+                    ) {
+                        62
+                    } else {
+                        78
+                    } &&
+                    !stabilizationAttempted
+                        .contains(
+                            candidate.id,
+                        )
+            }
+            ?.let {
+                candidate ->
+                stabilizeBehavioralCandidate(
+                    candidate = candidate,
+                    source = source,
+                    actionHint =
+                        actionHint,
+                )
+            }
     }
 
     private fun rebuildBehavioralList() {
@@ -1145,6 +1243,12 @@ class LiveProcessOverlayService : Service() {
                                     candidate
                                         .valueType
                                         .title,
+                            confidence =
+                                candidate.confidence,
+                            source =
+                                behavioralSource,
+                            actionHint =
+                                behavioralActionHint,
                         ),
                     ),
                 )
@@ -1458,6 +1562,9 @@ class LiveProcessOverlayService : Service() {
                                     scan.snapshot
                                         .valueType
                                         .title,
+                            source =
+                                LearnedCandidateSource
+                                    .MANUAL,
                         ),
                     ),
                 )
@@ -1523,13 +1630,19 @@ class LiveProcessOverlayService : Service() {
         executor.execute {
             val result =
                 runCatching {
+                    val resolvedAddress =
+                        resolveCandidateAddress(
+                            candidate =
+                                candidate,
+                            cfg = cfg,
+                        )
                     RootRuntimeDirectValueCoordinator
                         .writeValue(
                             packageName =
                                 cfg.packageName,
                             pid = cfg.pid,
                             address =
-                                candidate.address,
+                                resolvedAddress,
                             valueType =
                                 candidate.valueType,
                             valueText =
@@ -1541,11 +1654,26 @@ class LiveProcessOverlayService : Service() {
             main.post {
                 result.onSuccess {
                     written ->
-                    selectedCandidate =
+                    val updatedCandidate =
                         candidate.copy(
+                            address =
+                                written.address,
                             value =
                                 written.newValue,
                         )
+                    selectedCandidate =
+                        updatedCandidate
+                    stabilizeEditableCandidate(
+                        candidate =
+                            updatedCandidate,
+                        source =
+                            candidate.source
+                                ?: LearnedCandidateSource
+                                    .MANUAL,
+                        actionHint =
+                            candidate.actionHint,
+                        force = true,
+                    )
                     editorTitle?.text =
                         candidate.title +
                             "\n0x" +
@@ -1631,13 +1759,19 @@ class LiveProcessOverlayService : Service() {
                             ?: return@scheduleWithFixedDelay
                     val result =
                         runCatching {
+                            val resolvedAddress =
+                                resolveCandidateAddress(
+                                    candidate =
+                                        target,
+                                    cfg = cfg,
+                                )
                             RootRuntimeDirectValueCoordinator
                                 .writeValue(
                                     packageName =
                                         cfg.packageName,
                                     pid = cfg.pid,
                                     address =
-                                        target.address,
+                                        resolvedAddress,
                                     valueType =
                                         target.valueType,
                                     valueText =
@@ -1712,10 +1846,581 @@ class LiveProcessOverlayService : Service() {
         }
         manualBaseline = null
         manualScan = null
+        learnedCandidates =
+            emptyList()
         behavioralCandidates =
             emptyList()
+        artifactIdentity = null
+        stabilizationBusy.set(
+            false,
+        )
+        stabilizationAttempted.clear()
+        behavioralSource =
+            LearnedCandidateSource.AUTO
+        behavioralActionHint = null
         announcedIds.clear()
         selectedCandidate = null
+    }
+
+    private fun loadLearnedProfile(
+        cfg: ProcessOverlayConfig,
+    ) {
+        setStatus(
+            "Подключено. Проверяем сохранённые моды этой версии…",
+        )
+        executor.execute {
+            val result =
+                runCatching {
+                    val identity =
+                        synchronized(
+                            profileLock,
+                        ) {
+                            artifactIdentity
+                                ?: profileStore
+                                    .computeIdentity(
+                                        packageName =
+                                            cfg.packageName,
+                                        cancellation =
+                                            AtomicCancellationSignal(),
+                                    )
+                                    .also {
+                                        artifactIdentity =
+                                            it
+                                    }
+                        }
+                    val exact =
+                        synchronized(
+                            profileLock,
+                        ) {
+                            profileStore
+                                .loadExact(
+                                    packageName =
+                                        cfg.packageName,
+                                    artifactSha256 =
+                                        identity
+                                            .artifactSha256,
+                                )
+                        }
+                    val sourceProfile =
+                        exact
+                            ?: synchronized(
+                                profileLock,
+                            ) {
+                                profileStore
+                                    .loadLatest(
+                                        cfg.packageName,
+                                    )
+                            }
+                    if (sourceProfile == null) {
+                        return@runCatching
+                            identity to
+                                emptyList<
+                                    EditableRuntimeCandidate
+                                >()
+                    }
+
+                    val migrated =
+                        sourceProfile
+                            .artifactSha256 !=
+                            identity
+                                .artifactSha256
+                    val resolved =
+                        sourceProfile
+                            .candidates
+                            .mapNotNull {
+                                saved ->
+                                runCatching {
+                                    val target =
+                                        RootRuntimePointerChainCoordinator
+                                            .resolve(
+                                                packageName =
+                                                    cfg.packageName,
+                                                pid =
+                                                    cfg.pid,
+                                                anchor =
+                                                    saved.anchor,
+                                                cancellation =
+                                                    AtomicCancellationSignal(),
+                                            )
+                                    val value =
+                                        readRuntimeValue(
+                                            cfg = cfg,
+                                            address =
+                                                target
+                                                    .targetAddress,
+                                            type =
+                                                saved.valueType,
+                                        )
+                                    if (migrated) {
+                                        synchronized(
+                                            profileLock,
+                                        ) {
+                                            profileStore
+                                                .saveCandidate(
+                                                    identity =
+                                                        identity,
+                                                    candidate =
+                                                        saved.copy(
+                                                            confidence =
+                                                                (
+                                                                    saved
+                                                                        .confidence -
+                                                                        5
+                                                                    ).coerceAtLeast(
+                                                                    60,
+                                                                ),
+                                                            lastKnownValue =
+                                                                value,
+                                                            updatedAtEpochMs =
+                                                                System
+                                                                    .currentTimeMillis(),
+                                                        ),
+                                                )
+                                        }
+                                    }
+                                    EditableRuntimeCandidate(
+                                        id =
+                                            "saved:" +
+                                                saved.id,
+                                        title =
+                                            saved.title,
+                                        address =
+                                            target
+                                                .targetAddress,
+                                        valueType =
+                                            saved.valueType,
+                                        value =
+                                            value,
+                                        subtitle =
+                                            (
+                                                if (
+                                                    migrated
+                                                ) {
+                                                    "Перенесено после обновления"
+                                                } else {
+                                                    "Сохранено"
+                                                }
+                                                ) +
+                                                " · " +
+                                                saved
+                                                    .confidence +
+                                                "% · " +
+                                                saved
+                                                    .anchor
+                                                    .moduleIdentity,
+                                        confidence =
+                                            saved.confidence,
+                                        source =
+                                            saved.source,
+                                        actionHint =
+                                            saved.actionHint,
+                                        anchor =
+                                            saved.anchor,
+                                        persistent =
+                                            true,
+                                    )
+                                }.getOrNull()
+                            }
+                    identity to resolved
+                }
+            main.post {
+                result.onSuccess {
+                    (_, resolved) ->
+                    learnedCandidates =
+                        resolved
+                    rebuildLearnedList()
+                    setStatus(
+                        if (
+                            resolved.isEmpty()
+                        ) {
+                            "Подключено. Сохранённых модов для этого процесса пока нет."
+                        } else {
+                            "Восстановлено сохранённых модов: " +
+                                resolved.size +
+                                ". Адреса заново разрешены через pointer-chain."
+                        },
+                    )
+                }.onFailure {
+                    failure ->
+                    setStatus(
+                        "Подключено. Профиль не восстановлен: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun rebuildLearnedList() {
+        val list =
+            learnedList
+                ?: return
+        list.removeAllViews()
+        if (
+            learnedCandidates
+                .isEmpty()
+        ) {
+            list.addView(
+                hintText(
+                    "Пока пусто. Подтверждённые находки ModKit закрепит через pointer-chain.",
+                ),
+            )
+            return
+        }
+        learnedCandidates
+            .take(12)
+            .forEach {
+                candidate ->
+                list.addView(
+                    candidateRow(
+                        candidate,
+                    ),
+                )
+            }
+    }
+
+    private fun stabilizeBehavioralCandidate(
+        candidate: BehavioralRuntimeCandidate,
+        source: LearnedCandidateSource,
+        actionHint: BehavioralActionHint?,
+    ) {
+        if (
+            !stabilizationAttempted
+                .add(
+                    candidate.id,
+                )
+        ) {
+            return
+        }
+        stabilizeEditableCandidate(
+            candidate =
+                EditableRuntimeCandidate(
+                    id =
+                        candidate.id,
+                    title =
+                        candidate.title,
+                    address =
+                        candidate.address,
+                    valueType =
+                        candidate.valueType,
+                    value =
+                        candidate.value,
+                    subtitle =
+                        "Уверенность " +
+                            candidate.confidence +
+                            "%",
+                    confidence =
+                        candidate.confidence,
+                    source =
+                        source,
+                    actionHint =
+                        actionHint,
+                ),
+            source = source,
+            actionHint =
+                actionHint,
+            force = false,
+        )
+    }
+
+    private fun persistSelectedCandidate() {
+        val candidate =
+            selectedCandidate
+                ?: run {
+                    setStatus(
+                        "Сначала выбери найденный параметр.",
+                    )
+                    return
+                }
+        stabilizeEditableCandidate(
+            candidate =
+                candidate,
+            source =
+                candidate.source
+                    ?: LearnedCandidateSource
+                        .MANUAL,
+            actionHint =
+                candidate.actionHint,
+            force = true,
+        )
+    }
+
+    private fun stabilizeEditableCandidate(
+        candidate: EditableRuntimeCandidate,
+        source: LearnedCandidateSource,
+        actionHint: BehavioralActionHint?,
+        force: Boolean,
+    ) {
+        val cfg =
+            config ?: return
+        if (
+            !stabilizationBusy
+                .compareAndSet(
+                    false,
+                    true,
+                )
+        ) {
+            if (force) {
+                setStatus(
+                    "Pointer-chain уже ищется для другой находки. Повтори закрепление через несколько секунд.",
+                )
+            }
+            return
+        }
+        val key =
+            "persist:" +
+                candidate.id
+        if (
+            !force &&
+            !stabilizationAttempted
+                .add(key)
+        ) {
+            stabilizationBusy.set(
+                false,
+            )
+            return
+        }
+        setStatus(
+            "Ищем устойчивый pointer-chain для «" +
+                candidate.title +
+                "»…",
+        )
+        executor.execute {
+            val result =
+                runCatching {
+                    val chain =
+                        RootRuntimePointerChainCoordinator
+                            .discover(
+                                packageName =
+                                    cfg.packageName,
+                                pid = cfg.pid,
+                                targetAddress =
+                                    resolveCandidateAddress(
+                                        candidate =
+                                            candidate,
+                                        cfg = cfg,
+                                    ),
+                                cancellation =
+                                    AtomicCancellationSignal(),
+                                maxScanBytesPerDepth =
+                                    if (force) {
+                                        96L *
+                                            1024L *
+                                            1024L
+                                    } else {
+                                        40L *
+                                            1024L *
+                                            1024L
+                                    },
+                            )
+                    val anchor =
+                        chain.stableAnchor
+                            ?: error(
+                                "Стабильный module-root pointer-chain пока не найден.",
+                            )
+                    val identity =
+                        synchronized(
+                            profileLock,
+                        ) {
+                            artifactIdentity
+                                ?: profileStore
+                                    .computeIdentity(
+                                        packageName =
+                                            cfg.packageName,
+                                        cancellation =
+                                            AtomicCancellationSignal(),
+                                    )
+                                    .also {
+                                        artifactIdentity =
+                                            it
+                                    }
+                        }
+                    val learned =
+                        LearnedRuntimeCandidate(
+                            id =
+                                candidate.id,
+                            title =
+                                candidate.title,
+                            valueType =
+                                candidate.valueType,
+                            confidence =
+                                (
+                                    candidate
+                                        .confidence
+                                        ?: if (
+                                            force
+                                        ) {
+                                            90
+                                        } else {
+                                            75
+                                        }
+                                    ).coerceIn(
+                                    1,
+                                    99,
+                                ),
+                            source =
+                                source,
+                            actionHint =
+                                actionHint,
+                            lastKnownValue =
+                                candidate.value,
+                            anchor =
+                                anchor,
+                            updatedAtEpochMs =
+                                System
+                                    .currentTimeMillis(),
+                        )
+                    synchronized(
+                        profileLock,
+                    ) {
+                        profileStore
+                            .saveCandidate(
+                                identity =
+                                    identity,
+                                candidate =
+                                    learned,
+                            )
+                    }
+                    val resolved =
+                        RootRuntimePointerChainCoordinator
+                            .resolve(
+                                packageName =
+                                    cfg.packageName,
+                                pid = cfg.pid,
+                                anchor =
+                                    anchor,
+                                cancellation =
+                                    AtomicCancellationSignal(),
+                            )
+                    candidate.copy(
+                        address =
+                            resolved
+                                .targetAddress,
+                        subtitle =
+                            "Сохранено · " +
+                                learned.confidence +
+                                "% · " +
+                                anchor
+                                    .moduleIdentity,
+                        confidence =
+                            learned.confidence,
+                        source =
+                            source,
+                        actionHint =
+                            actionHint,
+                        anchor =
+                            anchor,
+                        persistent =
+                            true,
+                    )
+                }
+            main.post {
+                stabilizationBusy.set(
+                    false,
+                )
+                result.onSuccess {
+                    saved ->
+                    learnedCandidates =
+                        (
+                            learnedCandidates
+                                .filterNot {
+                                    it.anchor !=
+                                        null &&
+                                        saved.anchor !=
+                                        null &&
+                                        it.anchor ==
+                                        saved.anchor
+                                } +
+                                saved
+                            )
+                            .sortedByDescending {
+                                it.confidence
+                                    ?: 0
+                            }
+                    rebuildLearnedList()
+                    Toast.makeText(
+                        this,
+                        "ModKit: мод закреплён и будет восстановлен при следующем запуске.",
+                        Toast.LENGTH_LONG,
+                    ).show()
+                    setStatus(
+                        "Pointer-chain сохранён: " +
+                            (
+                                saved.anchor
+                                    ?.moduleIdentity
+                                    ?: "module"
+                                ) +
+                            ".",
+                    )
+                }.onFailure {
+                    failure ->
+                    if (force) {
+                        setStatus(
+                            "Не удалось закрепить параметр: " +
+                                (
+                                    failure.message
+                                        ?: failure
+                                            .javaClass
+                                            .simpleName
+                                    ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private fun resolveCandidateAddress(
+        candidate: EditableRuntimeCandidate,
+        cfg: ProcessOverlayConfig,
+    ): Long {
+        val anchor =
+            candidate.anchor
+                ?: return candidate.address
+        return RootRuntimePointerChainCoordinator
+            .resolve(
+                packageName =
+                    cfg.packageName,
+                pid = cfg.pid,
+                anchor = anchor,
+                cancellation =
+                    AtomicCancellationSignal(),
+            ).targetAddress
+    }
+
+    private fun readRuntimeValue(
+        cfg: ProcessOverlayConfig,
+        address: Long,
+        type: RuntimeValueType,
+    ): String {
+        val bytes =
+            RootProcMemRuntimeMemoryReader(
+                pid = cfg.pid,
+            ).read(
+                address = address,
+                size = type.byteWidth,
+                cancellation =
+                    AtomicCancellationSignal(),
+            ) ?: error(
+                "Resolved learned value is unreadable.",
+            )
+        require(
+            bytes.size ==
+                type.byteWidth,
+        ) {
+            "Resolved learned value read is truncated."
+        }
+        return type.display(
+            type.readBits(
+                bytes,
+                0,
+            ),
+        )
     }
 
     private fun trainingButton(
@@ -2068,6 +2773,11 @@ class LiveProcessOverlayService : Service() {
         val valueType: RuntimeValueType,
         val value: String,
         val subtitle: String,
+        val confidence: Int? = null,
+        val source: LearnedCandidateSource? = null,
+        val actionHint: BehavioralActionHint? = null,
+        val anchor: StableRuntimePointerAnchor? = null,
+        val persistent: Boolean = false,
     )
 
     companion object {
