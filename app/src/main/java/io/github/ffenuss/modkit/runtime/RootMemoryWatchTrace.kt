@@ -722,39 +722,42 @@ object RootMemoryWatchCoordinator {
             return null
         }
 
-        var bestIndex = -1
-        for (
-            index in
-            bindings.indices
+        val start =
+            bindings
+                .asSequence()
+                .map {
+                    it.first
+                }
+                .filter {
+                    it <=
+                        fileOffset
+                }
+                .maxOrNull()
+                ?: return null
+
+        val owners =
+            bindings
+                .filter {
+                    it.first ==
+                        start
+                }
+        if (
+            owners.size != 1
         ) {
-            if (
-                bindings[index]
-                    .first <=
-                fileOffset
-            ) {
-                bestIndex = index
-            } else {
-                break
-            }
-        }
-        if (bestIndex < 0) {
             return null
         }
 
-        val start =
-            bindings[bestIndex]
-                .first
         val next =
             bindings
-                .drop(
-                    bestIndex +
-                        1,
-                )
-                .firstOrNull {
-                    it.first >
+                .asSequence()
+                .map {
+                    it.first
+                }
+                .filter {
+                    it >
                         start
                 }
-                ?.first
+                .minOrNull()
         val upper =
             minOf(
                 next
@@ -771,9 +774,9 @@ object RootMemoryWatchCoordinator {
         ) {
             return null
         }
-        return bindings[
-            bestIndex
-        ].second
+        return owners
+            .single()
+            .second
             .managedIdentity
     }
 
