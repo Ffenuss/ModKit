@@ -2383,30 +2383,6 @@ class LiveProcessOverlayService : Service() {
 
         if (
             source ==
-                LearnedCandidateSource.AUTO &&
-            panel?.visibility !=
-                View.VISIBLE
-        ) {
-            behavioralCandidates
-                .firstOrNull {
-                    candidate ->
-                    candidate.confidence >=
-                        88 &&
-                        candidate.changeCount >=
-                        3 &&
-                        candidate.id !in
-                        autoCodeTraceAttempted
-                }
-                ?.let {
-                    candidate ->
-                    startAutomaticCodeTrace(
-                        candidate,
-                    )
-                }
-        }
-
-        if (
-            source ==
             LearnedCandidateSource.TRAINING
         ) {
             sample.visibleCandidates
