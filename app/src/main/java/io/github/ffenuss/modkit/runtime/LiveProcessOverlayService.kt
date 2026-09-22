@@ -5782,7 +5782,8 @@ class LiveProcessOverlayService : Service() {
         row.addView(
             TextView(this).apply {
                 text =
-                    candidate.subtitle
+                    candidate.subtitle +
+                        "\nНажми, чтобы открыть"
                 setTextColor(
                     Color.LTGRAY,
                 )
