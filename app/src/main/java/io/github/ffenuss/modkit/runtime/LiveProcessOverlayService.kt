@@ -2267,13 +2267,64 @@ class LiveProcessOverlayService : Service() {
         )
     }
 
+    private fun collapseAutoActivityGroups(
+        candidates:
+            List<BehavioralRuntimeCandidate>,
+    ): List<BehavioralRuntimeCandidate> {
+        val selected =
+            mutableListOf<
+                BehavioralRuntimeCandidate
+            >()
+        candidates
+            .sortedWith(
+                compareByDescending<
+                    BehavioralRuntimeCandidate
+                > {
+                    it.confidence
+                }.thenByDescending {
+                    it.changeCount
+                },
+            )
+            .forEach {
+                candidate ->
+                val duplicatePattern =
+                    selected.any {
+                        existing ->
+                        Integer.bitCount(
+                            existing
+                                .recentChangeMask xor
+                                candidate
+                                    .recentChangeMask,
+                        ) <= 2 &&
+                            existing.valueType
+                                .byteWidth ==
+                            candidate.valueType
+                                .byteWidth
+                    }
+                if (!duplicatePattern) {
+                    selected +=
+                        candidate
+                }
+            }
+        return selected.take(5)
+    }
+
     private fun applyBehavioralSample(
         sample: BehavioralScanSample,
         source: LearnedCandidateSource,
         actionHint: BehavioralActionHint?,
     ) {
         behavioralCandidates =
-            sample.visibleCandidates
+            if (
+                source ==
+                LearnedCandidateSource.AUTO
+            ) {
+                collapseAutoActivityGroups(
+                    sample.visibleCandidates,
+                )
+            } else {
+                sample.visibleCandidates
+            }
         behavioralSource =
             source
         behavioralActionHint =
@@ -2301,7 +2352,7 @@ class LiveProcessOverlayService : Service() {
                     " устойчивых кандидатов."
             } else {
                 "Автоскан: подтверждаемых " +
-                    sample.visibleCandidates
+                    behavioralCandidates
                         .size +
                     " · скрыто шумных " +
                     sample.hiddenAsNoise +
