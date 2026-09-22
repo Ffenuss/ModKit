@@ -1610,6 +1610,15 @@ class LiveProcessOverlayService : Service() {
                     )
                     return
                 }
+        if (
+            candidate
+                .requiresConfirmation
+        ) {
+            setStatus(
+                "После обновления этот перенос-кандидат нужно сначала подтвердить кнопкой «Закрепить для следующих запусков».",
+            )
+            return
+        }
         val value =
             editorValue
                 ?.text
@@ -1722,6 +1731,15 @@ class LiveProcessOverlayService : Service() {
                     )
                     return
                 }
+        if (
+            candidate
+                .requiresConfirmation
+        ) {
+            setStatus(
+                "После обновления перенос-кандидат сначала нужно закрепить повторно.",
+            )
+            return
+        }
         val value =
             editorValue
                 ?.text
@@ -1952,33 +1970,6 @@ class LiveProcessOverlayService : Service() {
                                             type =
                                                 saved.valueType,
                                         )
-                                    if (migrated) {
-                                        synchronized(
-                                            profileLock,
-                                        ) {
-                                            profileStore
-                                                .saveCandidate(
-                                                    identity =
-                                                        identity,
-                                                    candidate =
-                                                        saved.copy(
-                                                            confidence =
-                                                                (
-                                                                    saved
-                                                                        .confidence -
-                                                                        5
-                                                                    ).coerceAtLeast(
-                                                                    60,
-                                                                ),
-                                                            lastKnownValue =
-                                                                value,
-                                                            updatedAtEpochMs =
-                                                                System
-                                                                    .currentTimeMillis(),
-                                                        ),
-                                                )
-                                        }
-                                    }
                                     EditableRuntimeCandidate(
                                         id =
                                             "saved:" +
@@ -1997,20 +1988,47 @@ class LiveProcessOverlayService : Service() {
                                                 if (
                                                     migrated
                                                 ) {
-                                                    "Перенесено после обновления"
+                                                    "После обновления: pointer-chain найден, требуется подтверждение"
                                                 } else {
                                                     "Сохранено"
                                                 }
                                                 ) +
                                                 " · " +
-                                                saved
-                                                    .confidence +
+                                                (
+                                                    if (
+                                                        migrated
+                                                    ) {
+                                                        (
+                                                            saved
+                                                                .confidence -
+                                                                10
+                                                            ).coerceAtLeast(
+                                                            50,
+                                                        )
+                                                    } else {
+                                                        saved
+                                                            .confidence
+                                                    }
+                                                    ) +
                                                 "% · " +
                                                 saved
                                                     .anchor
                                                     .moduleIdentity,
                                         confidence =
-                                            saved.confidence,
+                                            if (
+                                                migrated
+                                            ) {
+                                                (
+                                                    saved
+                                                        .confidence -
+                                                        10
+                                                    ).coerceAtLeast(
+                                                    50,
+                                                )
+                                            } else {
+                                                saved
+                                                    .confidence
+                                            },
                                         source =
                                             saved.source,
                                         actionHint =
@@ -2018,7 +2036,9 @@ class LiveProcessOverlayService : Service() {
                                         anchor =
                                             saved.anchor,
                                         persistent =
-                                            true,
+                                            !migrated,
+                                        requiresConfirmation =
+                                            migrated,
                                     )
                                 }.getOrNull()
                             }
@@ -2194,6 +2214,12 @@ class LiveProcessOverlayService : Service() {
         executor.execute {
             val result =
                 runCatching {
+                    val originalTarget =
+                        resolveCandidateAddress(
+                            candidate =
+                                candidate,
+                            cfg = cfg,
+                        )
                     val chain =
                         RootRuntimePointerChainCoordinator
                             .discover(
@@ -2201,11 +2227,7 @@ class LiveProcessOverlayService : Service() {
                                     cfg.packageName,
                                 pid = cfg.pid,
                                 targetAddress =
-                                    resolveCandidateAddress(
-                                        candidate =
-                                            candidate,
-                                        cfg = cfg,
-                                    ),
+                                    originalTarget,
                                 cancellation =
                                     AtomicCancellationSignal(),
                                 maxScanBytesPerDepth =
@@ -2298,6 +2320,12 @@ class LiveProcessOverlayService : Service() {
                                 cancellation =
                                     AtomicCancellationSignal(),
                             )
+                    require(
+                        resolved.targetAddress ==
+                            originalTarget
+                    ) {
+                        "Pointer-chain did not resolve back to the confirmed runtime target."
+                    }
                     candidate.copy(
                         address =
                             resolved
@@ -2318,6 +2346,8 @@ class LiveProcessOverlayService : Service() {
                             anchor,
                         persistent =
                             true,
+                        requiresConfirmation =
+                            false,
                     )
                 }
             main.post {
@@ -2779,6 +2809,7 @@ class LiveProcessOverlayService : Service() {
         val actionHint: BehavioralActionHint? = null,
         val anchor: StableRuntimePointerAnchor? = null,
         val persistent: Boolean = false,
+        val requiresConfirmation: Boolean = false,
     )
 
     companion object {
