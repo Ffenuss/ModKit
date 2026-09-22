@@ -2370,7 +2370,7 @@ class LiveProcessOverlayService : Service() {
                             cancellation =
                                 AtomicCancellationSignal(),
                             visibleLimit =
-                                64,
+                                100,
                         )
                 }
             RootBehavioralScanCoordinator
