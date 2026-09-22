@@ -117,6 +117,8 @@ class LiveProcessOverlayService : Service() {
 
     private var manualType =
         RuntimeValueType.INT32
+    private var manualFullScan =
+        false
     private var manualScan:
         RootRuntimeValueScanResult? = null
     private var manualBaseline:
@@ -599,6 +601,27 @@ class LiveProcessOverlayService : Service() {
         )
         body.addView(
             manualTop,
+            matchWidth(),
+        )
+
+        body.addView(
+            Button(this).apply {
+                text =
+                    "Объём: быстрый"
+                setOnClickListener {
+                    manualFullScan =
+                        !manualFullScan
+                    text =
+                        if (
+                            manualFullScan
+                        ) {
+                            "Объём: полный"
+                        } else {
+                            "Объём: быстрый"
+                        }
+                    clearManualSearch()
+                }
+            },
             matchWidth(),
         )
 
@@ -1349,7 +1372,9 @@ class LiveProcessOverlayService : Service() {
                                         queryTexts =
                                             values,
                                         cancellation =
-                                            AtomicCancellationSignal(),
+                                            AtomicCancellationSignal(),                                        maxScanBytes =
+                                            manualScanByteLimit(),
+
                                     )
                             }
 
@@ -1381,7 +1406,9 @@ class LiveProcessOverlayService : Service() {
                                         maxText =
                                             bounds[1],
                                         cancellation =
-                                            AtomicCancellationSignal(),
+                                            AtomicCancellationSignal(),                                        maxScanBytes =
+                                            manualScanByteLimit(),
+
                                     )
                             }
 
@@ -1413,7 +1440,9 @@ class LiveProcessOverlayService : Service() {
                                         toleranceText =
                                             fuzzy[1],
                                         cancellation =
-                                            AtomicCancellationSignal(),
+                                            AtomicCancellationSignal(),                                        maxScanBytes =
+                                            manualScanByteLimit(),
+
                                     )
                             }
 
@@ -1427,6 +1456,8 @@ class LiveProcessOverlayService : Service() {
                                         query = query,
                                         cancellation =
                                             AtomicCancellationSignal(),
+                                        maxScanBytes =
+                                            manualScanByteLimit(),
                                         expectedPid =
                                             cfg.pid,
                                     )
@@ -1509,9 +1540,14 @@ class LiveProcessOverlayService : Service() {
                             cancellation =
                                 AtomicCancellationSignal(),
                             maxBytes =
-                                32L *
-                                    1024L *
-                                    1024L,
+                                if (
+                                    manualFullScan
+                                ) {
+                                    null
+                                } else {
+                                    RootRuntimeUnknownValueCoordinator
+                                        .QUICK_MAX_BASELINE_BYTES
+                                },
                             expectedPid =
                                 cfg.pid,
                         )
@@ -1996,6 +2032,7 @@ class LiveProcessOverlayService : Service() {
         }
         manualBaseline = null
         manualScan = null
+        manualFullScan = false
         learnedCandidates =
             emptyList()
         behavioralCandidates =
@@ -2585,6 +2622,16 @@ class LiveProcessOverlayService : Service() {
             ),
         )
     }
+
+    private fun manualScanByteLimit():
+        Long? =
+        if (manualFullScan) {
+            null
+        } else {
+            64L *
+                1024L *
+                1024L
+        }
 
     private fun trainingButton(
         title: String,
