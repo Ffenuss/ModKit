@@ -1337,6 +1337,28 @@ class LiveProcessOverlayService : Service() {
             }
         }
 
+        if (
+            aggregates.isEmpty() &&
+            sample.visibleCandidates
+                .isNotEmpty()
+        ) {
+            trainingRounds[
+                hint
+            ] = 1
+            sample.visibleCandidates
+                .forEach {
+                    candidate ->
+                    aggregates[
+                        candidate.id
+                    ] =
+                        TrainingAggregate(
+                            candidate =
+                                candidate,
+                            seenRounds = 1,
+                        )
+                }
+        }
+
         val visible =
             aggregates
                 .values
