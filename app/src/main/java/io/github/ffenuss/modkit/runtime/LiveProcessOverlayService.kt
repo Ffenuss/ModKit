@@ -2913,8 +2913,9 @@ class LiveProcessOverlayService : Service() {
                             cancellation =
                                 AtomicCancellationSignal(),
                             maxScanBytes =
-                                RootFastValueScanCoordinator
-                                    .QUICK_MAX_BYTES,
+                                32L *
+                                    1024L *
+                                    1024L,
                             expectedPid =
                                 cfg.pid,
                         )
