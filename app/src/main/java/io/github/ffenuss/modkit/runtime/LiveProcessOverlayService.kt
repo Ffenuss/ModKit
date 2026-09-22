@@ -24,12 +24,16 @@ import android.widget.TextView
 import android.widget.Toast
 import io.github.ffenuss.modkit.R
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
+import io.github.ffenuss.modkit.analysis.ProgressSink
+import io.github.ffenuss.modkit.data.InstalledAppRepository
+import io.github.ffenuss.modkit.patch.RootModDiscoveryCoordinator
 import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.runBlocking
 
 class LiveProcessOverlayService : Service() {
     private val executor =
@@ -42,6 +46,14 @@ class LiveProcessOverlayService : Service() {
         )
     private val behavioralBusy =
         AtomicBoolean(false)
+    private val codeTraceBusy =
+        AtomicBoolean(false)
+    private val codePatchBusy =
+        AtomicBoolean(false)
+    private val staticEnrichmentBusy =
+        AtomicBoolean(false)
+    private var staticEnrichmentAttempted =
+        false
     private val stabilizationBusy =
         AtomicBoolean(false)
     private val profileStore by lazy {
@@ -80,6 +92,8 @@ class LiveProcessOverlayService : Service() {
         LinearLayout? = null
     private var manualList:
         LinearLayout? = null
+    private var codeAccessList:
+        LinearLayout? = null
     private var manualCount:
         TextView? = null
     private var autoButton:
@@ -94,11 +108,17 @@ class LiveProcessOverlayService : Service() {
         EditText? = null
     private var freezeButton:
         Button? = null
+    private var codePatchButton:
+        Button? = null
 
     private var autoSession:
         RootBehavioralScanSession? = null
     private var autoTask:
         ScheduledFuture<*>? = null
+    private var processWatchTask:
+        ScheduledFuture<*>? = null
+    private var awaitingReattach =
+        false
     private var trainingSession:
         RootBehavioralScanSession? = null
     private var trainingWasAuto =
@@ -127,6 +147,13 @@ class LiveProcessOverlayService : Service() {
         >()
     private val announcedIds =
         linkedSetOf<String>()
+    private val autoCodeTraceAttempted =
+        linkedSetOf<String>()
+    private val behavioralCodeSites =
+        mutableMapOf<
+            String,
+            List<RootCodeAccessSite>
+        >()
 
     private var manualType =
         RuntimeValueType.INT32
@@ -139,6 +166,12 @@ class LiveProcessOverlayService : Service() {
 
     private var selectedCandidate:
         EditableRuntimeCandidate? = null
+    private var codeAccessSites =
+        emptyList<RootCodeAccessSite>()
+    private var selectedCodeSite:
+        RootCodeAccessSite? = null
+    private var activeCodePatch:
+        ActiveCodePatch? = null
     private var freezeTask:
         ScheduledFuture<*>? = null
     private var freezeTarget:
@@ -186,6 +219,7 @@ class LiveProcessOverlayService : Service() {
             return START_NOT_STICKY
         }
 
+        stopProcessWatch()
         resetRuntimeState()
         config = parsed
         startForeground(
@@ -200,10 +234,13 @@ class LiveProcessOverlayService : Service() {
         loadLearnedProfile(
             parsed,
         )
+        scheduleProcessWatch()
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        stopProcessWatch()
+        rollbackActiveCodePatchBestEffort()
         resetRuntimeState()
         removeOverlay()
         executor.shutdownNow()
@@ -811,6 +848,47 @@ class LiveProcessOverlayService : Service() {
         )
 
         body.addView(
+            sectionTitle(
+                "Код, который использует значение",
+            ),
+        )
+        body.addView(
+            Button(this).apply {
+                text =
+                    "Найти reader/writer · 5 сек"
+                setOnClickListener {
+                    traceSelectedCodeAccess()
+                }
+            },
+            matchWidth(),
+        )
+        codeAccessList =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
+            }
+        body.addView(
+            codeAccessList,
+            matchWidth(),
+        )
+        rebuildCodeAccessList()
+
+        val writerBlock =
+            Button(this).apply {
+                text =
+                    "Writer block: OFF"
+                setOnClickListener {
+                    toggleSelectedWriterBlock()
+                }
+            }
+        codePatchButton =
+            writerBlock
+        body.addView(
+            writerBlock,
+            matchWidth(),
+        )
+
+        body.addView(
             Button(this).apply {
                 text =
                     "Закрепить для следующих запусков"
@@ -873,6 +951,155 @@ class LiveProcessOverlayService : Service() {
                     ),
             )
         }
+    }
+
+    private fun scheduleProcessWatch() {
+        stopProcessWatch()
+        processWatchTask =
+            executor.scheduleWithFixedDelay(
+                {
+                    val cfg =
+                        config
+                            ?: return@scheduleWithFixedDelay
+                    val cancellation =
+                        AtomicCancellationSignal()
+                    val alive =
+                        RootProcessReattachCoordinator
+                            .isSameProcess(
+                                packageName =
+                                    cfg.packageName,
+                                pid = cfg.pid,
+                                cancellation =
+                                    cancellation,
+                            )
+                    if (alive) {
+                        if (awaitingReattach) {
+                            awaitingReattach =
+                                false
+                            main.post {
+                                setStatus(
+                                    "Процесс снова доступен · PID " +
+                                        cfg.pid +
+                                        ".",
+                                )
+                            }
+                        }
+                        return@scheduleWithFixedDelay
+                    }
+
+                    val replacement =
+                        runCatching {
+                            RootProcessReattachCoordinator
+                                .findReplacementMainPid(
+                                    packageName =
+                                        cfg.packageName,
+                                    androidUserId =
+                                        cfg.androidUserId,
+                                    cancellation =
+                                        cancellation,
+                                )
+                        }.getOrNull()
+
+                    if (
+                        replacement ==
+                        null
+                    ) {
+                        if (!awaitingReattach) {
+                            awaitingReattach =
+                                true
+                            main.post {
+                                setStatus(
+                                    "Игра закрыта. MK ждёт новый процесс " +
+                                        cfg.packageName +
+                                        " и подключится автоматически после следующего запуска.",
+                                )
+                            }
+                        }
+                        return@scheduleWithFixedDelay
+                    }
+                    if (
+                        replacement ==
+                        cfg.pid
+                    ) {
+                        return@scheduleWithFixedDelay
+                    }
+
+                    main.post {
+                        reattachToProcess(
+                            old =
+                                cfg,
+                            newPid =
+                                replacement,
+                        )
+                    }
+                },
+                3_000L,
+                3_000L,
+                TimeUnit.MILLISECONDS,
+            )
+    }
+
+    private fun stopProcessWatch() {
+        processWatchTask?.cancel(
+            false,
+        )
+        processWatchTask = null
+        awaitingReattach =
+            false
+    }
+
+    private fun reattachToProcess(
+        old: ProcessOverlayConfig,
+        newPid: Int,
+    ) {
+        val current =
+            config
+                ?: return
+        if (
+            current.packageName !=
+                old.packageName ||
+            current.pid !=
+                old.pid
+        ) {
+            return
+        }
+
+        rollbackActiveCodePatchBestEffort()
+        resetRuntimeState()
+        val replacement =
+            old.copy(
+                pid = newPid,
+            )
+        config =
+            replacement
+        manualList
+            ?.removeAllViews()
+        manualCount?.text =
+            "Результатов: 0"
+        learnedList
+            ?.removeAllViews()
+        behavioralList
+            ?.removeAllViews()
+        codeAccessList
+            ?.removeAllViews()
+        awaitingReattach =
+            false
+        startForeground(
+            NOTIFICATION_ID,
+            buildNotification(
+                replacement.label +
+                    " · PID " +
+                    replacement.pid,
+            ),
+        )
+        setStatus(
+            "Игра перезапущена. ModKit автоматически подключился к новому PID " +
+                newPid +
+                " и восстанавливает сохранённые моды.",
+        )
+        loadLearnedProfile(
+            replacement,
+        )
     }
 
     private fun startAutoScan() {
@@ -1453,6 +1680,30 @@ class LiveProcessOverlayService : Service() {
 
         if (
             source ==
+                LearnedCandidateSource.AUTO &&
+            panel?.visibility !=
+                View.VISIBLE
+        ) {
+            sample.visibleCandidates
+                .firstOrNull {
+                    candidate ->
+                    candidate.confidence >=
+                        88 &&
+                        candidate.changeCount >=
+                        3 &&
+                        candidate.id !in
+                        autoCodeTraceAttempted
+                }
+                ?.let {
+                    candidate ->
+                    startAutomaticCodeTrace(
+                        candidate,
+                    )
+                }
+        }
+
+        if (
+            source ==
             LearnedCandidateSource.TRAINING
         ) {
             sample.visibleCandidates
@@ -1519,7 +1770,20 @@ class LiveProcessOverlayService : Service() {
                                     " · " +
                                     candidate
                                         .valueType
-                                        .title,
+                                        .title +
+                                    (
+                                        behavioralCodeSites[
+                                            candidate.id
+                                        ]
+                                            ?.takeIf {
+                                                it.isNotEmpty()
+                                            }
+                                            ?.let {
+                                                " · code " +
+                                                    it.size
+                                            }
+                                            ?: ""
+                                        ),
                             confidence =
                                 candidate.confidence,
                             source =
@@ -1980,8 +2244,34 @@ class LiveProcessOverlayService : Service() {
         candidate:
             EditableRuntimeCandidate,
     ) {
+        val active =
+            activeCodePatch
+        if (
+            active != null &&
+            active.candidateId !=
+            candidate.id
+        ) {
+            setStatus(
+                "Сначала отключи Writer block у текущего параметра.",
+            )
+            return
+        }
         selectedCandidate =
             candidate
+        val capturedSites =
+            behavioralCodeSites[
+                candidate.id
+            ].orEmpty()
+        codeAccessSites =
+            capturedSites
+        selectedCodeSite =
+            capturedSites
+                .firstOrNull {
+                    eligibleWriterSite(
+                        it,
+                    )
+                }
+        rebuildCodeAccessList()
         editorTitle?.text =
             candidate.title +
                 "\n0x" +
@@ -1997,6 +2287,951 @@ class LiveProcessOverlayService : Service() {
         editorValue?.setText(
             candidate.value,
         )
+        if (
+            candidate.learnedCodeSites
+                .isNotEmpty() &&
+            !candidate
+                .requiresConfirmation
+        ) {
+            resolvePersistedCodeSites(
+                candidate,
+            )
+        }
+    }
+
+    private fun resolvePersistedCodeSites(
+        candidate:
+            EditableRuntimeCandidate,
+    ) {
+        val cfg =
+            config ?: return
+        executor.execute {
+            val resolved =
+                candidate
+                    .learnedCodeSites
+                    .mapNotNull {
+                        site ->
+                        runCatching {
+                            RootRuntimeCodeToggleCoordinator
+                                .resolveLearnedSite(
+                                    packageName =
+                                        cfg.packageName,
+                                    pid = cfg.pid,
+                                    site = site,
+                                    cancellation =
+                                        AtomicCancellationSignal(),
+                                )
+                        }.getOrNull()
+                    }
+            main.post {
+                if (
+                    selectedCandidate
+                        ?.id !=
+                    candidate.id
+                ) {
+                    return@post
+                }
+                codeAccessSites =
+                    resolved
+                selectedCodeSite =
+                    resolved
+                        .firstOrNull {
+                            eligibleWriterSite(
+                                it,
+                            )
+                        }
+                rebuildCodeAccessList()
+                if (
+                    candidate.learnedCodeSites
+                        .isNotEmpty() &&
+                    resolved.isEmpty()
+                ) {
+                    setStatus(
+                        "Сохранённые code-sites больше не подтверждаются; выполни новый code trace.",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun startAutomaticCodeTrace(
+        candidate:
+            BehavioralRuntimeCandidate,
+    ) {
+        val cfg =
+            config ?: return
+        if (
+            candidate.id in
+            autoCodeTraceAttempted
+        ) {
+            return
+        }
+        if (
+            !codeTraceBusy
+                .compareAndSet(
+                    false,
+                    true,
+                )
+        ) {
+            return
+        }
+        if (
+            !autoCodeTraceAttempted
+                .add(
+                    candidate.id,
+                )
+        ) {
+            codeTraceBusy.set(
+                false,
+            )
+            return
+        }
+
+        val hadAutoSession =
+            autoSession != null
+        autoTask?.cancel(
+            false,
+        )
+        autoTask = null
+
+        executor.execute {
+            val result =
+                runCatching {
+                    RootMemoryWatchCoordinator
+                        .trace(
+                            context =
+                                applicationContext,
+                            packageName =
+                                cfg.packageName,
+                            pid = cfg.pid,
+                            targetAddress =
+                                candidate.address,
+                            width =
+                                candidate
+                                    .valueType
+                                    .byteWidth,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                            durationMs =
+                                3_500,
+                        )
+                }
+            main.post {
+                codeTraceBusy.set(
+                    false,
+                )
+                result.onSuccess {
+                    trace ->
+                    if (
+                        trace.sites
+                            .isNotEmpty()
+                    ) {
+                        behavioralCodeSites[
+                            candidate.id
+                        ] =
+                            trace.sites
+                        rebuildBehavioralList()
+                        val writers =
+                            trace.sites
+                                .count {
+                                    it.accessKind ==
+                                        RuntimeCodeAccessKind
+                                            .WRITE
+                                }
+                        Toast.makeText(
+                            this,
+                            "ModKit: для «" +
+                                candidate.title +
+                                "» найдено code-sites " +
+                                trace.sites.size +
+                                " · writers " +
+                                writers,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+                if (
+                    hadAutoSession &&
+                    autoSession !=
+                        null &&
+                    autoTask == null
+                ) {
+                    scheduleAutoSamples()
+                }
+            }
+        }
+    }
+
+    private fun traceSelectedCodeAccess() {
+        val cfg =
+            config ?: return
+        if (activeCodePatch != null) {
+            setStatus(
+                "Отключи Writer block перед новым code trace.",
+            )
+            return
+        }
+        val candidate =
+            selectedCandidate
+                ?: run {
+                    setStatus(
+                        "Сначала выбери найденное значение.",
+                    )
+                    return
+                }
+        if (
+            !codeTraceBusy
+                .compareAndSet(
+                    false,
+                    true,
+                )
+        ) {
+            setStatus(
+                "Code trace уже выполняется.",
+            )
+            return
+        }
+
+        stopFreeze()
+        if (autoSession != null) {
+            stopAutoScan(
+                userRequested =
+                    false,
+            )
+        }
+        setStatus(
+            "Hardware watch активен 5 секунд. Сверни MK и выполни действие, которое должно читать/менять выбранное значение.",
+        )
+        setPanelVisible(
+            false,
+        )
+
+        executor.execute {
+            val result =
+                runCatching {
+                    val address =
+                        resolveCandidateAddress(
+                            candidate =
+                                candidate,
+                            cfg = cfg,
+                        )
+                    RootMemoryWatchCoordinator
+                        .trace(
+                            context =
+                                applicationContext,
+                            packageName =
+                                cfg.packageName,
+                            pid =
+                                cfg.pid,
+                            targetAddress =
+                                address,
+                            width =
+                                candidate
+                                    .valueType
+                                    .byteWidth,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                            durationMs =
+                                5_000,
+                        )
+                }
+            main.post {
+                codeTraceBusy.set(
+                    false,
+                )
+                result.onSuccess {
+                    trace ->
+                    codeAccessSites =
+                        trace.sites
+                    selectedCodeSite =
+                        trace.sites
+                            .firstOrNull {
+                                eligibleWriterSite(
+                                    it,
+                                )
+                            }
+                    val learnedSites =
+                        trace.sites
+                            .asSequence()
+                            .mapNotNull {
+                                site ->
+                                val offset =
+                                    site.moduleFileOffset
+                                        ?: return@mapNotNull null
+                                if (
+                                    site.moduleName
+                                        .startsWith(
+                                            "<",
+                                        )
+                                ) {
+                                    return@mapNotNull null
+                                }
+                                LearnedCodeAccessSite(
+                                    moduleIdentity =
+                                        site.moduleName,
+                                    moduleFileOffset =
+                                        offset,
+                                    accessKind =
+                                        site.accessKind,
+                                    instructionWord =
+                                        site.instructionWord,
+                                    instructionText =
+                                        site.instructionText,
+                                    managedMethodCandidate =
+                                        site.managedMethodCandidate,
+                                    observedCount =
+                                        site.count,
+                                )
+                            }
+                            .distinctBy {
+                                it.moduleIdentity +
+                                    ":" +
+                                    it.moduleFileOffset
+                            }
+                            .take(16)
+                            .toList()
+                    val updatedCandidate =
+                        candidate.copy(
+                            learnedCodeSites =
+                                learnedSites,
+                            requiresConfirmation =
+                                false,
+                        )
+                    selectedCandidate =
+                        updatedCandidate
+                    rebuildCodeAccessList()
+                    if (
+                        learnedSites.isNotEmpty()
+                    ) {
+                        stabilizeEditableCandidate(
+                            candidate =
+                                updatedCandidate,
+                            source =
+                                candidate.source
+                                    ?: LearnedCandidateSource
+                                        .MANUAL,
+                            actionHint =
+                                candidate.actionHint,
+                            force = true,
+                        )
+                    }
+                    maybeEnrichIl2CppCodeSites(
+                        candidate =
+                            updatedCandidate,
+                        sites =
+                            trace.sites,
+                    )
+                    val writers =
+                        trace.sites
+                            .count {
+                                it.accessKind ==
+                                    RuntimeCodeAccessKind
+                                        .WRITE
+                            }
+                    val readers =
+                        trace.sites
+                            .count {
+                                it.accessKind ==
+                                    RuntimeCodeAccessKind
+                                        .READ
+                            }
+                    setStatus(
+                        "Code trace: " +
+                            trace.totalTraps +
+                            " обращений · writers " +
+                            writers +
+                            " · readers " +
+                            readers +
+                            " · потоков " +
+                            trace.watchedThreads +
+                            ".",
+                    )
+                    Toast.makeText(
+                        this,
+                        if (
+                            trace.sites
+                                .isEmpty()
+                        ) {
+                            "ModKit: обращений к значению за окно trace не найдено."
+                        } else {
+                            "ModKit: найден код, использующий выбранное значение — " +
+                                trace.sites.size +
+                                " участков."
+                        },
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }.onFailure {
+                    failure ->
+                    codeAccessSites =
+                        emptyList()
+                    selectedCodeSite =
+                        null
+                    rebuildCodeAccessList()
+                    setStatus(
+                        "Code trace недоступен: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun rebuildCodeAccessList() {
+        val list =
+            codeAccessList
+                ?: return
+        list.removeAllViews()
+        if (
+            codeAccessSites
+                .isEmpty()
+        ) {
+            list.addView(
+                hintText(
+                    "Выбери значение и запусти 5-секундный trace. На ARM64 ModKit использует hardware watchpoint и покажет native reader/writer.",
+                ),
+            )
+            return
+        }
+
+        codeAccessSites
+            .take(10)
+            .forEach {
+                site ->
+                val kind =
+                    when (
+                        site.accessKind
+                    ) {
+                        RuntimeCodeAccessKind
+                            .WRITE ->
+                            "WRITE"
+                        RuntimeCodeAccessKind
+                            .READ ->
+                            "READ"
+                        RuntimeCodeAccessKind
+                            .UNKNOWN ->
+                            "ACCESS"
+                    }
+                val offset =
+                    site.moduleFileOffset
+                        ?.let {
+                            " +0x" +
+                                it.toString(
+                                    16,
+                                )
+                        }
+                        .orEmpty()
+                val instruction =
+                    site.instructionText
+                        ?.substringAfter(
+                            ": ",
+                        )
+                        ?.takeIf {
+                            it.isNotBlank()
+                        }
+                        ?.let {
+                            " · " +
+                                it
+                        }
+                        .orEmpty()
+                val method =
+                    site.managedMethodCandidate
+                        ?.let {
+                            "\n" +
+                                it
+                        }
+                        .orEmpty()
+                list.addView(
+                    TextView(this).apply {
+                        text =
+                            kind +
+                                " · " +
+                                site.moduleName +
+                                offset +
+                                " · x" +
+                                site.count +
+                                instruction +
+                                method +
+                                (
+                                    if (
+                                        selectedCodeSite ==
+                                        site
+                                    ) {
+                                        "\nВыбран для Writer block"
+                                    } else {
+                                        ""
+                                    }
+                                    )
+                        setTextColor(
+                            if (
+                                site.accessKind ==
+                                RuntimeCodeAccessKind
+                                    .WRITE
+                            ) {
+                                Color.WHITE
+                            } else {
+                                Color.LTGRAY
+                            },
+                        )
+                        textSize =
+                            10f
+                        setPadding(
+                            dp(4),
+                            dp(4),
+                            dp(4),
+                            dp(4),
+                        )
+                        if (
+                            eligibleWriterSite(
+                                site,
+                            )
+                        ) {
+                            setOnClickListener {
+                                if (
+                                    activeCodePatch ==
+                                    null
+                                ) {
+                                    selectedCodeSite =
+                                        site
+                                    rebuildCodeAccessList()
+                                    setStatus(
+                                        "Выбран writer: " +
+                                            site.moduleName +
+                                            " +0x" +
+                                            (
+                                                site.moduleFileOffset
+                                                    ?: 0L
+                                                ).toString(
+                                                16,
+                                            ) +
+                                            ". Writer block временно заменит только подтверждённую STR-инструкцию на NOP.",
+                                    )
+                                }
+                            }
+                        }
+                    },
+                )
+            }
+    }
+
+    private fun maybeEnrichIl2CppCodeSites(
+        candidate:
+            EditableRuntimeCandidate,
+        sites:
+            List<RootCodeAccessSite>,
+    ) {
+        val cfg =
+            config ?: return
+        if (
+            staticEnrichmentAttempted ||
+            !sites.any {
+                it.moduleName.equals(
+                    "libil2cpp.so",
+                    ignoreCase = true,
+                ) &&
+                    it.moduleFileOffset !=
+                    null &&
+                    it.managedMethodCandidate ==
+                    null
+            } ||
+            !staticEnrichmentBusy
+                .compareAndSet(
+                    false,
+                    true,
+                )
+        ) {
+            return
+        }
+        staticEnrichmentAttempted =
+            true
+        setStatus(
+            "Native writer найден. В фоне достраиваем IL2CPP bindings, чтобы определить managed-метод…",
+        )
+
+        executor.execute {
+            val result =
+                runCatching {
+                    val app =
+                        InstalledAppRepository(
+                            applicationContext,
+                        ).find(
+                            cfg.packageName,
+                        ) ?: error(
+                            "Установленный APK недоступен для IL2CPP correlation.",
+                        )
+                    val discovery =
+                        runBlocking {
+                            RootModDiscoveryCoordinator
+                                .discover(
+                                    context =
+                                        applicationContext,
+                                    app = app,
+                                    cancellation =
+                                        AtomicCancellationSignal(),
+                                    progress =
+                                        ProgressSink {
+                                            // Static enrichment intentionally
+                                            // stays in the background; the
+                                            // overlay remains responsive.
+                                        },
+                                )
+                        }
+                    sites.map {
+                        site ->
+                        val offset =
+                            site.moduleFileOffset
+                        if (
+                            offset == null ||
+                            site.managedMethodCandidate !=
+                            null
+                        ) {
+                            site
+                        } else {
+                            site.copy(
+                                managedMethodCandidate =
+                                    RootMemoryWatchCoordinator
+                                        .correlateManagedMethod(
+                                            cachedAnalysis =
+                                                discovery
+                                                    .analysisResult,
+                                            moduleName =
+                                                site.moduleName,
+                                            fileOffset =
+                                                offset,
+                                        ),
+                            )
+                        }
+                    }
+                }
+
+            main.post {
+                staticEnrichmentBusy.set(
+                    false,
+                )
+                result.onSuccess {
+                    enriched ->
+                    val current =
+                        selectedCandidate
+                    if (
+                        current == null ||
+                        current.id !=
+                        candidate.id
+                    ) {
+                        return@onSuccess
+                    }
+                    codeAccessSites =
+                        enriched
+                    selectedCodeSite =
+                        enriched
+                            .firstOrNull {
+                                eligibleWriterSite(
+                                    it,
+                                )
+                            }
+                    val learned =
+                        enriched
+                            .mapNotNull {
+                                site ->
+                                val offset =
+                                    site.moduleFileOffset
+                                        ?: return@mapNotNull null
+                                if (
+                                    site.moduleName
+                                        .startsWith(
+                                            "<",
+                                        )
+                                ) {
+                                    return@mapNotNull null
+                                }
+                                LearnedCodeAccessSite(
+                                    moduleIdentity =
+                                        site.moduleName,
+                                    moduleFileOffset =
+                                        offset,
+                                    accessKind =
+                                        site.accessKind,
+                                    instructionWord =
+                                        site.instructionWord,
+                                    instructionText =
+                                        site.instructionText,
+                                    managedMethodCandidate =
+                                        site.managedMethodCandidate,
+                                    observedCount =
+                                        site.count,
+                                )
+                            }
+                            .distinctBy {
+                                it.moduleIdentity +
+                                    ":" +
+                                    it.moduleFileOffset
+                            }
+                            .take(16)
+                    val updated =
+                        current.copy(
+                            learnedCodeSites =
+                                learned,
+                        )
+                    selectedCandidate =
+                        updated
+                    rebuildCodeAccessList()
+                    if (
+                        learned.any {
+                            it.managedMethodCandidate !=
+                                null
+                        }
+                    ) {
+                        setStatus(
+                            "IL2CPP correlation готов: найденные native reader/writer подписаны managed-методами там, где binding однозначен.",
+                        )
+                        stabilizeEditableCandidate(
+                            candidate =
+                                updated,
+                            source =
+                                updated.source
+                                    ?: LearnedCandidateSource
+                                        .MANUAL,
+                            actionHint =
+                                updated.actionHint,
+                            force = true,
+                        )
+                    } else {
+                        setStatus(
+                            "Code trace подтверждён, но однозначный managed-метод для этих offsets не доказан.",
+                        )
+                    }
+                }.onFailure {
+                    failure ->
+                    setStatus(
+                        "Code trace сохранён; IL2CPP-подпись не достроена: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun eligibleWriterSite(
+        site: RootCodeAccessSite,
+    ): Boolean {
+        val mnemonic =
+            site.instructionText
+                ?.substringAfter(
+                    ": ",
+                )
+                ?.substringBefore(
+                    ' ',
+                )
+                ?.lowercase()
+                .orEmpty()
+        return site.accessKind ==
+            RuntimeCodeAccessKind.WRITE &&
+            site.instructionWord !=
+            null &&
+            site.instructionAddress >
+            0L &&
+            site.moduleFileOffset !=
+            null &&
+            (
+                mnemonic == "str" ||
+                    mnemonic == "strb" ||
+                    mnemonic == "strh"
+                )
+    }
+
+    private fun toggleSelectedWriterBlock() {
+        val cfg =
+            config ?: return
+        if (autoSession != null) {
+            stopAutoScan(
+                userRequested =
+                    false,
+            )
+        }
+        if (
+            !codePatchBusy
+                .compareAndSet(
+                    false,
+                    true,
+                )
+        ) {
+            return
+        }
+
+        val active =
+            activeCodePatch
+        if (active != null) {
+            executor.execute {
+                val result =
+                    runCatching {
+                        RootRuntimeCodeToggleCoordinator
+                            .setNopEnabled(
+                                packageName =
+                                    cfg.packageName,
+                                pid = cfg.pid,
+                                target =
+                                    active.target,
+                                enabled = false,
+                                cancellation =
+                                    AtomicCancellationSignal(),
+                            )
+                    }
+                main.post {
+                    codePatchBusy.set(
+                        false,
+                    )
+                    result.onSuccess {
+                        activeCodePatch =
+                            null
+                        codePatchButton
+                            ?.text =
+                            "Writer block: OFF"
+                        setStatus(
+                            "Writer block отключён; исходная ARM64-инструкция восстановлена и проверена.",
+                        )
+                    }.onFailure {
+                        failure ->
+                        setStatus(
+                            "Не удалось подтвердить откат Writer block: " +
+                                (
+                                    failure.message
+                                        ?: failure
+                                            .javaClass
+                                            .simpleName
+                                    ),
+                        )
+                    }
+                }
+            }
+            return
+        }
+
+        val candidate =
+            selectedCandidate
+        val site =
+            selectedCodeSite
+        if (
+            candidate == null ||
+            site == null ||
+            !eligibleWriterSite(
+                site,
+            )
+        ) {
+            codePatchBusy.set(
+                false,
+            )
+            setStatus(
+                "Сначала выбери подтверждённый WRITE/STR участок из code trace.",
+            )
+            return
+        }
+
+        val word =
+            requireNotNull(
+                site.instructionWord,
+            )
+        val target =
+            RootRuntimeCodeToggleTarget(
+                id =
+                    "writer:" +
+                        candidate.id +
+                        ":" +
+                        site.instructionAddress
+                            .toString(
+                                16,
+                            ),
+                title =
+                    candidate.title +
+                        " writer",
+                runtimeAddress =
+                    site.instructionAddress,
+                mappedPath =
+                    site.mappedPath,
+                originalWord =
+                    word,
+            )
+
+        executor.execute {
+            val result =
+                runCatching {
+                    RootRuntimeCodeToggleCoordinator
+                        .setNopEnabled(
+                            packageName =
+                                cfg.packageName,
+                            pid = cfg.pid,
+                            target =
+                                target,
+                            enabled = true,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                        )
+                }
+            main.post {
+                codePatchBusy.set(
+                    false,
+                )
+                result.onSuccess {
+                    activeCodePatch =
+                        ActiveCodePatch(
+                            candidateId =
+                                candidate.id,
+                            target =
+                                target,
+                        )
+                    codePatchButton?.text =
+                        "Writer block: ON"
+                    setStatus(
+                        "Writer block включён. Только подтверждённая STR-инструкция временно заменена на NOP; нажми ещё раз для точного отката.",
+                    )
+                }.onFailure {
+                    failure ->
+                    setStatus(
+                        "Writer block не применён: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun rollbackActiveCodePatchBestEffort() {
+        val cfg =
+            config ?: return
+        val active =
+            activeCodePatch
+                ?: return
+        runCatching {
+            RootRuntimeCodeToggleCoordinator
+                .setNopEnabled(
+                    packageName =
+                        cfg.packageName,
+                    pid = cfg.pid,
+                    target =
+                        active.target,
+                    enabled = false,
+                    cancellation =
+                        AtomicCancellationSignal(),
+                    runner =
+                        AndroidRootCommandRunner(
+                            timeoutMs =
+                                2_500L,
+                        ),
+                )
+        }
+        activeCodePatch = null
     }
 
     private fun writeSelected() {
@@ -2286,7 +3521,28 @@ class LiveProcessOverlayService : Service() {
         trainingRounds.clear()
         trainingAggregates.clear()
         announcedIds.clear()
+        autoCodeTraceAttempted.clear()
+        behavioralCodeSites.clear()
         selectedCandidate = null
+        codeAccessSites =
+            emptyList()
+        selectedCodeSite = null
+        activeCodePatch = null
+        codeTraceBusy.set(
+            false,
+        )
+        codePatchBusy.set(
+            false,
+        )
+        staticEnrichmentBusy.set(
+            false,
+        )
+        staticEnrichmentAttempted =
+            false
+        codePatchButton?.text =
+            "Writer block: OFF"
+        codeAccessList
+            ?.removeAllViews()
     }
 
     private fun loadLearnedProfile(
@@ -2448,6 +3704,14 @@ class LiveProcessOverlayService : Service() {
                                             !migrated,
                                         requiresConfirmation =
                                             migrated,
+                                        learnedCodeSites =
+                                            if (
+                                                migrated
+                                            ) {
+                                                emptyList()
+                                            } else {
+                                                saved.codeAccessSites
+                                            },
                                     )
                                 }.getOrNull()
                             }
@@ -2732,29 +3996,29 @@ class LiveProcessOverlayService : Service() {
                                 candidate,
                             cfg = cfg,
                         )
-                    val chain =
-                        RootRuntimePointerChainCoordinator
-                            .discover(
-                                packageName =
-                                    cfg.packageName,
-                                pid = cfg.pid,
-                                targetAddress =
-                                    originalTarget,
-                                cancellation =
-                                    AtomicCancellationSignal(),
-                                maxScanBytesPerDepth =
-                                    if (force) {
-                                        96L *
-                                            1024L *
-                                            1024L
-                                    } else {
-                                        40L *
-                                            1024L *
-                                            1024L
-                                    },
-                            )
                     val anchor =
-                        chain.stableAnchor
+                        candidate.anchor
+                            ?: RootRuntimePointerChainCoordinator
+                                .discover(
+                                    packageName =
+                                        cfg.packageName,
+                                    pid = cfg.pid,
+                                    targetAddress =
+                                        originalTarget,
+                                    cancellation =
+                                        AtomicCancellationSignal(),
+                                    maxScanBytesPerDepth =
+                                        if (force) {
+                                            96L *
+                                                1024L *
+                                                1024L
+                                        } else {
+                                            40L *
+                                                1024L *
+                                                1024L
+                                        },
+                                )
+                                .stableAnchor
                             ?: error(
                                 "Стабильный module-root pointer-chain пока не найден.",
                             )
@@ -2806,6 +4070,9 @@ class LiveProcessOverlayService : Service() {
                                 candidate.value,
                             anchor =
                                 anchor,
+                            codeAccessSites =
+                                candidate
+                                    .learnedCodeSites,
                             updatedAtEpochMs =
                                 System
                                     .currentTimeMillis(),
@@ -3319,6 +4586,12 @@ class LiveProcessOverlayService : Service() {
                     .density
             ).toInt()
 
+    private data class ActiveCodePatch(
+        val candidateId: String,
+        val target:
+            RootRuntimeCodeToggleTarget,
+    )
+
     private data class TrainingAggregate(
         val candidate:
             BehavioralRuntimeCandidate,
@@ -3338,6 +4611,9 @@ class LiveProcessOverlayService : Service() {
         val anchor: StableRuntimePointerAnchor? = null,
         val persistent: Boolean = false,
         val requiresConfirmation: Boolean = false,
+        val learnedCodeSites:
+            List<LearnedCodeAccessSite> =
+            emptyList(),
     )
 
     companion object {
