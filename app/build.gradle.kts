@@ -217,22 +217,37 @@ val generateRuntimeProbeDexAsset =
                 rootMemoryWatchAssetRoot.get().asFile
             rootWatchRoot.deleteRecursively()
             rootWatchRoot.mkdirs()
-            val runtimeProbeBuild =
+            val runtimeProbeProject =
                 project(":runtimeprobe")
-                    .layout
-                    .buildDirectory
-                    .get()
-                    .asFile
+            val watchSearchRoots =
+                listOf(
+                    runtimeProbeProject
+                        .layout
+                        .buildDirectory
+                        .get()
+                        .asFile,
+                    File(
+                        runtimeProbeProject.projectDir,
+                        ".cxx",
+                    ),
+                )
             val watchCandidates =
-                runtimeProbeBuild
-                    .walkTopDown()
+                watchSearchRoots
+                    .asSequence()
+                    .filter {
+                        it.exists()
+                    }
+                    .flatMap {
+                        it.walkTopDown()
+                            .asSequence()
+                    }
                     .filter {
                         it.isFile &&
                             it.name ==
                             "modkit_root_memory_watch" &&
                             it.invariantSeparatorsPath
                                 .contains(
-                                    "/obj/arm64-v8a/",
+                                    "/arm64-v8a/",
                                 )
                     }
                     .toList()
