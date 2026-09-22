@@ -1912,11 +1912,12 @@ class LiveProcessOverlayService : Service() {
                                     )
                             }
                     if (sourceProfile == null) {
-                        return@runCatching
+                        return@runCatching (
                             identity to
                                 emptyList<
                                     EditableRuntimeCandidate
                                 >()
+                            )
                     }
 
                     val migrated =
