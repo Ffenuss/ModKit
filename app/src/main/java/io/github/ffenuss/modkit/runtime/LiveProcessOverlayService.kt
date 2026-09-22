@@ -4996,6 +4996,140 @@ class LiveProcessOverlayService : Service() {
         )
     }
 
+    private fun renameSelectedPersistentCandidate() {
+        val cfg =
+            config ?: return
+        val candidate =
+            selectedCandidate
+                ?: return
+        val anchor =
+            candidate.anchor
+                ?: run {
+                    setStatus(
+                        "У выбранного мода нет сохранённой привязки.",
+                    )
+                    return
+                }
+        val newTitle =
+            renameValue
+                ?.text
+                ?.toString()
+                .orEmpty()
+                .trim()
+        if (
+            newTitle.length !in
+            2..60
+        ) {
+            setStatus(
+                "Имя мода должно быть от 2 до 60 символов.",
+            )
+            return
+        }
+
+        executor.execute {
+            val result =
+                runCatching {
+                    val identity =
+                        synchronized(
+                            profileLock,
+                        ) {
+                            artifactIdentity
+                                ?: profileStore
+                                    .computeIdentity(
+                                        packageName =
+                                            cfg.packageName,
+                                        cancellation =
+                                            AtomicCancellationSignal(),
+                                    )
+                                    .also {
+                                        artifactIdentity =
+                                            it
+                                    }
+                        }
+                    val profile =
+                        synchronized(
+                            profileLock,
+                        ) {
+                            profileStore
+                                .loadExact(
+                                    packageName =
+                                        cfg.packageName,
+                                    artifactSha256 =
+                                        identity
+                                            .artifactSha256,
+                                )
+                        } ?: error(
+                            "Профиль этой версии не найден.",
+                        )
+                    val saved =
+                        profile.candidates
+                            .singleOrNull {
+                                it.anchor ==
+                                    anchor
+                            } ?: error(
+                            "Сохранённая привязка не найдена.",
+                        )
+                    synchronized(
+                        profileLock,
+                    ) {
+                        profileStore
+                            .saveCandidate(
+                                identity =
+                                    identity,
+                                candidate =
+                                    saved.copy(
+                                        title =
+                                            newTitle,
+                                        updatedAtEpochMs =
+                                            System
+                                                .currentTimeMillis(),
+                                    ),
+                            )
+                    }
+                    newTitle
+                }
+            main.post {
+                result.onSuccess {
+                    title ->
+                    learnedCandidates =
+                        learnedCandidates
+                            .map {
+                                item ->
+                                if (
+                                    item.anchor ==
+                                    anchor
+                                ) {
+                                    item.copy(
+                                        title = title,
+                                    )
+                                } else {
+                                    item
+                                }
+                            }
+                    selectedCandidate =
+                        candidate.copy(
+                            title = title,
+                        )
+                    setStatus(
+                        "Мод переименован.",
+                    )
+                    renderCurrentPage()
+                }.onFailure {
+                    failure ->
+                    setStatus(
+                        "Не удалось переименовать мод: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
+    }
+
     private fun removeSelectedPersistentCandidate() {
         val cfg =
             config ?: return
@@ -5074,10 +5208,12 @@ class LiveProcessOverlayService : Service() {
                         editorValue?.setText(
                             "",
                         )
-                        rebuildLearnedList()
+                        currentPage =
+                            OverlayPage.MODS
                         setStatus(
-                            "Сохранённый параметр удалён из профиля этой версии.",
+                            "Сохранённая привязка удалена.",
                         )
+                        renderCurrentPage()
                     } else {
                         setStatus(
                             "Сохранённый параметр уже отсутствует.",
