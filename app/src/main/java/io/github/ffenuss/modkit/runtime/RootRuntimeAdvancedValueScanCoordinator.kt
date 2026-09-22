@@ -605,11 +605,13 @@ object RootRuntimeAdvancedValueScanCoordinator {
                 require(low <= high) {
                     "Нижняя граница больше верхней."
                 }
-                {
-                    bits ->
-                    bits.toInt() in
-                        low..high
-                }
+                val predicate:
+                    (Long) -> Boolean = {
+                        bits: Long ->
+                        bits.toInt() in
+                            low..high
+                    }
+                predicate
             }
 
             RuntimeValueType.INT64 -> {
@@ -628,11 +630,13 @@ object RootRuntimeAdvancedValueScanCoordinator {
                 require(low <= high) {
                     "Нижняя граница больше верхней."
                 }
-                {
-                    bits ->
-                    bits in
-                        low..high
-                }
+                val predicate:
+                    (Long) -> Boolean = {
+                        bits: Long ->
+                        bits in
+                            low..high
+                    }
+                predicate
             }
 
             RuntimeValueType.FLOAT32 -> {
@@ -655,16 +659,18 @@ object RootRuntimeAdvancedValueScanCoordinator {
                 ) {
                     "Некорректный Float-диапазон."
                 }
-                {
-                    bits ->
-                    val value =
-                        Float.fromBits(
-                            bits.toInt(),
-                        )
-                    value.isFinite() &&
-                        value >= low &&
-                        value <= high
-                }
+                val predicate:
+                    (Long) -> Boolean = {
+                        bits: Long ->
+                        val value =
+                            Float.fromBits(
+                                bits.toInt(),
+                            )
+                        value.isFinite() &&
+                            value >= low &&
+                            value <= high
+                    }
+                predicate
             }
 
             RuntimeValueType.FLOAT64 -> {
@@ -687,16 +693,18 @@ object RootRuntimeAdvancedValueScanCoordinator {
                 ) {
                     "Некорректный Double-диапазон."
                 }
-                {
-                    bits ->
-                    val value =
-                        Double.fromBits(
-                            bits,
-                        )
-                    value.isFinite() &&
-                        value >= low &&
-                        value <= high
-                }
+                val predicate:
+                    (Long) -> Boolean = {
+                        bits: Long ->
+                        val value =
+                            Double.fromBits(
+                                bits,
+                            )
+                        value.isFinite() &&
+                            value >= low &&
+                            value <= high
+                    }
+                predicate
             }
         }
 
