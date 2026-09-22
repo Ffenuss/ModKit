@@ -11,12 +11,14 @@ class RootFastValueScanCoordinatorTest {
         val parsed =
             RootFastValueScanCoordinator
                 .parseOutput(
-                    """
-                    MODKIT_ROOT_FAST_SCAN_V1
-                    HIT\t0x1000\t0x1c
-                    HIT\t0x2000\t0x1c
-                    END\t2\t134217728\t31\t1
-                    """.trimIndent(),
+                    listOf(
+                        "MODKIT_ROOT_FAST_SCAN_V1",
+                        "HIT\t0x1000\t0x1c",
+                        "HIT\t0x2000\t0x1c",
+                        "END\t2\t134217728\t31\t1",
+                    ).joinToString(
+                        "\n",
+                    ),
                 )
 
         assertTrue(
