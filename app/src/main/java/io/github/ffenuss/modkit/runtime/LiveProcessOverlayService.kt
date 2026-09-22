@@ -194,6 +194,9 @@ class LiveProcessOverlayService : Service() {
         resetRuntimeState()
         removeOverlay()
         executor.shutdownNow()
+        stopForeground(
+            STOP_FOREGROUND_REMOVE,
+        )
         super.onDestroy()
     }
 
