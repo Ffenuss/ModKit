@@ -28,6 +28,14 @@ enum class BehavioralActionHint(
         "Получение урона",
         "Здоровье / получаемый урон",
     ),
+    STAMINA(
+        "Выносливость",
+        "Выносливость / энергия",
+    ),
+    COOLDOWN(
+        "Cooldown / перезарядка",
+        "Cooldown / таймер способности",
+    ),
     RESOURCE_CHANGE(
         "Покупка / продажа / ресурс",
         "Ресурс / валюта",
@@ -134,9 +142,9 @@ object RootBehavioralScanCoordinator {
     private const val DISTINCT_VALUE_LIMIT =
         16
     private const val AUTO_VISIBLE_THRESHOLD =
-        56
+        78
     private const val TRAINING_VISIBLE_THRESHOLD =
-        40
+        46
 
     private val sweepOrder =
         listOf(
@@ -342,6 +350,14 @@ object RootBehavioralScanCoordinator {
                 .filter {
                     it.confidence >=
                         threshold
+                }
+                .filter {
+                    candidate ->
+                    session.mode !=
+                        BehavioralScanMode.AUTO ||
+                        autoCandidateRelevant(
+                            candidate,
+                        )
                 }
                 .take(
                     visibleLimit,
@@ -833,15 +849,14 @@ object RootBehavioralScanCoordinator {
         hint: BehavioralActionHint?,
     ): String {
         if (hint != null) {
-            return hint.candidateTitle +
-                " — кандидат"
+            return hint.candidateTitle
         }
 
         val directional =
             track.increaseCount +
                 track.decreaseCount
         if (
-            directional >= 2 &&
+            directional >= 3 &&
             track.decreaseCount >=
             track.increaseCount * 2 &&
             nonNegative(
@@ -849,14 +864,14 @@ object RootBehavioralScanCoordinator {
                 track.lastBits,
             )
         ) {
-            return "Здоровье / ресурс — кандидат"
+            return "Убывающий параметр игрока"
         }
         if (
-            directional >= 2 &&
+            directional >= 3 &&
             track.increaseCount >=
             track.decreaseCount * 2
         ) {
-            return "Счётчик / ресурс — кандидат"
+            return "Растущий параметр игрока"
         }
 
         if (
@@ -865,13 +880,7 @@ object RootBehavioralScanCoordinator {
             track.valueType ==
                 RuntimeValueType.FLOAT64
         ) {
-            return if (
-                track.changeCount >= 3
-            ) {
-                "Движение / скорость / координата — кандидат"
-            } else {
-                "Игровой Float-параметр — кандидат"
-            }
+            return "Параметр движения / состояния"
         }
 
         if (
@@ -881,10 +890,81 @@ object RootBehavioralScanCoordinator {
             ) &&
             track.distinctBits.size <= 4
         ) {
-            return "Флаг / состояние — кандидат"
+            return "Состояние / флаг"
         }
 
-        return "Игровой параметр — кандидат"
+        return "Повторяющийся параметр игрока"
+    }
+
+    private fun autoCandidateRelevant(
+        candidate:
+            BehavioralRuntimeCandidate,
+    ): Boolean {
+        if (
+            candidate.observedSamples < 6 ||
+            candidate.changeCount < 4 ||
+            candidate.stableCount < 1
+        ) {
+            return false
+        }
+
+        return when (
+            candidate.valueType
+        ) {
+            RuntimeValueType.INT32 -> {
+                val value =
+                    candidate.value
+                        .toIntOrNull()
+                        ?: return false
+                if (
+                    value < 0 &&
+                    kotlin.math.abs(
+                        value.toLong(),
+                    ) >
+                    1_000_000L
+                ) {
+                    return false
+                }
+                kotlin.math.abs(
+                    value.toLong(),
+                ) <=
+                    100_000_000L
+            }
+
+            RuntimeValueType.INT64 -> {
+                val value =
+                    candidate.value
+                        .toLongOrNull()
+                        ?: return false
+                if (
+                    value < 0L &&
+                    kotlin.math.abs(
+                        value.toDouble(),
+                    ) >
+                    1.0e7
+                ) {
+                    return false
+                }
+                kotlin.math.abs(
+                    value.toDouble(),
+                ) <=
+                    1.0e11
+            }
+
+            RuntimeValueType.FLOAT32,
+            RuntimeValueType.FLOAT64,
+            -> {
+                val value =
+                    candidate.value
+                        .toDoubleOrNull()
+                        ?: return false
+                value.isFinite() &&
+                    kotlin.math.abs(
+                        value,
+                    ) <=
+                    1.0e6
+            }
+        }
     }
 
     private fun plausible(
