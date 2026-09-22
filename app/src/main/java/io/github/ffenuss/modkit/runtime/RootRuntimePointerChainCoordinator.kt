@@ -365,7 +365,7 @@ object RootRuntimePointerChainCoordinator {
                 capture.capture.text,
             )
 
-        val anchorRegion =
+        val anchorRegions =
             regions
                 .asSequence()
                 .filter {
@@ -391,11 +391,20 @@ object RootRuntimePointerChainCoordinator {
                 .sortedBy {
                     it.start
                 }
-                .firstOrNull()
-                ?: error(
-                    "Stable pointer module is not mapped: " +
-                        anchor.moduleIdentity,
-                )
+                .toList()
+        require(
+            anchorRegions.size == 1
+        ) {
+            if (anchorRegions.isEmpty()) {
+                "Stable pointer module is not mapped: " +
+                    anchor.moduleIdentity
+            } else {
+                "Stable pointer module mapping is ambiguous: " +
+                    anchor.moduleIdentity
+            }
+        }
+        val anchorRegion =
+            anchorRegions.single()
 
         val anchorAddress =
             anchorRegion.start +
