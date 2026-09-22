@@ -1247,6 +1247,19 @@ class LiveProcessOverlayService : Service() {
                     candidate,
                 ),
                 candidate.subtitle,
+                backPage =
+                    when {
+                        candidate.persistent ->
+                            OverlayPage.MODS
+                        candidate.source ==
+                            LearnedCandidateSource.MANUAL ->
+                            OverlayPage.MANUAL
+                        candidate.source ==
+                            LearnedCandidateSource.TRAINING ->
+                            OverlayPage.TRAINING
+                        else ->
+                            OverlayPage.AUTO
+                    },
             ),
         )
 
@@ -1360,12 +1373,33 @@ class LiveProcessOverlayService : Service() {
         )
         rebuildCodeAccessList()
 
+        val writerReady =
+            (
+                activeCodePatch
+                    ?.candidateId ==
+                candidate.id
+                ) ||
+                (
+                    selectedCodeSite
+                        ?.let {
+                            eligibleWriterSite(
+                                it,
+                            )
+                        } ==
+                    true
+                    )
         val writer =
             Button(this).apply {
                 text =
-                    writerActionTitle(
-                        candidate,
-                    )
+                    if (writerReady) {
+                        writerActionTitle(
+                            candidate,
+                        )
+                    } else {
+                        "Сначала найди код, который изменяет значение"
+                    }
+                isEnabled =
+                    writerReady
                 setOnClickListener {
                     toggleSelectedWriterBlock()
                 }
@@ -1680,6 +1714,8 @@ class LiveProcessOverlayService : Service() {
         title: String,
         subtitle: String,
         showBack: Boolean = true,
+        backPage: OverlayPage =
+            OverlayPage.HOME,
     ): View {
         val group =
             LinearLayout(this).apply {
@@ -1698,7 +1734,7 @@ class LiveProcessOverlayService : Service() {
                     text = "← Назад"
                     setOnClickListener {
                         navigate(
-                            OverlayPage.HOME,
+                            backPage,
                         )
                     }
                 },
