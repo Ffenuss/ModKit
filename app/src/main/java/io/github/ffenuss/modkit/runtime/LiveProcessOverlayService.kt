@@ -377,17 +377,26 @@ class LiveProcessOverlayService : Service() {
         windowParams = params
 
         mk.setOnClickListener {
-            val showing =
-                builtPanel.visibility ==
+            val opening =
+                builtPanel.visibility !=
                     View.VISIBLE
             setPanelVisible(
-                !showing,
+                opening,
             )
             if (
-                showing.not() &&
+                opening &&
                 trainingSession != null
             ) {
                 finishTraining()
+            } else if (
+                opening &&
+                manualUnknownAuto &&
+                (
+                    manualBaseline != null ||
+                        manualScan != null
+                    )
+            ) {
+                advanceManualUnknownAuto()
             }
         }
 
@@ -2867,6 +2876,194 @@ class LiveProcessOverlayService : Service() {
             }
         }
     }
+
+    private fun advanceManualUnknownAuto() {
+        if (!manualUnknownAuto) {
+            return
+        }
+        val baseline =
+            manualBaseline
+        val previous =
+            manualScan
+        if (
+            baseline == null &&
+            previous == null
+        ) {
+            return
+        }
+        setStatus(
+            "Сравниваем изменения с предыдущим состоянием…",
+        )
+        executor.execute {
+            val result =
+                runCatching {
+                    if (baseline != null) {
+                        RootRuntimeUnknownValueCoordinator
+                            .compareBaseline(
+                                baseline =
+                                    baseline,
+                                refinement =
+                                    RuntimeValueRefinement
+                                        .CHANGED,
+                                cancellation =
+                                    AtomicCancellationSignal(),
+                            )
+                    } else {
+                        RootRuntimeValueScanCoordinator
+                            .refine(
+                                previous =
+                                    requireNotNull(
+                                        previous,
+                                    ),
+                                refinement =
+                                    RuntimeValueRefinement
+                                        .CHANGED,
+                                cancellation =
+                                    AtomicCancellationSignal(),
+                            )
+                    }
+                }
+            main.post {
+                result.onSuccess {
+                    updated ->
+                    val filtered =
+                        updated.copy(
+                            snapshot =
+                                updated.snapshot
+                                    .copy(
+                                        hits =
+                                            updated.snapshot
+                                                .hits
+                                                .filter {
+                                                    unknownAutoUseful(
+                                                        updated.snapshot
+                                                            .valueType,
+                                                        it.bits,
+                                                    )
+                                                }
+                                                .take(
+                                                    5_000,
+                                                ),
+                                    ),
+                        )
+                    manualScan =
+                        filtered
+                    manualBaseline?.let {
+                        RootRuntimeUnknownValueCoordinator
+                            .deleteBaseline(
+                                it,
+                            )
+                    }
+                    manualBaseline = null
+                    currentPage =
+                        OverlayPage.MANUAL
+                    setStatus(
+                        "Неизвестный параметр: осталось " +
+                            filtered.snapshot
+                                .hits
+                                .size +
+                            ". Повтори изменение ещё раз, если результатов много.",
+                    )
+                    renderCurrentPage()
+                }.onFailure {
+                    failure ->
+                    setStatus(
+                        "Автоматическое сравнение не выполнено: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun unknownAutoUseful(
+        type: RuntimeValueType,
+        bits: Long,
+    ): Boolean =
+        when (type) {
+            RuntimeValueType.INT32 -> {
+                val integer =
+                    bits.toInt()
+                        .toLong()
+                val float =
+                    Float.fromBits(
+                        bits.toInt(),
+                    )
+                val usefulInteger =
+                    kotlin.math.abs(
+                        integer,
+                    ) <=
+                        100_000_000L &&
+                        !(
+                            integer < 0L &&
+                                kotlin.math.abs(
+                                    integer,
+                                ) >
+                                1_000_000L
+                            )
+                val usefulFloat =
+                    float.isFinite() &&
+                        (
+                            float == 0f ||
+                                kotlin.math.abs(
+                                    float,
+                                ) in
+                                1.0e-6f..1.0e6f
+                            )
+                usefulInteger ||
+                    usefulFloat
+            }
+
+            RuntimeValueType.INT64 -> {
+                val integer =
+                    bits
+                val double =
+                    Double.fromBits(
+                        bits,
+                    )
+                kotlin.math.abs(
+                    integer.toDouble(),
+                ) <=
+                    1.0e11 ||
+                    (
+                        double.isFinite() &&
+                            (
+                                double == 0.0 ||
+                                    kotlin.math.abs(
+                                        double,
+                                    ) in
+                                    1.0e-9..1.0e9
+                                )
+                        )
+            }
+
+            RuntimeValueType.FLOAT32 ->
+                Float.fromBits(
+                    bits.toInt(),
+                ).let {
+                    it.isFinite() &&
+                        kotlin.math.abs(
+                            it,
+                        ) <=
+                        1.0e6f
+                }
+
+            RuntimeValueType.FLOAT64 ->
+                Double.fromBits(
+                    bits,
+                ).let {
+                    it.isFinite() &&
+                        kotlin.math.abs(
+                            it,
+                        ) <=
+                        1.0e9
+                }
+        }
 
     private fun refineManual(
         refinement:
