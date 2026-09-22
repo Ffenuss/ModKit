@@ -1285,7 +1285,10 @@ class LiveProcessOverlayService : Service() {
         editorTitle =
             TextView(this).apply {
                 text =
-                    "Сейчас: " +
+                    "Статус: " +
+                        candidate.evidence
+                            .title +
+                        "\nСейчас: " +
                         candidate.value +
                         " · " +
                         candidate.valueType
@@ -1309,6 +1312,48 @@ class LiveProcessOverlayService : Service() {
                 editorTitle,
             ),
         )
+
+        if (
+            candidate.source ==
+                LearnedCandidateSource.AUTO &&
+            candidate.actionHint == null
+        ) {
+            container.addView(
+                sectionTitle(
+                    "Что ты сейчас повторял?",
+                ),
+            )
+            container.addView(
+                hintText(
+                    "Это нужно только для понятного названия. Сам кандидат найден по повторяемому поведению.",
+                ),
+            )
+            listOf(
+                "🏃 Ходьба / движение" to
+                    BehavioralActionHint.MOVEMENT,
+                "⚔ Атака" to
+                    BehavioralActionHint.ATTACK,
+                "❤️ Получал урон" to
+                    BehavioralActionHint.DAMAGE_TAKEN,
+                "💰 Ресурс / предмет" to
+                    BehavioralActionHint.RESOURCE_CHANGE,
+                "🎯 Другое" to
+                    BehavioralActionHint.OTHER,
+            ).forEach {
+                (label, hint) ->
+                container.addView(
+                    Button(this).apply {
+                        text = label
+                        setOnClickListener {
+                            classifySelectedCandidate(
+                                hint,
+                            )
+                        }
+                    },
+                    matchWidth(),
+                )
+            }
+        }
 
         editorValue =
             EditText(this).apply {
@@ -1437,8 +1482,13 @@ class LiveProcessOverlayService : Service() {
                         candidate.persistent
                     ) {
                         "Перепроверить и обновить привязку"
+                    } else if (
+                        candidate.evidence ==
+                            CandidateEvidence.CONFIRMED
+                    ) {
+                        "Сохранить подтверждённый мод"
                     } else {
-                        "Сохранить в «Мои моды»"
+                        "Сохранить вручную (ещё не подтверждено)"
                     }
                 setOnClickListener {
                     persistSelectedCandidate()
@@ -1446,6 +1496,17 @@ class LiveProcessOverlayService : Service() {
             },
             matchWidth(),
         )
+        if (
+            !candidate.persistent &&
+            candidate.evidence !=
+                CandidateEvidence.CONFIRMED
+        ) {
+            container.addView(
+                hintText(
+                    "Автоматически в «Мои моды» попадают только подтверждённые находки. Ручное сохранение оставлено на случай, если ты уже проверил эффект сам.",
+                ),
+            )
+        }
 
         if (candidate.persistent) {
             renameValue =
@@ -2909,7 +2970,13 @@ class LiveProcessOverlayService : Service() {
                             id =
                                 candidate.id,
                             title =
-                                candidate.title,
+                                if (
+                                    hint != null
+                                ) {
+                                    hint.candidateTitle
+                                } else {
+                                    candidate.title
+                                },
                             address =
                                 candidate.address,
                             valueType =
@@ -4209,6 +4276,34 @@ class LiveProcessOverlayService : Service() {
         }
     }
 
+    private fun classifySelectedCandidate(
+        hint: BehavioralActionHint,
+    ) {
+        val candidate =
+            selectedCandidate
+                ?: return
+        behavioralHintOverrides[
+            candidate.id
+        ] = hint
+        selectedCandidate =
+            candidate.copy(
+                title =
+                    hint.candidateTitle,
+                actionHint = hint,
+                subtitle =
+                    candidate.evidence
+                        .title +
+                        " · пользователь уточнил действие: " +
+                        hint.title,
+            )
+        setStatus(
+            "Действие отмечено как «" +
+                hint.title +
+                "». Теперь можно проверить значение или найти код, который его меняет.",
+        )
+        renderCurrentPage()
+    }
+
     private fun traceSelectedCodeAccess() {
         val cfg =
             config ?: return
@@ -4337,18 +4432,53 @@ class LiveProcessOverlayService : Service() {
                             }
                             .take(16)
                             .toList()
+                    behavioralCodeSites[
+                        candidate.id
+                    ] =
+                        trace.sites
+                    val writers =
+                        trace.sites
+                            .count {
+                                it.accessKind ==
+                                    RuntimeCodeAccessKind
+                                        .WRITE
+                            }
+                    val hasWriter =
+                        writers > 0
                     val updatedCandidate =
                         candidate.copy(
+                            title =
+                                if (
+                                    hasWriter &&
+                                    candidate.actionHint !=
+                                        null
+                                ) {
+                                    candidate
+                                        .actionHint
+                                        .confirmedTitle
+                                } else {
+                                    candidate.title
+                                },
                             learnedCodeSites =
                                 learnedSites,
                             requiresConfirmation =
                                 false,
+                            evidence =
+                                if (hasWriter) {
+                                    CandidateEvidence
+                                        .CONFIRMED
+                                } else {
+                                    candidate.evidence
+                                },
                         )
                     selectedCandidate =
                         updatedCandidate
                     rebuildCodeAccessList()
+                    rebuildBehavioralList()
                     if (
-                        learnedSites.isNotEmpty()
+                        hasWriter &&
+                        candidate.source !=
+                        LearnedCandidateSource.MANUAL
                     ) {
                         stabilizeEditableCandidate(
                             candidate =
@@ -4356,9 +4486,10 @@ class LiveProcessOverlayService : Service() {
                             source =
                                 candidate.source
                                     ?: LearnedCandidateSource
-                                        .MANUAL,
+                                        .TRAINING,
                             actionHint =
-                                candidate.actionHint,
+                                updatedCandidate
+                                    .actionHint,
                             force = true,
                         )
                     }
@@ -4368,13 +4499,6 @@ class LiveProcessOverlayService : Service() {
                         sites =
                             trace.sites,
                     )
-                    val writers =
-                        trace.sites
-                            .count {
-                                it.accessKind ==
-                                    RuntimeCodeAccessKind
-                                        .WRITE
-                            }
                     val readers =
                         trace.sites
                             .count {
@@ -5472,6 +5596,22 @@ class LiveProcessOverlayService : Service() {
                                                 emptyList()
                                             } else {
                                                 saved.codeAccessSites
+                                            },
+                                        evidence =
+                                            if (
+                                                !migrated &&
+                                                saved.codeAccessSites
+                                                    .any {
+                                                        it.accessKind ==
+                                                            RuntimeCodeAccessKind
+                                                                .WRITE
+                                                    }
+                                            ) {
+                                                CandidateEvidence
+                                                    .CONFIRMED
+                                            } else {
+                                                CandidateEvidence
+                                                    .STABLE
                                             },
                                     )
                                 }.getOrNull()
