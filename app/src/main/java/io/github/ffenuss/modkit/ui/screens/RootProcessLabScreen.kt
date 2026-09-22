@@ -23,6 +23,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -587,10 +588,19 @@ fun RootProcessLabScreen(
                 error =
                     "Получение процессов отменено."
             } catch (failure: Throwable) {
-                error =
+                val message =
                     failure.message
                         ?: failure.javaClass
                             .simpleName
+                rootProbe =
+                    RootAccessProbeResult(
+                        available = false,
+                        uid = null,
+                        message =
+                            "Root/список процессов недоступен: " +
+                                message,
+                    )
+                error = message
             } finally {
                 processesLoading =
                     false
@@ -1387,6 +1397,16 @@ fun RootProcessLabScreen(
         }
     }
 
+    LaunchedEffect(Unit) {
+        if (
+            selected == null &&
+            processItems.isEmpty() &&
+            launchableApps.isEmpty()
+        ) {
+            loadProcesses()
+        }
+    }
+
     val normalizedQuery =
         processQuery.trim()
             .lowercase()
@@ -1499,31 +1519,21 @@ fun RootProcessLabScreen(
                             ?: "Root ещё не проверен.",
                     )
                     Button(
-                        onClick = ::checkRoot,
-                        enabled = !busy,
-                        modifier =
-                            Modifier.fillMaxWidth(),
-                    ) {
-                        Text(
-                            if (rootChecking) {
-                                "Проверяется…"
-                            } else {
-                                "Проверить root"
-                            },
-                        )
-                    }
-                    Button(
                         onClick =
                             ::loadProcesses,
                         enabled =
-                            rootProbe?.available ==
-                                true &&
-                                !busy,
+                            !busy,
                         modifier =
                             Modifier.fillMaxWidth(),
                     ) {
                         Text(
-                            "Подключиться к процессу",
+                            if (
+                                processesLoading
+                            ) {
+                                "Загружаем список…"
+                            } else {
+                                "Обновить игры и процессы"
+                            },
                         )
                     }
                 }
