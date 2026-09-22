@@ -107,6 +107,10 @@ class LiveProcessOverlayService : Service() {
         RootBehavioralScanSession? = null
     private var autoTask:
         ScheduledFuture<*>? = null
+    private var processWatchTask:
+        ScheduledFuture<*>? = null
+    private var awaitingReattach =
+        false
     private var trainingSession:
         RootBehavioralScanSession? = null
     private var trainingWasAuto =
@@ -200,6 +204,7 @@ class LiveProcessOverlayService : Service() {
             return START_NOT_STICKY
         }
 
+        stopProcessWatch()
         resetRuntimeState()
         config = parsed
         startForeground(
@@ -214,10 +219,12 @@ class LiveProcessOverlayService : Service() {
         loadLearnedProfile(
             parsed,
         )
+        scheduleProcessWatch()
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
+        stopProcessWatch()
         rollbackActiveCodePatchBestEffort()
         resetRuntimeState()
         removeOverlay()
@@ -929,6 +936,155 @@ class LiveProcessOverlayService : Service() {
                     ),
             )
         }
+    }
+
+    private fun scheduleProcessWatch() {
+        stopProcessWatch()
+        processWatchTask =
+            executor.scheduleWithFixedDelay(
+                {
+                    val cfg =
+                        config
+                            ?: return@scheduleWithFixedDelay
+                    val cancellation =
+                        AtomicCancellationSignal()
+                    val alive =
+                        RootProcessReattachCoordinator
+                            .isSameProcess(
+                                packageName =
+                                    cfg.packageName,
+                                pid = cfg.pid,
+                                cancellation =
+                                    cancellation,
+                            )
+                    if (alive) {
+                        if (awaitingReattach) {
+                            awaitingReattach =
+                                false
+                            main.post {
+                                setStatus(
+                                    "Процесс снова доступен · PID " +
+                                        cfg.pid +
+                                        ".",
+                                )
+                            }
+                        }
+                        return@scheduleWithFixedDelay
+                    }
+
+                    val replacement =
+                        runCatching {
+                            RootProcessReattachCoordinator
+                                .findReplacementMainPid(
+                                    packageName =
+                                        cfg.packageName,
+                                    androidUserId =
+                                        cfg.androidUserId,
+                                    cancellation =
+                                        cancellation,
+                                )
+                        }.getOrNull()
+
+                    if (
+                        replacement ==
+                        null
+                    ) {
+                        if (!awaitingReattach) {
+                            awaitingReattach =
+                                true
+                            main.post {
+                                setStatus(
+                                    "Игра закрыта. MK ждёт новый процесс " +
+                                        cfg.packageName +
+                                        " и подключится автоматически после следующего запуска.",
+                                )
+                            }
+                        }
+                        return@scheduleWithFixedDelay
+                    }
+                    if (
+                        replacement ==
+                        cfg.pid
+                    ) {
+                        return@scheduleWithFixedDelay
+                    }
+
+                    main.post {
+                        reattachToProcess(
+                            old =
+                                cfg,
+                            newPid =
+                                replacement,
+                        )
+                    }
+                },
+                3_000L,
+                3_000L,
+                TimeUnit.MILLISECONDS,
+            )
+    }
+
+    private fun stopProcessWatch() {
+        processWatchTask?.cancel(
+            false,
+        )
+        processWatchTask = null
+        awaitingReattach =
+            false
+    }
+
+    private fun reattachToProcess(
+        old: ProcessOverlayConfig,
+        newPid: Int,
+    ) {
+        val current =
+            config
+                ?: return
+        if (
+            current.packageName !=
+                old.packageName ||
+            current.pid !=
+                old.pid
+        ) {
+            return
+        }
+
+        rollbackActiveCodePatchBestEffort()
+        resetRuntimeState()
+        val replacement =
+            old.copy(
+                pid = newPid,
+            )
+        config =
+            replacement
+        manualList
+            ?.removeAllViews()
+        manualCount?.text =
+            "Результатов: 0"
+        learnedList
+            ?.removeAllViews()
+        behavioralList
+            ?.removeAllViews()
+        codeAccessList
+            ?.removeAllViews()
+        awaitingReattach =
+            false
+        startForeground(
+            NOTIFICATION_ID,
+            buildNotification(
+                replacement.label +
+                    " · PID " +
+                    replacement.pid,
+            ),
+        )
+        setStatus(
+            "Игра перезапущена. ModKit автоматически подключился к новому PID " +
+                newPid +
+                " и восстанавливает сохранённые моды.",
+        )
+        loadLearnedProfile(
+            replacement,
+        )
     }
 
     private fun startAutoScan() {
