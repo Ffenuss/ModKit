@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.11**
+Current application version: **0.0.12**
 
 ## Product flow
 
@@ -57,7 +57,9 @@ See [docs/PORTING_MATRIX.md](docs/PORTING_MATRIX.md) and [docs/ROADMAP.md](docs/
 - root live-memory scanner for exact and unknown initial values, natural/byte alignment, changed/increased/decreased refinement, pointer scan, explicit verified writes and freeze;
 - dedicated main-menu Root Process Lab: root probe, running app/game process picker, direct attach, automatic gameplay-modification discovery, optional runtime snapshots and memory tools;
 - root gameplay discovery reuses the installed APK plus SHA-bound engine cache and targeted confirmation, so full process dumps are not required for ordinary mod discovery;
-- root modification profiles can be saved directly to user-selected device storage as `.modkit.json` files or added directly to ModKit Sandbox; dump export also uses Android document storage instead of the share sheet;\n- ModKit Sandbox has a root managed-profile backend: it provisions a separate Android profile, installs the already-present package for that profile without replacing user-0, and launches it with separate app-data/saves; profiles are version/SHA validated before launch;\n- root sandbox activation resolves the exact sandbox PID and ELF PT_LOAD mapping, verifies original static/runtime bytes, pauses only that process while applying selected native-code patches, verifies read-back and rolls back already-applied patches if any profile item fails;
+- root modification profiles can be saved directly to user-selected device storage as `.modkit.json` files or added directly to ModKit Sandbox; dump export also uses Android document storage instead of the share sheet;
+- ModKit Sandbox has a root managed-profile backend: it provisions a separate Android profile, installs the already-present package for that profile without replacing user-0, and launches it with separate app-data/saves; profiles are version/SHA validated before launch;
+- root sandbox activation resolves the exact sandbox PID and ELF PT_LOAD mapping, verifies original static/runtime bytes, pauses only that process while applying selected native-code patches, verifies read-back and rolls back already-applied patches if any profile item fails;
 - full root snapshot mode walks every readable process mapping except unsafe kernel pseudo-mappings, performs disk-space preflight, streams in bounded batches, and keeps the old 256 MiB path only as an explicit quick mode;
 - universal runtime artifact inventory inside root dumps detects live ELF, DEX/CompactDEX, IL2CPP metadata, WASM, SQLite, ZIP/APK/JAR and PE/CLI candidates for later runtime-specific parsing;
 - streaming staging APK/APK-set mutation with stale-signature removal;
@@ -82,8 +84,23 @@ gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 Use ModKit only for applications and environments you are authorized to assess. Do not publish customer APKs, secrets, access tokens, signing keys or proprietary analysis artifacts in public issues.
 
 
-### Root sandbox live overlay
+### Root managed-profile sandbox
 
-The primary root flow is now intended to be short: attach to a running game, let ModKit discover modification opportunities automatically, select confirmed gameplay modifications, then press **Launch game with selected mods**. ModKit creates/uses its separate managed-profile sandbox, starts the game there, resolves the exact sandbox PID, applies the selected SHA-bound native-code patches and starts an `MK` floating overlay from the already-root-authorized main ModKit process while the game remains isolated in the managed-profile sandbox. Overlay switches apply or restore each known byte range with PID revalidation, process pause/resume and read-back verification.
+The managed-profile sandbox remains available as a separate isolation path for already-confirmed static native-code modifications. It creates/uses a secondary Android profile, launches the game with separate app-data/saves, resolves the exact sandbox PID, applies SHA-bound native-code patches and exposes their switches through the `MK` overlay hosted by the already-root-authorized main ModKit process. Overlay switches apply or restore only validated byte ranges with PID revalidation and read-back verification.
 
-Billing, authentication and anti-cheat-related methods remain visible as discovery-only sensitive surfaces. They are intentionally not converted into automatic live bypass actions.
+The normal root workflow is the live behavioral scanner below; a static sandbox profile is no longer required just to attach, scan live values or train an action. Billing, authentication and anti-cheat-related methods remain discovery-only sensitive surfaces and are not converted into automatic bypass actions.
+
+
+### Root live behavioral scanner
+
+The primary root flow is now **Root → choose a running process or installed game → attach/launch → play with the `MK` overlay**. If the selected app is not running, ModKit launches it, waits for its exact main-process PID and attaches automatically.
+
+The overlay contains three complementary workflows:
+
+- **Auto scan** continuously compares bounded rolling live-memory baselines, rotates Int32/Float/Int64/Double sweeps, refreshes candidates with batched reads, scores repeatability/direction/stability and suppresses noisy stack/JIT/GPU-like mappings.
+- **Train action** captures an explicit context such as movement, attack, taking damage, resource change, item change or another action; the user hides the overlay, performs that action, then reopens `MK` to rank correlated candidates.
+- **Manual scan** supports exact values, unknown initial values, changed/unchanged/increased/decreased refinement, ranges (`10..20`), fuzzy values (`1.0~0.05`), grouped values (`10,20,30`), verified writes and Freeze.
+
+High-confidence or explicitly confirmed values can be stabilized through a module-root pointer chain. Learned candidates are stored per package and artifact SHA, then their live addresses are re-resolved after restart/ASLR. After an app update, old pointer chains may be tested as migration candidates, but they remain read-only until explicitly reconfirmed on the new artifact. Every write revalidates the exact PID and writable mapping and requires read-back confirmation.
+
+Static IL2CPP gameplay-method discovery remains available as an expert tool, but it is no longer the primary root workflow. Billing/authentication/anti-cheat surfaces stay analysis-only and are not turned into automatic bypass actions.

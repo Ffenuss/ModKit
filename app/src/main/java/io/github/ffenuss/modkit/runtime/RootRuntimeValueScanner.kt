@@ -775,6 +775,7 @@ object RootRuntimeValueScanCoordinator {
         runner: RootCommandRunner =
             AndroidRootCommandRunner(),
         maxScanBytes: Long? = null,
+        expectedPid: Int? = null,
     ): RootRuntimeValueScanResult {
         val capture =
             RootRuntimeCaptureCoordinator
@@ -784,6 +785,7 @@ object RootRuntimeValueScanCoordinator {
                     cancellation =
                         cancellation,
                     runner = runner,
+                    expectedPid = expectedPid,
                 )
         val ranges =
             candidateRanges(
@@ -913,6 +915,7 @@ object RootRuntimeValueScanCoordinator {
                     cancellation =
                         cancellation,
                     runner = runner,
+                    expectedPid = previous.pid,
                 )
         require(
             capture.pid ==
@@ -958,6 +961,7 @@ object RootRuntimeValueScanCoordinator {
                     cancellation =
                         cancellation,
                     runner = runner,
+                    expectedPid = expectedPid,
                 )
         require(
             capture.pid ==

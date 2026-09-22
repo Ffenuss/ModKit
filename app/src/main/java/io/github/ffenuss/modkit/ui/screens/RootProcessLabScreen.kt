@@ -43,10 +43,12 @@ import io.github.ffenuss.modkit.patch.RootModDiscoveryCoordinator
 import io.github.ffenuss.modkit.patch.RootModDiscoveryResult
 import io.github.ffenuss.modkit.patch.RootModProfileWriter
 import io.github.ffenuss.modkit.runtime.RootAccessProbeResult
+import io.github.ffenuss.modkit.runtime.RootInstalledGameOverlayCoordinator
 import io.github.ffenuss.modkit.runtime.RootProcessDiscovery
 import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpCoordinator
 import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpProgress
 import io.github.ffenuss.modkit.runtime.RootProcessMemoryDumpResult
+import io.github.ffenuss.modkit.runtime.RootProcessOverlayLauncher
 import io.github.ffenuss.modkit.runtime.RootRunningAppProcess
 import io.github.ffenuss.modkit.runtime.RootRuntimeCaptureCoordinator
 import io.github.ffenuss.modkit.runtime.RootRuntimePointerScanResult
@@ -122,6 +124,11 @@ fun RootProcessLabScreen(
     var processItems by remember {
         mutableStateOf<
             List<RootProcessUiItem>
+        >(emptyList())
+    }
+    var launchableApps by remember {
+        mutableStateOf<
+            List<InstalledAppTarget>
         >(emptyList())
     }
     var processQuery by remember {
@@ -493,7 +500,7 @@ fun RootProcessLabScreen(
         processesLoading = true
         scope.launch {
             try {
-                val pair =
+                val snapshot =
                     withContext(
                         Dispatchers.IO,
                     ) {
@@ -503,12 +510,16 @@ fun RootProcessLabScreen(
                                     cancellation =
                                         signal,
                                 )
-                        val installed =
+                        val installedList =
                             repository.load()
+                        Triple(
+                            running,
+                            installedList
                                 .associateBy {
                                     it.packageName
-                                }
-                        running to installed
+                                },
+                            installedList,
+                        )
                     }
                 rootProbe =
                     RootAccessProbeResult(
@@ -518,14 +529,14 @@ fun RootProcessLabScreen(
                             "Root подтверждён: uid=0.",
                     )
                 processItems =
-                    pair.first
+                    snapshot.first
                         .map {
                             process ->
                             RootProcessUiItem(
                                 process =
                                     process,
                                 app =
-                                    pair.second[
+                                    snapshot.second[
                                         process
                                             .packageName
                                     ],
@@ -545,6 +556,33 @@ fun RootProcessLabScreen(
                                 it.label
                             },
                         )
+                val runningPackages =
+                    snapshot.first
+                        .map {
+                            it.packageName
+                        }
+                        .toSet()
+                launchableApps =
+                    snapshot.third
+                        .asSequence()
+                        .filter {
+                            !it.isSystemApp &&
+                                it.hasLauncherActivity &&
+                                it.packageName !in
+                                runningPackages
+                        }
+                        .sortedWith(
+                            compareByDescending<
+                                InstalledAppTarget
+                            > {
+                                it.isGame
+                            }.thenBy(
+                                String.CASE_INSENSITIVE_ORDER,
+                            ) {
+                                it.label
+                            },
+                        )
+                        .toList()
             } catch (_: AnalysisCancelledException) {
                 error =
                     "Получение процессов отменено."
@@ -681,6 +719,23 @@ fun RootProcessLabScreen(
                 ) {
                     "PID процесса изменился. Обновите список процессов."
                 }
+                val overlay =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootProcessOverlayLauncher
+                            .startAndBringToFront(
+                                packageName =
+                                    item.process
+                                        .packageName,
+                                pid =
+                                    capture.pid,
+                                label =
+                                    item.label,
+                                cancellation =
+                                    signal,
+                            )
+                    }
                 clearRuntimeState()
                 selected = item
                 attachedPid =
@@ -691,13 +746,89 @@ fun RootProcessLabScreen(
                         .count {
                             it.isNotBlank()
                         }
-                discoverMods(
-                    item,
-                )
+                saveMessage =
+                    "Подключено к PID " +
+                        overlay.pid +
+                        ". Игра выведена на передний план; MK overlay готов для автоскана, обучения действий и ручного поиска."
             } catch (_: AnalysisCancelledException) {
                 error =
                     "Подключение к процессу отменено."
             } catch (failure: Throwable) {
+                error =
+                    failure.message
+                        ?: failure.javaClass
+                            .simpleName
+            } finally {
+                finish()
+            }
+        }
+    }
+
+    fun launchAndAttach(
+        app: InstalledAppTarget,
+    ) {
+        val signal =
+            begin(
+                "Запуск игры и подключение",
+            ) ?: return
+        scope.launch {
+            try {
+                val result =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootInstalledGameOverlayCoordinator
+                            .launchAndAttach(
+                                packageName =
+                                    app.packageName,
+                                label =
+                                    app.label,
+                                cancellation =
+                                    signal,
+                            )
+                    }
+                val capture =
+                    withContext(
+                        Dispatchers.IO,
+                    ) {
+                        RootRuntimeCaptureCoordinator
+                            .captureMaps(
+                                packageName =
+                                    app.packageName,
+                                cancellation =
+                                    signal,
+                                expectedPid =
+                                    result.process
+                                        .pid,
+                            )
+                    }
+                clearRuntimeState()
+                selected =
+                    RootProcessUiItem(
+                        process =
+                            result.process,
+                        app = app,
+                    )
+                attachedPid =
+                    result.process.pid
+                attachedMapsCount =
+                    capture.capture.text
+                        .lineSequence()
+                        .count {
+                            it.isNotBlank()
+                        }
+                saveMessage =
+                    "Игра запущена и подключена к PID " +
+                        result.process.pid +
+                        ". MK overlay уже поверх игры."
+            } catch (
+                _: AnalysisCancelledException,
+            ) {
+                error =
+                    "Запуск и подключение отменены."
+            } catch (
+                failure: Throwable,
+            ) {
                 error =
                     failure.message
                         ?: failure.javaClass
@@ -1287,6 +1418,33 @@ fun RootProcessLabScreen(
                         )
             }
         }
+    val filteredLaunchableApps =
+        remember(
+            launchableApps,
+            normalizedQuery,
+            showAppsOnly,
+        ) {
+            launchableApps.filter {
+                app ->
+                (
+                    normalizedQuery.isBlank() ||
+                        app.label
+                            .lowercase()
+                            .contains(
+                                normalizedQuery,
+                            ) ||
+                        app.packageName
+                            .lowercase()
+                            .contains(
+                                normalizedQuery,
+                            )
+                    ) &&
+                    (
+                        !showAppsOnly ||
+                            !app.isGame
+                        )
+            }
+        }
 
     LazyColumn(
         modifier =
@@ -1318,8 +1476,7 @@ fun RootProcessLabScreen(
                     FontWeight.Bold,
             )
             Text(
-                "Прямое подключение к уже запущенному Android-процессу. " +
-                    "APK-анализ для этого экрана не требуется.",
+                "Выбери запущенный процесс или установленную игру. Если процесс ещё не запущен, ModKit запустит его сам и сразу откроет MK live overlay.",
             )
         }
 
@@ -1489,8 +1646,11 @@ fun RootProcessLabScreen(
         }
 
         if (
-            processItems.isNotEmpty() &&
-            selected == null
+            (
+                processItems.isNotEmpty() ||
+                    launchableApps.isNotEmpty()
+                ) &&
+                selected == null
         ) {
             item {
                 OutlinedTextField(
@@ -1501,7 +1661,7 @@ fun RootProcessLabScreen(
                     },
                     label = {
                         Text(
-                            "Поиск запущенной игры или приложения",
+                            "Поиск игры или приложения",
                         )
                     },
                     singleLine = true,
@@ -1602,6 +1762,80 @@ fun RootProcessLabScreen(
                     }
                 }
             }
+
+            if (
+                filteredLaunchableApps
+                    .isNotEmpty()
+            ) {
+                item {
+                    Text(
+                        "Не запущены — нажми, и ModKit сам запустит приложение, дождётся процесса и подключит MK overlay.",
+                        style =
+                            MaterialTheme.typography
+                                .bodySmall,
+                    )
+                }
+                items(
+                    filteredLaunchableApps,
+                    key = {
+                        "launch:" +
+                            it.packageName
+                    },
+                ) {
+                    app ->
+                    Card(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    launchAndAttach(
+                                        app,
+                                    )
+                                },
+                    ) {
+                        Column(
+                            Modifier.padding(
+                                14.dp,
+                            ),
+                            verticalArrangement =
+                                Arrangement
+                                    .spacedBy(
+                                        4.dp,
+                                    ),
+                        ) {
+                            Text(
+                                app.label,
+                                fontWeight =
+                                    FontWeight
+                                        .SemiBold,
+                            )
+                            Text(
+                                (
+                                    if (
+                                        app.isGame
+                                    ) {
+                                        "Игра"
+                                    } else {
+                                        "Приложение"
+                                    }
+                                    ) +
+                                    " · не запущено",
+                                style =
+                                    MaterialTheme
+                                        .typography
+                                        .labelMedium,
+                            )
+                            Text(
+                                app.packageName,
+                                style =
+                                    MaterialTheme
+                                        .typography
+                                        .bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         selected?.let {
@@ -1647,7 +1881,7 @@ fun RootProcessLabScreen(
                                     .bodySmall,
                         )
                         Text(
-                            "Подключение уже выполнено. ModKit автоматически ищет модификации по коду установленной версии; runtime dump для этого не нужен.",
+                            "Основная работа теперь идёт в MK overlay поверх игры: Автоскан, Обучить действие и ручной поиск значений. Runtime dump для этого не нужен.",
                             style =
                                 MaterialTheme.typography
                                     .bodySmall,
@@ -1683,12 +1917,12 @@ fun RootProcessLabScreen(
                             ),
                     ) {
                         Text(
-                            "Автопоиск модификаций",
+                            "Расширенный статический анализ",
                             fontWeight =
                                 FontWeight.SemiBold,
                         )
                         Text(
-                            "Это основной root-режим: ModKit анализирует код установленной версии и сразу ищет категории вроде здоровья, урона, скорости, стамины, кулдаунов, коллизий, камеры и других локальных игровых параметров. Перебирать значения вручную для этого не требуется.",
+                            "Необязательный экспертный инструмент. Основной режим находится в MK overlay и анализирует живой процесс; этот раздел оставлен для статического сопоставления методов и подтверждённых binary-targets.",
                             style =
                                 MaterialTheme.typography
                                     .bodySmall,

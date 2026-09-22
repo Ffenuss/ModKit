@@ -47,6 +47,15 @@
                 android:value="User-started floating controls for an explicitly launched ModKit sandbox session" />
         </service>
 
+        <service
+            android:name=".runtime.LiveProcessOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-started root live scanner and floating controls for an explicitly selected game process" />
+        </service>
+
         <activity
             android:name=".MainActivity"
             android:exported="true">

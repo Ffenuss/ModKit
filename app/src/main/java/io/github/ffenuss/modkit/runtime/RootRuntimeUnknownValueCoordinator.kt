@@ -41,6 +41,8 @@ object RootRuntimeUnknownValueCoordinator {
         32L * 1024L * 1024L
     private const val STORAGE_RESERVE_BYTES =
         64L * 1024L * 1024L
+    private const val BEHAVIORAL_MAX_BYTES_PER_REGION =
+        4L * 1024L * 1024L
 
     fun captureBaseline(
         packageName: String,
@@ -52,6 +54,8 @@ object RootRuntimeUnknownValueCoordinator {
         runner: RootCommandRunner =
             AndroidRootCommandRunner(),
         maxBytes: Long? = null,
+        expectedPid: Int? = null,
+        behavioralMode: Boolean = false,
     ): RootRuntimeUnknownBaseline {
         require(
             maxBytes == null ||
@@ -67,14 +71,41 @@ object RootRuntimeUnknownValueCoordinator {
                     cancellation =
                         cancellation,
                     runner = runner,
+                    expectedPid = expectedPid,
                 )
-        val ranges =
+        val baseRanges =
             RootRuntimeValueScanCoordinator
                 .candidateRanges(
                     ProcMapsParser.parse(
                         capture.capture.text,
                     ),
                 )
+        val ranges =
+            if (behavioralMode) {
+                baseRanges
+                    .asSequence()
+                    .filterNot {
+                        volatileBehavioralRegion(
+                            it.path,
+                        )
+                    }
+                    .sortedWith(
+                        compareBy<ProcMapRegion> {
+                            behavioralRangePriority(
+                                it.path,
+                                packageName,
+                            )
+                        }.thenByDescending {
+                            min(
+                                it.size,
+                                BEHAVIORAL_MAX_BYTES_PER_REGION,
+                            )
+                        },
+                    )
+                    .toList()
+            } else {
+                baseRanges
+            }
         require(ranges.isNotEmpty()) {
             "В процессе нет подходящих writable private диапазонов."
         }
@@ -145,9 +176,22 @@ object RootRuntimeUnknownValueCoordinator {
                 ) {
                     var address =
                         region.start
+                    var regionCaptured =
+                        0L
+                    val regionLimit =
+                        if (behavioralMode) {
+                            min(
+                                region.size,
+                                BEHAVIORAL_MAX_BYTES_PER_REGION,
+                            )
+                        } else {
+                            region.size
+                        }
                     while (
                         address <
-                        region.endExclusive
+                        region.endExclusive &&
+                        regionCaptured <
+                        regionLimit
                     ) {
                         checkCancelled(
                             cancellation,
@@ -162,8 +206,12 @@ object RootRuntimeUnknownValueCoordinator {
                         val request =
                             min(
                                 min(
-                                    region.endExclusive -
-                                        address,
+                                    min(
+                                        region.endExclusive -
+                                            address,
+                                        regionLimit -
+                                            regionCaptured,
+                                    ),
                                     budget,
                                 ),
                                 ProcMemRuntimeMemoryReader
@@ -242,6 +290,8 @@ object RootRuntimeUnknownValueCoordinator {
                             bytes.size
                         capturedBytes +=
                             bytes.size
+                        regionCaptured +=
+                            bytes.size
                     }
                 }
                 output.fd.sync()
@@ -312,14 +362,23 @@ object RootRuntimeUnknownValueCoordinator {
         }
 
         val capture =
-            RootRuntimeCaptureCoordinator
-                .captureMaps(
-                    packageName =
-                        baseline.packageName,
-                    cancellation =
-                        cancellation,
-                    runner = runner,
+            try {
+                RootRuntimeCaptureCoordinator
+                    .captureMaps(
+                        packageName =
+                            baseline.packageName,
+                        cancellation =
+                            cancellation,
+                        runner = runner,
+                        expectedPid =
+                            baseline.pid,
+                    )
+            } catch (failure: Throwable) {
+                throw IllegalArgumentException(
+                    "PID процесса изменился или больше недоступен. Создайте новый unknown-value baseline.",
+                    failure,
                 )
+            }
         require(
             capture.pid ==
                 baseline.pid,
@@ -528,6 +587,45 @@ object RootRuntimeUnknownValueCoordinator {
             ?.snapshotPath
             ?.let(::File)
             ?.delete()
+    }
+
+    private fun volatileBehavioralRegion(
+        path: String?,
+    ): Boolean {
+        val normalized =
+            path.orEmpty()
+                .lowercase()
+        return normalized.startsWith("[stack") ||
+            normalized.contains("jit-cache") ||
+            normalized.contains("dalvik-jit") ||
+            normalized.contains("gralloc") ||
+            normalized.contains("kgsl") ||
+            normalized.contains("dmabuf") ||
+            normalized.startsWith("/dev/")
+    }
+
+    private fun behavioralRangePriority(
+        path: String?,
+        packageName: String,
+    ): Int {
+        if (path == null) {
+            return 0
+        }
+        val normalized =
+            path.lowercase()
+        return when {
+            normalized == "[heap]" ->
+                0
+            normalized.startsWith("[anon:") ->
+                0
+            normalized.contains(packageName.lowercase()) ->
+                1
+            normalized.startsWith("/data/app/") ||
+                normalized.startsWith("/data/user/") ->
+                2
+            else ->
+                3
+        }
     }
 
     private fun totalRangeBytes(
