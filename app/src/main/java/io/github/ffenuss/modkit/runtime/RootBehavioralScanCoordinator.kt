@@ -508,7 +508,18 @@ object RootBehavioralScanCoordinator {
                     val now =
                         nowByAddress[
                             track.address
-                        ] ?: return@forEach
+                        ]
+                    if (now == null) {
+                        session.tracks.remove(
+                            key(
+                                type =
+                                    track.valueType,
+                                address =
+                                    track.address,
+                            ),
+                        )
+                        return@forEach
+                    }
                     updateTrack(
                         track = track,
                         newBits = now.bits,
