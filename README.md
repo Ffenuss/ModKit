@@ -84,11 +84,11 @@ gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 Use ModKit only for applications and environments you are authorized to assess. Do not publish customer APKs, secrets, access tokens, signing keys or proprietary analysis artifacts in public issues.
 
 
-### Root sandbox live overlay
+### Root managed-profile sandbox
 
-The primary root flow is now intended to be short: attach to a running game, let ModKit discover modification opportunities automatically, select confirmed gameplay modifications, then press **Launch game with selected mods**. ModKit creates/uses its separate managed-profile sandbox, starts the game there, resolves the exact sandbox PID, applies the selected SHA-bound native-code patches and starts an `MK` floating overlay from the already-root-authorized main ModKit process while the game remains isolated in the managed-profile sandbox. Overlay switches apply or restore each known byte range with PID revalidation, process pause/resume and read-back verification.
+The managed-profile sandbox remains available as a separate isolation path for already-confirmed static native-code modifications. It creates/uses a secondary Android profile, launches the game with separate app-data/saves, resolves the exact sandbox PID, applies SHA-bound native-code patches and exposes their switches through the `MK` overlay hosted by the already-root-authorized main ModKit process. Overlay switches apply or restore only validated byte ranges with PID revalidation and read-back verification.
 
-Billing, authentication and anti-cheat-related methods remain visible as discovery-only sensitive surfaces. They are intentionally not converted into automatic live bypass actions.
+The normal root workflow is the live behavioral scanner below; a static sandbox profile is no longer required just to attach, scan live values or train an action. Billing, authentication and anti-cheat-related methods remain discovery-only sensitive surfaces and are not converted into automatic bypass actions.
 
 
 ### Root live behavioral scanner
