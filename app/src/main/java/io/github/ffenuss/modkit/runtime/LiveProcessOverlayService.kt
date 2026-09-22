@@ -820,6 +820,17 @@ class LiveProcessOverlayService : Service() {
             matchWidth(),
         )
 
+        body.addView(
+            Button(this).apply {
+                text =
+                    "Закрыть MK и остановить сканеры"
+                setOnClickListener {
+                    stopSelf()
+                }
+            },
+            matchWidth(),
+        )
+
         return ScrollView(this).apply {
             isFillViewport =
                 true
