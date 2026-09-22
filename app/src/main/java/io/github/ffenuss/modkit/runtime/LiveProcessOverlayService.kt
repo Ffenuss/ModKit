@@ -2291,18 +2291,22 @@ class LiveProcessOverlayService : Service() {
                         .size
             }
         setStatus(
-            "Автоскан: цикл " +
-                sample.cycle +
-                " · отслеживается " +
-                sample.trackedCandidates +
-                " · показано " +
-                sample.visibleCandidates
-                    .size +
-                " · скрыто как шум " +
-                sample.hiddenAsNoise +
-                " · " +
-                sample.elapsedMs +
-                " мс",
+            if (
+                source ==
+                LearnedCandidateSource.TRAINING
+            ) {
+                "Обучение: найдено " +
+                    sample.visibleCandidates
+                        .size +
+                    " устойчивых кандидатов."
+            } else {
+                "Автоскан: подтверждаемых " +
+                    sample.visibleCandidates
+                        .size +
+                    " · скрыто шумных " +
+                    sample.hiddenAsNoise +
+                    "."
+            },
         )
 
         val fresh =
@@ -2393,7 +2397,7 @@ class LiveProcessOverlayService : Service() {
             return
         }
         behavioralCandidates
-            .take(12)
+            .take(5)
             .forEach {
                 candidate ->
                 list.addView(
@@ -2413,7 +2417,7 @@ class LiveProcessOverlayService : Service() {
                             subtitle =
                                 "Уверенность " +
                                     candidate.confidence +
-                                    "% · изменений " +
+                                    "% · повторений изменения " +
                                     candidate.changeCount +
                                     " · " +
                                     candidate
@@ -4265,12 +4269,15 @@ class LiveProcessOverlayService : Service() {
                     result.onSuccess {
                         activeCodePatch =
                             null
-                        codePatchButton
-                            ?.text =
-                            "Writer block: OFF"
                         setStatus(
-                            "Writer block отключён; исходная ARM64-инструкция восстановлена и проверена.",
+                            "Блокировка изменения отключена; исходная инструкция восстановлена.",
                         )
+                        if (
+                            currentPage ==
+                            OverlayPage.CANDIDATE
+                        ) {
+                            renderCurrentPage()
+                        }
                     }.onFailure {
                         failure ->
                         setStatus(
@@ -4360,11 +4367,15 @@ class LiveProcessOverlayService : Service() {
                             target =
                                 target,
                         )
-                    codePatchButton?.text =
-                        "Writer block: ON"
                     setStatus(
-                        "Writer block включён. Только подтверждённая STR-инструкция временно заменена на NOP; нажми ещё раз для точного отката.",
+                        "Блокировка изменения включена. Подтверждённый writer временно отключён; нажми ещё раз для восстановления.",
                     )
+                    if (
+                        currentPage ==
+                        OverlayPage.CANDIDATE
+                    ) {
+                        renderCurrentPage()
+                    }
                 }.onFailure {
                     failure ->
                     setStatus(
@@ -4492,25 +4503,19 @@ class LiveProcessOverlayService : Service() {
                             candidate.actionHint,
                         force = true,
                     )
-                    editorTitle?.text =
-                        candidate.title +
-                            "\n0x" +
-                            candidate.address
-                                .toString(
-                                    16,
-                                ) +
-                            " · " +
-                            candidate.valueType
-                                .title +
-                            " · сейчас " +
-                            written.newValue
                     setStatus(
-                        "Записано: " +
+                        "Значение изменено: " +
                             written.oldValue +
                             " → " +
                             written.newValue +
-                            ". Read-back подтверждён.",
+                            ".",
                     )
+                    if (
+                        currentPage ==
+                        OverlayPage.CANDIDATE
+                    ) {
+                        renderCurrentPage()
+                    }
                 }.onFailure {
                     failure ->
                     setStatus(
@@ -4573,7 +4578,7 @@ class LiveProcessOverlayService : Service() {
         freezeValue =
             value
         freezeButton?.text =
-            "Freeze: ON"
+            "Остановить заморозку"
         setStatus(
             "Freeze включён: " +
                 candidate.title +
@@ -4642,7 +4647,7 @@ class LiveProcessOverlayService : Service() {
         freezeTarget = null
         freezeValue = null
         freezeButton?.text =
-            "Freeze: OFF"
+            "Заморозить значение"
     }
 
     private fun clearManualSearch() {
@@ -5468,15 +5473,25 @@ class LiveProcessOverlayService : Service() {
                         "ModKit: мод закреплён и будет восстановлен при следующем запуске.",
                         Toast.LENGTH_LONG,
                     ).show()
+                    if (
+                        selectedCandidate
+                            ?.id ==
+                        saved.id
+                    ) {
+                        selectedCandidate =
+                            saved
+                    }
                     setStatus(
-                        "Pointer-chain сохранён: " +
-                            (
-                                saved.anchor
-                                    ?.moduleIdentity
-                                    ?: "module"
-                                ) +
-                            ".",
+                        "Мод сохранён и будет восстановлен при следующем запуске.",
                     )
+                    if (
+                        currentPage ==
+                        OverlayPage.CANDIDATE ||
+                        currentPage ==
+                        OverlayPage.MODS
+                    ) {
+                        renderCurrentPage()
+                    }
                 }.onFailure {
                     failure ->
                     if (force) {
