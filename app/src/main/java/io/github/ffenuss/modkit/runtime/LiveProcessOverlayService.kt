@@ -1235,13 +1235,6 @@ class LiveProcessOverlayService : Service() {
                 ) {
                     linkedMapOf()
                 }
-        val currentIds =
-            sample.visibleCandidates
-                .map {
-                    it.id
-                }
-                .toHashSet()
-
         sample.visibleCandidates
             .forEach {
                 candidate ->
@@ -1320,10 +1313,11 @@ class LiveProcessOverlayService : Service() {
 
         if (round > 1) {
             val minimumSeen =
-                maxOf(
-                    1,
-                    round - 1,
-                )
+                if (round <= 2) {
+                    round
+                } else {
+                    round - 1
+                }
             val iterator =
                 aggregates
                     .entries
@@ -1336,14 +1330,7 @@ class LiveProcessOverlayService : Service() {
                 if (
                     entry.value
                         .seenRounds <
-                    minimumSeen ||
-                    (
-                        entry.key !in
-                            currentIds &&
-                            entry.value
-                                .seenRounds <
-                            round
-                        )
+                    minimumSeen
                 ) {
                     iterator.remove()
                 }
