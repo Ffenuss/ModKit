@@ -16,6 +16,16 @@ enum class LearnedCandidateSource {
     MANUAL,
 }
 
+data class LearnedCodeAccessSite(
+    val moduleIdentity: String,
+    val moduleFileOffset: Long,
+    val accessKind: RuntimeCodeAccessKind,
+    val instructionWord: Long?,
+    val instructionText: String?,
+    val managedMethodCandidate: String?,
+    val observedCount: Int,
+)
+
 data class BehavioralArtifactIdentity(
     val packageName: String,
     val label: String,
@@ -32,6 +42,9 @@ data class LearnedRuntimeCandidate(
     val actionHint: BehavioralActionHint?,
     val lastKnownValue: String?,
     val anchor: StableRuntimePointerAnchor,
+    val codeAccessSites:
+        List<LearnedCodeAccessSite> =
+        emptyList(),
     val updatedAtEpochMs: Long,
 )
 
@@ -418,6 +431,46 @@ class BehavioralProfileStore(
                     .forEach {
                         offsets.put(it)
                     }
+                val codeSites =
+                    JSONArray()
+                candidate.codeAccessSites
+                    .take(
+                        MAX_CODE_SITES_PER_CANDIDATE,
+                    )
+                    .forEach {
+                        site ->
+                        codeSites.put(
+                            JSONObject()
+                                .put(
+                                    "moduleIdentity",
+                                    site.moduleIdentity,
+                                )
+                                .put(
+                                    "moduleFileOffset",
+                                    site.moduleFileOffset,
+                                )
+                                .put(
+                                    "accessKind",
+                                    site.accessKind.name,
+                                )
+                                .put(
+                                    "instructionWord",
+                                    site.instructionWord,
+                                )
+                                .put(
+                                    "instructionText",
+                                    site.instructionText,
+                                )
+                                .put(
+                                    "managedMethodCandidate",
+                                    site.managedMethodCandidate,
+                                )
+                                .put(
+                                    "observedCount",
+                                    site.observedCount,
+                                ),
+                        )
+                    }
                 candidates.put(
                     JSONObject()
                         .put(
@@ -486,6 +539,10 @@ class BehavioralProfileStore(
                                     "offsets",
                                     offsets,
                                 ),
+                        )
+                        .put(
+                            "codeAccessSites",
+                            codeSites,
                         ),
                 )
             }
@@ -612,6 +669,128 @@ class BehavioralProfileStore(
                                 )
                             }
                         }
+                    val codeSitesJson =
+                        item.optJSONArray(
+                            "codeAccessSites",
+                        )
+                    val codeSites =
+                        buildList {
+                            if (
+                                codeSitesJson !=
+                                null
+                            ) {
+                                require(
+                                    codeSitesJson.length() <=
+                                        MAX_CODE_SITES_PER_CANDIDATE,
+                                ) {
+                                    "Learned profile contains too many code sites."
+                                }
+                                repeat(
+                                    codeSitesJson
+                                        .length(),
+                                ) {
+                                    siteIndex ->
+                                    val site =
+                                        codeSitesJson
+                                            .getJSONObject(
+                                                siteIndex,
+                                            )
+                                    val module =
+                                        site.getString(
+                                            "moduleIdentity",
+                                        )
+                                    require(
+                                        module.isNotBlank() &&
+                                            module.length <=
+                                            512
+                                    ) {
+                                        "Invalid learned code-site module."
+                                    }
+                                    val fileOffset =
+                                        site.getLong(
+                                            "moduleFileOffset",
+                                        )
+                                    require(
+                                        fileOffset >=
+                                            0L
+                                    ) {
+                                        "Invalid learned code-site offset."
+                                    }
+                                    val word =
+                                        if (
+                                            site.isNull(
+                                                "instructionWord",
+                                            )
+                                        ) {
+                                            null
+                                        } else {
+                                            site.getLong(
+                                                "instructionWord",
+                                            )
+                                        }
+                                    require(
+                                        word == null ||
+                                            word in
+                                            0L..0xffff_ffffL
+                                    ) {
+                                        "Invalid learned ARM64 instruction word."
+                                    }
+                                    add(
+                                        LearnedCodeAccessSite(
+                                            moduleIdentity =
+                                                module,
+                                            moduleFileOffset =
+                                                fileOffset,
+                                            accessKind =
+                                                RuntimeCodeAccessKind
+                                                    .valueOf(
+                                                        site.getString(
+                                                            "accessKind",
+                                                        ),
+                                                    ),
+                                            instructionWord =
+                                                word,
+                                            instructionText =
+                                                if (
+                                                    site.isNull(
+                                                        "instructionText",
+                                                    )
+                                                ) {
+                                                    null
+                                                } else {
+                                                    site.optString(
+                                                        "instructionText",
+                                                    ).takeIf {
+                                                        it.isNotBlank()
+                                                    }
+                                                },
+                                            managedMethodCandidate =
+                                                if (
+                                                    site.isNull(
+                                                        "managedMethodCandidate",
+                                                    )
+                                                ) {
+                                                    null
+                                                } else {
+                                                    site.optString(
+                                                        "managedMethodCandidate",
+                                                    ).takeIf {
+                                                        it.isNotBlank()
+                                                    }
+                                                },
+                                            observedCount =
+                                                site.optInt(
+                                                    "observedCount",
+                                                    1,
+                                                ).coerceIn(
+                                                    1,
+                                                    1_000_000,
+                                                ),
+                                        ),
+                                    )
+                                }
+                            }
+                        }
                     add(
                         LearnedRuntimeCandidate(
                             id =
@@ -693,6 +872,8 @@ class BehavioralProfileStore(
                                     offsetsFromAnchor =
                                         offsets,
                                 ),
+                            codeAccessSites =
+                                codeSites,
                             updatedAtEpochMs =
                                 item.optLong(
                                     "updatedAtEpochMs",
@@ -1017,6 +1198,8 @@ class BehavioralProfileStore(
             "modkit/behavioral-identity-cache/1"
         private const val MAX_CANDIDATES_PER_PROFILE =
             32
+        private const val MAX_CODE_SITES_PER_CANDIDATE =
+            16
         private val PACKAGE_REGEX =
             Regex(
                 "[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)+",
