@@ -2878,9 +2878,13 @@ class LiveProcessOverlayService : Service() {
         }
         clearManualSearch()
         setStatus(
-            "Сохраняем baseline неизвестного " +
-                manualType.title +
-                "…",
+            if (manualUnknownAuto) {
+                "Запоминаем текущее состояние. После этого измени интересующий параметр в игре."
+            } else {
+                "Сохраняем baseline неизвестного " +
+                    manualType.title +
+                    "…"
+            },
         )
         executor.execute {
             val result =
@@ -2934,7 +2938,11 @@ class LiveProcessOverlayService : Service() {
                     manualBaseline =
                         baseline
                     setStatus(
-                        "Baseline готов. Измени значение в игре, затем нажми Изм./Не изм./↑/↓.",
+                        if (manualUnknownAuto) {
+                            "Снимок готов. Измени параметр в игре и снова открой MK."
+                        } else {
+                            "Baseline готов. Измени значение в игре, затем выбери фильтр."
+                        },
                     )
                     setPanelVisible(
                         false,
@@ -3208,7 +3216,14 @@ class LiveProcessOverlayService : Service() {
                             )
                     }
                     manualBaseline = null
-                    renderManualScan()
+                    if (
+                        currentPage ==
+                        OverlayPage.MANUAL ||
+                        currentPage ==
+                        OverlayPage.EXPERT
+                    ) {
+                        renderCurrentPage()
+                    }
                 }.onFailure {
                     failure ->
                     setStatus(
