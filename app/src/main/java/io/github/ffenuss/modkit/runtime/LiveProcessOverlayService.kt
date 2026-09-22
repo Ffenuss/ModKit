@@ -3870,76 +3870,81 @@ class LiveProcessOverlayService : Service() {
         ) {
             list.addView(
                 hintText(
-                    "Выбери значение и запусти 5-секундный trace. На ARM64 ModKit использует hardware watchpoint и покажет native reader/writer.",
+                    "После trace здесь появится код, который читает или изменяет выбранное значение.",
                 ),
             )
             return
         }
 
         codeAccessSites
-            .take(10)
+            .take(8)
             .forEach {
                 site ->
-                val kind =
+                val readableKind =
                     when (
                         site.accessKind
                     ) {
-                        RuntimeCodeAccessKind
-                            .WRITE ->
-                            "WRITE"
-                        RuntimeCodeAccessKind
-                            .READ ->
-                            "READ"
-                        RuntimeCodeAccessKind
-                            .UNKNOWN ->
-                            "ACCESS"
+                        RuntimeCodeAccessKind.WRITE ->
+                            "Изменяет значение"
+                        RuntimeCodeAccessKind.READ ->
+                            "Читает значение"
+                        RuntimeCodeAccessKind.UNKNOWN ->
+                            "Обращается к значению"
                     }
-                val offset =
-                    site.moduleFileOffset
-                        ?.let {
-                            " +0x" +
-                                it.toString(
-                                    16,
-                                )
-                        }
-                        .orEmpty()
-                val instruction =
-                    site.instructionText
-                        ?.substringAfter(
-                            ": ",
-                        )
+                val method =
+                    site.managedMethodCandidate
                         ?.takeIf {
                             it.isNotBlank()
                         }
-                        ?.let {
-                            " · " +
-                                it
-                        }
-                        .orEmpty()
-                val method =
-                    site.managedMethodCandidate
-                        ?.let {
-                            "\n" +
-                                it
-                        }
-                        .orEmpty()
+                val technical =
+                    if (
+                        currentPage ==
+                        OverlayPage.EXPERT
+                    ) {
+                        "\n" +
+                            site.moduleName +
+                            (
+                                site.moduleFileOffset
+                                    ?.let {
+                                        " +0x" +
+                                            it.toString(
+                                                16,
+                                            )
+                                    }
+                                    ?: ""
+                                ) +
+                            (
+                                site.instructionText
+                                    ?.let {
+                                        " · " +
+                                            it
+                                    }
+                                    ?: ""
+                                )
+                    } else {
+                        ""
+                    }
                 list.addView(
                     TextView(this).apply {
                         text =
-                            kind +
-                                " · " +
-                                site.moduleName +
-                                offset +
-                                " · x" +
+                            readableKind +
+                                (
+                                    method
+                                        ?.let {
+                                            "\n" +
+                                                it
+                                        }
+                                        ?: ""
+                                    ) +
+                                " · срабатываний " +
                                 site.count +
-                                instruction +
-                                method +
+                                technical +
                                 (
                                     if (
                                         selectedCodeSite ==
                                         site
                                     ) {
-                                        "\nВыбран для Writer block"
+                                        "\n✓ Выбран"
                                     } else {
                                         ""
                                     }
@@ -3947,21 +3952,19 @@ class LiveProcessOverlayService : Service() {
                         setTextColor(
                             if (
                                 site.accessKind ==
-                                RuntimeCodeAccessKind
-                                    .WRITE
+                                RuntimeCodeAccessKind.WRITE
                             ) {
                                 Color.WHITE
                             } else {
                                 Color.LTGRAY
                             },
                         )
-                        textSize =
-                            10f
+                        textSize = 11f
                         setPadding(
-                            dp(4),
-                            dp(4),
-                            dp(4),
-                            dp(4),
+                            dp(6),
+                            dp(6),
+                            dp(6),
+                            dp(6),
                         )
                         if (
                             eligibleWriterSite(
@@ -3977,17 +3980,22 @@ class LiveProcessOverlayService : Service() {
                                         site
                                     rebuildCodeAccessList()
                                     setStatus(
-                                        "Выбран writer: " +
-                                            site.moduleName +
-                                            " +0x" +
-                                            (
-                                                site.moduleFileOffset
-                                                    ?: 0L
-                                                ).toString(
-                                                16,
-                                            ) +
-                                            ". Writer block временно заменит только подтверждённую STR-инструкцию на NOP.",
+                                        "Выбран код, который изменяет значение. Теперь можно временно заблокировать это изменение.",
                                     )
+                                    if (
+                                        currentPage ==
+                                        OverlayPage.CANDIDATE
+                                    ) {
+                                        codePatchButton
+                                            ?.text =
+                                            selectedCandidate
+                                                ?.let {
+                                                    writerActionTitle(
+                                                        it,
+                                                    )
+                                                }
+                                                ?: "Блокировать изменение"
+                                    }
                                 }
                             }
                         }
