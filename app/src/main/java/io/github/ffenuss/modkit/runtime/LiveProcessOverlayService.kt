@@ -5267,7 +5267,16 @@ class LiveProcessOverlayService : Service() {
                     (_, resolved) ->
                     learnedCandidates =
                         resolved
-                    rebuildLearnedList()
+                    if (
+                        currentPage ==
+                        OverlayPage.HOME ||
+                        currentPage ==
+                        OverlayPage.MODS
+                    ) {
+                        renderCurrentPage()
+                    } else {
+                        rebuildLearnedList()
+                    }
                     setStatus(
                         if (
                             resolved.isEmpty()
