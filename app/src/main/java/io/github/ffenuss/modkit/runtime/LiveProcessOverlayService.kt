@@ -323,24 +323,52 @@ class LiveProcessOverlayService : Service() {
         panel = builtPanel
         val display =
             resources.displayMetrics
+        val availableWidth =
+            (
+                display.widthPixels -
+                    dp(16)
+                ).coerceAtLeast(
+                dp(96),
+            )
+        val availableHeight =
+            (
+                display.heightPixels -
+                    dp(80)
+                ).coerceAtLeast(
+                dp(96),
+            )
         val panelWidth =
             kotlin.math.min(
-                dp(340),
-                (
-                    display.widthPixels -
-                        dp(20)
-                    ).coerceAtLeast(
-                    dp(96),
+                availableWidth,
+                kotlin.math.max(
+                    kotlin.math.min(
+                        dp(220),
+                        availableWidth,
+                    ),
+                    kotlin.math.min(
+                        dp(300),
+                        (
+                            display.widthPixels *
+                                0.36f
+                            ).toInt(),
+                    ),
                 ),
             )
         val panelHeight =
             kotlin.math.min(
-                dp(590),
-                (
-                    display.heightPixels -
-                        dp(170)
-                    ).coerceAtLeast(
-                    dp(64),
+                availableHeight,
+                kotlin.math.max(
+                    kotlin.math.min(
+                        dp(260),
+                        availableHeight,
+                    ),
+                    kotlin.math.min(
+                        dp(520),
+                        (
+                            display.heightPixels *
+                                0.78f
+                            ).toInt(),
+                    ),
                 ),
             )
         root.addView(
