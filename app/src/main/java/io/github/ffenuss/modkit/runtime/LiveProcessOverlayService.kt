@@ -44,6 +44,8 @@ class LiveProcessOverlayService : Service() {
         AtomicBoolean(false)
     private val codeTraceBusy =
         AtomicBoolean(false)
+    private val codePatchBusy =
+        AtomicBoolean(false)
     private val stabilizationBusy =
         AtomicBoolean(false)
     private val profileStore by lazy {
@@ -98,6 +100,8 @@ class LiveProcessOverlayService : Service() {
         EditText? = null
     private var freezeButton:
         Button? = null
+    private var codePatchButton:
+        Button? = null
 
     private var autoSession:
         RootBehavioralScanSession? = null
@@ -145,6 +149,10 @@ class LiveProcessOverlayService : Service() {
         EditableRuntimeCandidate? = null
     private var codeAccessSites =
         emptyList<RootCodeAccessSite>()
+    private var selectedCodeSite:
+        RootCodeAccessSite? = null
+    private var activeCodePatch:
+        ActiveCodePatch? = null
     private var freezeTask:
         ScheduledFuture<*>? = null
     private var freezeTarget:
@@ -210,6 +218,7 @@ class LiveProcessOverlayService : Service() {
     }
 
     override fun onDestroy() {
+        rollbackActiveCodePatchBestEffort()
         resetRuntimeState()
         removeOverlay()
         executor.shutdownNow()
@@ -841,6 +850,21 @@ class LiveProcessOverlayService : Service() {
             matchWidth(),
         )
         rebuildCodeAccessList()
+
+        val writerBlock =
+            Button(this).apply {
+                text =
+                    "Writer block: OFF"
+                setOnClickListener {
+                    toggleSelectedWriterBlock()
+                }
+            }
+        codePatchButton =
+            writerBlock
+        body.addView(
+            writerBlock,
+            matchWidth(),
+        )
 
         body.addView(
             Button(this).apply {
@@ -2012,8 +2036,21 @@ class LiveProcessOverlayService : Service() {
         candidate:
             EditableRuntimeCandidate,
     ) {
+        val active =
+            activeCodePatch
+        if (
+            active != null &&
+            active.candidateId !=
+            candidate.id
+        ) {
+            setStatus(
+                "Сначала отключи Writer block у текущего параметра.",
+            )
+            return
+        }
         selectedCandidate =
             candidate
+        selectedCodeSite = null
         codeAccessSites =
             emptyList()
         rebuildCodeAccessList()
@@ -2037,6 +2074,12 @@ class LiveProcessOverlayService : Service() {
     private fun traceSelectedCodeAccess() {
         val cfg =
             config ?: return
+        if (activeCodePatch != null) {
+            setStatus(
+                "Отключи Writer block перед новым code trace.",
+            )
+            return
+        }
         val candidate =
             selectedCandidate
                 ?: run {
@@ -2109,6 +2152,13 @@ class LiveProcessOverlayService : Service() {
                     trace ->
                     codeAccessSites =
                         trace.sites
+                    selectedCodeSite =
+                        trace.sites
+                            .firstOrNull {
+                                eligibleWriterSite(
+                                    it,
+                                )
+                            }
                     rebuildCodeAccessList()
                     val writers =
                         trace.sites
@@ -2153,6 +2203,8 @@ class LiveProcessOverlayService : Service() {
                     failure ->
                     codeAccessSites =
                         emptyList()
+                    selectedCodeSite =
+                        null
                     rebuildCodeAccessList()
                     setStatus(
                         "Code trace недоступен: " +
@@ -2242,7 +2294,17 @@ class LiveProcessOverlayService : Service() {
                                 " · x" +
                                 site.count +
                                 instruction +
-                                method
+                                method +
+                                (
+                                    if (
+                                        selectedCodeSite ==
+                                        site
+                                    ) {
+                                        "\nВыбран для Writer block"
+                                    } else {
+                                        ""
+                                    }
+                                    )
                         setTextColor(
                             if (
                                 site.accessKind ==
@@ -2262,9 +2324,246 @@ class LiveProcessOverlayService : Service() {
                             dp(4),
                             dp(4),
                         )
+                        if (
+                            eligibleWriterSite(
+                                site,
+                            )
+                        ) {
+                            setOnClickListener {
+                                if (
+                                    activeCodePatch ==
+                                    null
+                                ) {
+                                    selectedCodeSite =
+                                        site
+                                    rebuildCodeAccessList()
+                                    setStatus(
+                                        "Выбран writer: " +
+                                            site.moduleName +
+                                            " +0x" +
+                                            (
+                                                site.moduleFileOffset
+                                                    ?: 0L
+                                                ).toString(
+                                                16,
+                                            ) +
+                                            ". Writer block временно заменит только подтверждённую STR-инструкцию на NOP.",
+                                    )
+                                }
+                            }
+                        }
                     },
                 )
             }
+    }
+
+    private fun eligibleWriterSite(
+        site: RootCodeAccessSite,
+    ): Boolean {
+        val mnemonic =
+            site.instructionText
+                ?.substringAfter(
+                    ": ",
+                )
+                ?.substringBefore(
+                    ' ',
+                )
+                ?.lowercase()
+                .orEmpty()
+        return site.accessKind ==
+            RuntimeCodeAccessKind.WRITE &&
+            site.instructionWord !=
+            null &&
+            site.instructionAddress >
+            0L &&
+            site.moduleFileOffset !=
+            null &&
+            (
+                mnemonic == "str" ||
+                    mnemonic == "strb" ||
+                    mnemonic == "strh"
+                )
+    }
+
+    private fun toggleSelectedWriterBlock() {
+        val cfg =
+            config ?: return
+        if (
+            !codePatchBusy
+                .compareAndSet(
+                    false,
+                    true,
+                )
+        ) {
+            return
+        }
+
+        val active =
+            activeCodePatch
+        if (active != null) {
+            executor.execute {
+                val result =
+                    runCatching {
+                        RootRuntimeCodeToggleCoordinator
+                            .setNopEnabled(
+                                packageName =
+                                    cfg.packageName,
+                                pid = cfg.pid,
+                                target =
+                                    active.target,
+                                enabled = false,
+                                cancellation =
+                                    AtomicCancellationSignal(),
+                            )
+                    }
+                main.post {
+                    codePatchBusy.set(
+                        false,
+                    )
+                    result.onSuccess {
+                        activeCodePatch =
+                            null
+                        codePatchButton
+                            ?.text =
+                            "Writer block: OFF"
+                        setStatus(
+                            "Writer block отключён; исходная ARM64-инструкция восстановлена и проверена.",
+                        )
+                    }.onFailure {
+                        failure ->
+                        setStatus(
+                            "Не удалось подтвердить откат Writer block: " +
+                                (
+                                    failure.message
+                                        ?: failure
+                                            .javaClass
+                                            .simpleName
+                                    ),
+                        )
+                    }
+                }
+            }
+            return
+        }
+
+        val candidate =
+            selectedCandidate
+        val site =
+            selectedCodeSite
+        if (
+            candidate == null ||
+            site == null ||
+            !eligibleWriterSite(
+                site,
+            )
+        ) {
+            codePatchBusy.set(
+                false,
+            )
+            setStatus(
+                "Сначала выбери подтверждённый WRITE/STR участок из code trace.",
+            )
+            return
+        }
+
+        val word =
+            requireNotNull(
+                site.instructionWord,
+            )
+        val target =
+            RootRuntimeCodeToggleTarget(
+                id =
+                    "writer:" +
+                        candidate.id +
+                        ":" +
+                        site.instructionAddress
+                            .toString(
+                                16,
+                            ),
+                title =
+                    candidate.title +
+                        " writer",
+                runtimeAddress =
+                    site.instructionAddress,
+                mappedPath =
+                    site.mappedPath,
+                originalWord =
+                    word,
+            )
+
+        executor.execute {
+            val result =
+                runCatching {
+                    RootRuntimeCodeToggleCoordinator
+                        .setNopEnabled(
+                            packageName =
+                                cfg.packageName,
+                            pid = cfg.pid,
+                            target =
+                                target,
+                            enabled = true,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                        )
+                }
+            main.post {
+                codePatchBusy.set(
+                    false,
+                )
+                result.onSuccess {
+                    activeCodePatch =
+                        ActiveCodePatch(
+                            candidateId =
+                                candidate.id,
+                            target =
+                                target,
+                        )
+                    codePatchButton?.text =
+                        "Writer block: ON"
+                    setStatus(
+                        "Writer block включён. Только подтверждённая STR-инструкция временно заменена на NOP; нажми ещё раз для точного отката.",
+                    )
+                }.onFailure {
+                    failure ->
+                    setStatus(
+                        "Writer block не применён: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun rollbackActiveCodePatchBestEffort() {
+        val cfg =
+            config ?: return
+        val active =
+            activeCodePatch
+                ?: return
+        runCatching {
+            RootRuntimeCodeToggleCoordinator
+                .setNopEnabled(
+                    packageName =
+                        cfg.packageName,
+                    pid = cfg.pid,
+                    target =
+                        active.target,
+                    enabled = false,
+                    cancellation =
+                        AtomicCancellationSignal(),
+                    runner =
+                        AndroidRootCommandRunner(
+                            timeoutMs =
+                                2_500L,
+                        ),
+                )
+        }
+        activeCodePatch = null
     }
 
     private fun writeSelected() {
@@ -2557,9 +2856,16 @@ class LiveProcessOverlayService : Service() {
         selectedCandidate = null
         codeAccessSites =
             emptyList()
+        selectedCodeSite = null
+        activeCodePatch = null
         codeTraceBusy.set(
             false,
         )
+        codePatchBusy.set(
+            false,
+        )
+        codePatchButton?.text =
+            "Writer block: OFF"
         codeAccessList
             ?.removeAllViews()
     }
@@ -3593,6 +3899,12 @@ class LiveProcessOverlayService : Service() {
                 resources.displayMetrics
                     .density
             ).toInt()
+
+    private data class ActiveCodePatch(
+        val candidateId: String,
+        val target:
+            RootRuntimeCodeToggleTarget,
+    )
 
     private data class TrainingAggregate(
         val candidate:

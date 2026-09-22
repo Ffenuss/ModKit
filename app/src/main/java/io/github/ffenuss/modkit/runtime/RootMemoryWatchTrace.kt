@@ -58,7 +58,7 @@ internal data class ParsedRootMemoryWatchOutput(
     val errors: List<String>,
 )
 
-object RootMemoryWatchOutputParser {
+internal object RootMemoryWatchOutputParser {
     private const val MARKER =
         "MODKIT_ROOT_WATCH_V1"
 
