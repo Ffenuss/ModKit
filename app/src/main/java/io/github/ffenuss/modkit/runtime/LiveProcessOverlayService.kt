@@ -428,10 +428,10 @@ class LiveProcessOverlayService : Service() {
                         .apply {
                             setColor(
                                 Color.argb(
-                                    244,
-                                    25,
-                                    25,
-                                    30,
+                                    246,
+                                    24,
+                                    24,
+                                    29,
                                 ),
                             )
                             cornerRadius =
@@ -440,175 +440,311 @@ class LiveProcessOverlayService : Service() {
                         }
             }
 
-        body.addView(
+        val header =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+            }
+        header.addView(
             TextView(this).apply {
                 text =
-                    "ModKit Live · " +
+                    "ModKit · " +
                         config.label
                 setTextColor(
                     Color.WHITE,
                 )
-                textSize = 18f
+                textSize = 17f
             },
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams
+                    .WRAP_CONTENT,
+                1f,
+            ),
+        )
+        header.addView(
+            Button(this).apply {
+                text = "—"
+                minWidth = dp(48)
+                minimumWidth = dp(48)
+                setOnClickListener {
+                    setPanelVisible(
+                        false,
+                    )
+                }
+            },
+            LinearLayout.LayoutParams(
+                dp(54),
+                LinearLayout.LayoutParams
+                    .WRAP_CONTENT,
+            ),
         )
         body.addView(
-            TextView(this).apply {
-                text =
-                    config.packageName +
-                        " · PID " +
-                        config.pid
-                setTextColor(
-                    Color.LTGRAY,
-                )
-                textSize = 11f
-            },
+            header,
+            matchWidth(),
         )
 
         statusView =
             TextView(this).apply {
                 text =
-                    "Подключено. Автоскан ещё не запущен."
+                    "Подключено · PID " +
+                        config.pid
                 setTextColor(
-                    Color.WHITE,
+                    Color.LTGRAY,
                 )
-                textSize = 12f
+                textSize = 11f
                 setPadding(
                     0,
-                    dp(8),
+                    dp(4),
                     0,
-                    dp(8),
+                    dp(6),
                 )
             }
         body.addView(
             statusView,
+            matchWidth(),
         )
 
-        body.addView(
-            sectionTitle(
-                "Сохранённые моды",
-            ),
-        )
-        learnedList =
+        val content =
             LinearLayout(this).apply {
                 orientation =
                     LinearLayout.VERTICAL
             }
+        pageContainer =
+            content
+
         body.addView(
-            learnedList,
+            ScrollView(this).apply {
+                isFillViewport =
+                    true
+                addView(
+                    content,
+                    android.view.ViewGroup
+                        .LayoutParams(
+                            android.view.ViewGroup
+                                .LayoutParams
+                                .MATCH_PARENT,
+                            android.view.ViewGroup
+                                .LayoutParams
+                                .WRAP_CONTENT,
+                        ),
+                )
+            },
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams
+                    .MATCH_PARENT,
+                0,
+                1f,
+            ),
+        )
+
+        currentPage =
+            OverlayPage.HOME
+        renderCurrentPage()
+        return body
+    }
+
+    private fun navigate(
+        page: OverlayPage,
+    ) {
+        currentPage = page
+        renderCurrentPage()
+    }
+
+    private fun renderCurrentPage() {
+        val container =
+            pageContainer
+                ?: return
+        container.removeAllViews()
+        learnedList = null
+        behavioralList = null
+        manualList = null
+        codeAccessList = null
+        manualCount = null
+        autoButton = null
+        manualTypeButton = null
+        manualQuery = null
+        editorTitle = null
+        editorValue = null
+        renameValue = null
+        freezeButton = null
+        codePatchButton = null
+
+        when (currentPage) {
+            OverlayPage.HOME ->
+                renderHomePage(
+                    container,
+                )
+            OverlayPage.AUTO ->
+                renderAutoPage(
+                    container,
+                )
+            OverlayPage.TRAINING ->
+                renderTrainingPage(
+                    container,
+                )
+            OverlayPage.MANUAL ->
+                renderManualPage(
+                    container,
+                )
+            OverlayPage.MODS ->
+                renderModsPage(
+                    container,
+                )
+            OverlayPage.CANDIDATE ->
+                renderCandidatePage(
+                    container,
+                )
+            OverlayPage.EXPERT ->
+                renderExpertPage(
+                    container,
+                )
+        }
+    }
+
+    private fun renderHomePage(
+        container: LinearLayout,
+    ) {
+        container.addView(
+            pageTitle(
+                "Что хочешь сделать?",
+                "Основные действия вынесены отдельно. Технические параметры спрятаны в «Эксперт».",
+                showBack = false,
+            ),
+        )
+
+        container.addView(
+            pageButton(
+                "🔎  Автопоиск модов",
+                "Играй как обычно и повторяй действия несколько раз. ModKit покажет только устойчивые кандидаты.",
+            ) {
+                navigate(
+                    OverlayPage.AUTO,
+                )
+            },
+        )
+        container.addView(
+            pageButton(
+                "🎯  Обучить действие",
+                "Скажи ModKit, что именно собираешься делать: получать урон, атаковать, двигаться и т. д.",
+            ) {
+                navigate(
+                    OverlayPage.TRAINING,
+                )
+            },
+        )
+        container.addView(
+            pageButton(
+                "⌨  Ручной поиск",
+                "Простой сценарий: было число → найти → изменить в игре → уточнить.",
+            ) {
+                manualAutoType =
+                    true
+                navigate(
+                    OverlayPage.MANUAL,
+                )
+            },
+        )
+        container.addView(
+            pageButton(
+                "★  Мои моды · " +
+                    learnedCandidates.size,
+                "Сохранённые и восстановленные привязки этой игры.",
+            ) {
+                navigate(
+                    OverlayPage.MODS,
+                )
+            },
+        )
+
+        if (
+            autoSession != null
+        ) {
+            container.addView(
+                hintText(
+                    "Автоскан сейчас работает в фоне.",
+                ),
+            )
+        }
+
+        container.addView(
+            Button(this).apply {
+                text =
+                    "Экспертные инструменты"
+                setOnClickListener {
+                    navigate(
+                        OverlayPage.EXPERT,
+                    )
+                }
+            },
             matchWidth(),
         )
-        rebuildLearnedList()
+        container.addView(
+            Button(this).apply {
+                text =
+                    "Закрыть MK и остановить сканеры"
+                setOnClickListener {
+                    stopSelf()
+                }
+            },
+            matchWidth(),
+        )
+    }
+
+    private fun renderAutoPage(
+        container: LinearLayout,
+    ) {
+        container.addView(
+            pageTitle(
+                "Автопоиск модов",
+                "Нажми старт, сверни MK и несколько раз повтори интересующие действия. Необязательно делать только одно действие.",
+            ),
+        )
 
         val auto =
             Button(this).apply {
                 text =
-                    "▶ Автоскан"
+                    if (
+                        autoSession ==
+                        null
+                    ) {
+                        "▶ Начать скан"
+                    } else {
+                        "■ Остановить скан"
+                    }
                 setOnClickListener {
                     if (
                         autoSession ==
                         null
                     ) {
                         startAutoScan()
+                        setPanelVisible(
+                            false,
+                        )
                     } else {
                         stopAutoScan(
                             userRequested =
                                 true,
                         )
+                        renderCurrentPage()
                     }
                 }
             }
         autoButton = auto
-        body.addView(
+        container.addView(
             auto,
             matchWidth(),
         )
 
-        body.addView(
+        container.addView(
+            hintText(
+                "ModKit скрывает значения, которые выглядят как фоновые счётчики, указатели, случайные битовые шаблоны или меняются без устойчивой связи с действиями.",
+            ),
+        )
+
+        container.addView(
             sectionTitle(
-                "Обучить действие",
-            ),
-        )
-        val trainingRow1 =
-            LinearLayout(this).apply {
-                orientation =
-                    LinearLayout.HORIZONTAL
-            }
-        trainingRow1.addView(
-            trainingButton(
-                "Ходьба",
-                BehavioralActionHint
-                    .MOVEMENT,
-            ),
-            weighted(),
-        )
-        trainingRow1.addView(
-            trainingButton(
-                "Атака",
-                BehavioralActionHint
-                    .ATTACK,
-            ),
-            weighted(),
-        )
-        body.addView(
-            trainingRow1,
-            matchWidth(),
-        )
-
-        val trainingRow2 =
-            LinearLayout(this).apply {
-                orientation =
-                    LinearLayout.HORIZONTAL
-            }
-        trainingRow2.addView(
-            trainingButton(
-                "Получаю урон",
-                BehavioralActionHint
-                    .DAMAGE_TAKEN,
-            ),
-            weighted(),
-        )
-        trainingRow2.addView(
-            trainingButton(
-                "Ресурс",
-                BehavioralActionHint
-                    .RESOURCE_CHANGE,
-            ),
-            weighted(),
-        )
-        body.addView(
-            trainingRow2,
-            matchWidth(),
-        )
-
-        val trainingRow3 =
-            LinearLayout(this).apply {
-                orientation =
-                    LinearLayout.HORIZONTAL
-            }
-        trainingRow3.addView(
-            trainingButton(
-                "Предмет",
-                BehavioralActionHint
-                    .ITEM_CHANGE,
-            ),
-            weighted(),
-        )
-        trainingRow3.addView(
-            trainingButton(
-                "Другое",
-                BehavioralActionHint
-                    .OTHER,
-            ),
-            weighted(),
-        )
-        body.addView(
-            trainingRow3,
-            matchWidth(),
-        )
-
-        body.addView(
-            sectionTitle(
-                "Кандидаты автосканирования",
+                "Подтверждаемые находки",
             ),
         )
         behavioralList =
@@ -616,18 +752,554 @@ class LiveProcessOverlayService : Service() {
                 orientation =
                     LinearLayout.VERTICAL
             }
-        body.addView(
-            behavioralList,
+        container.addView(
+            requireNotNull(
+                behavioralList,
+            ),
             matchWidth(),
         )
+        rebuildBehavioralList()
+    }
 
-        body.addView(
-            sectionTitle(
-                "Ручной поиск значений",
+    private fun renderTrainingPage(
+        container: LinearLayout,
+    ) {
+        container.addView(
+            pageTitle(
+                "Обучить действие",
+                "Выбери действие. MK свернётся: повтори действие 3–5 раз и снова нажми MK. Повторный раунд того же действия сужает список.",
             ),
         )
 
-        val manualTop =
+        val actions =
+            listOf(
+                "❤️ Здоровье / получаю урон" to
+                    BehavioralActionHint
+                        .DAMAGE_TAKEN,
+                "⚔ Урон моей атаки" to
+                    BehavioralActionHint
+                        .ATTACK,
+                "🏃 Движение / скорость" to
+                    BehavioralActionHint
+                        .MOVEMENT,
+                "⚡ Выносливость" to
+                    BehavioralActionHint
+                        .STAMINA,
+                "⏱ Cooldown / перезарядка" to
+                    BehavioralActionHint
+                        .COOLDOWN,
+                "💰 Валюта / ресурс" to
+                    BehavioralActionHint
+                        .RESOURCE_CHANGE,
+                "🎒 Предмет / количество" to
+                    BehavioralActionHint
+                        .ITEM_CHANGE,
+                "🎯 Другое действие" to
+                    BehavioralActionHint
+                        .OTHER,
+            )
+        actions.forEach {
+            (title, hint) ->
+            container.addView(
+                Button(this).apply {
+                    text = title
+                    setOnClickListener {
+                        startTraining(
+                            hint,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+        }
+
+        if (
+            behavioralSource ==
+                LearnedCandidateSource
+                    .TRAINING &&
+            behavioralCandidates
+                .isNotEmpty()
+        ) {
+            container.addView(
+                sectionTitle(
+                    "Результат обучения",
+                ),
+            )
+            behavioralList =
+                LinearLayout(this).apply {
+                    orientation =
+                        LinearLayout.VERTICAL
+                }
+            container.addView(
+                requireNotNull(
+                    behavioralList,
+                ),
+                matchWidth(),
+            )
+            rebuildBehavioralList()
+        }
+    }
+
+    private fun renderManualPage(
+        container: LinearLayout,
+    ) {
+        manualAutoType = true
+        container.addView(
+            pageTitle(
+                "Ручной поиск",
+                "Тип данных выбирается автоматически. Для обычного количества предметов вроде 28 сначала ищется Int32, а не Double.",
+            ),
+        )
+
+        if (
+            manualBaseline !=
+                null &&
+            manualUnknownAuto
+        ) {
+            container.addView(
+                hintText(
+                    "Снимок памяти готов. Вернись в игру, измени интересующий параметр, затем снова открой MK — ModKit сам оставит изменившиеся значения.",
+                ),
+            )
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Вернуться в игру"
+                    setOnClickListener {
+                        setPanelVisible(
+                            false,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Отменить неизвестный поиск"
+                    setOnClickListener {
+                        clearManualSearch()
+                        manualUnknownAuto =
+                            false
+                        renderCurrentPage()
+                    }
+                },
+                matchWidth(),
+            )
+            return
+        }
+
+        manualQuery =
+            EditText(this).apply {
+                hint =
+                    if (
+                        manualScan ==
+                        null
+                    ) {
+                        "Какое значение сейчас? Например 28"
+                    } else {
+                        "Новое значение после изменения"
+                    }
+                setSingleLine(true)
+                setTextColor(
+                    Color.WHITE,
+                )
+                setHintTextColor(
+                    Color.GRAY,
+                )
+            }
+        container.addView(
+            requireNotNull(
+                manualQuery,
+            ),
+            matchWidth(),
+        )
+
+        if (
+            manualScan == null
+        ) {
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Найти значение"
+                    setOnClickListener {
+                        manualExact(
+                            refine = false,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Не знаю число — наблюдать изменения"
+                    setOnClickListener {
+                        manualUnknownAuto =
+                            true
+                        manualType =
+                            RuntimeValueType
+                                .INT32
+                        manualUnknownBaseline()
+                    }
+                },
+                matchWidth(),
+            )
+            container.addView(
+                hintText(
+                    "Обычный поиск использует быстрый native scanner. Полный диапазон памяти, типы Float/Double вручную и технические фильтры находятся в «Эксперт».",
+                ),
+            )
+            return
+        }
+
+        manualCount =
+            TextView(this).apply {
+                setTextColor(
+                    Color.WHITE,
+                )
+                textSize = 12f
+            }
+        container.addView(
+            requireNotNull(
+                manualCount,
+            ),
+        )
+        manualList =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
+            }
+        container.addView(
+            requireNotNull(
+                manualList,
+            ),
+            matchWidth(),
+        )
+        renderManualScan()
+
+        val hitCount =
+            manualScan
+                ?.snapshot
+                ?.hits
+                ?.size
+                ?: 0
+        if (hitCount > 5) {
+            container.addView(
+                hintText(
+                    "Теперь измени это число в игре, вернись сюда, введи новое значение и нажми «Уточнить». Повторяй, пока не останется несколько результатов.",
+                ),
+            )
+            container.addView(
+                Button(this).apply {
+                    text = "Уточнить"
+                    setOnClickListener {
+                        manualExact(
+                            refine = true,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Свернуть и изменить значение в игре"
+                    setOnClickListener {
+                        setPanelVisible(
+                            false,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+        } else if (
+            hitCount in 1..5
+        ) {
+            container.addView(
+                hintText(
+                    "Осталось мало результатов. Нажми подходящий результат — откроется изменение, Freeze, code trace и сохранение мода.",
+                ),
+            )
+        } else {
+            container.addView(
+                hintText(
+                    "Совпадений нет. Проверь число и начни поиск заново. Для редких типов можно открыть «Эксперт».",
+                ),
+            )
+        }
+
+        container.addView(
+            Button(this).apply {
+                text =
+                    "Начать поиск заново"
+                setOnClickListener {
+                    clearManualSearch()
+                    renderCurrentPage()
+                }
+            },
+            matchWidth(),
+        )
+    }
+
+    private fun renderModsPage(
+        container: LinearLayout,
+    ) {
+        container.addView(
+            pageTitle(
+                "Мои моды",
+                "Здесь только сохранённые привязки. Ошибочную привязку можно открыть, перепроверить, переименовать или удалить.",
+            ),
+        )
+        learnedList =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
+            }
+        container.addView(
+            requireNotNull(
+                learnedList,
+            ),
+            matchWidth(),
+        )
+        rebuildLearnedList()
+    }
+
+    private fun renderCandidatePage(
+        container: LinearLayout,
+    ) {
+        val candidate =
+            selectedCandidate
+        if (candidate == null) {
+            navigate(
+                OverlayPage.HOME,
+            )
+            return
+        }
+
+        container.addView(
+            pageTitle(
+                candidateDisplayTitle(
+                    candidate,
+                ),
+                candidate.subtitle,
+            ),
+        )
+
+        editorTitle =
+            TextView(this).apply {
+                text =
+                    "Сейчас: " +
+                        candidate.value +
+                        " · " +
+                        candidate.valueType
+                            .title +
+                        (
+                            candidate.confidence
+                                ?.let {
+                                    " · уверенность " +
+                                        it +
+                                        "%"
+                                }
+                                ?: ""
+                            )
+                setTextColor(
+                    Color.WHITE,
+                )
+                textSize = 13f
+            }
+        container.addView(
+            requireNotNull(
+                editorTitle,
+            ),
+        )
+
+        editorValue =
+            EditText(this).apply {
+                hint =
+                    "Новое значение"
+                setSingleLine(true)
+                setTextColor(
+                    Color.WHITE,
+                )
+                setHintTextColor(
+                    Color.GRAY,
+                )
+                setText(
+                    candidate.value,
+                )
+            }
+        container.addView(
+            requireNotNull(
+                editorValue,
+            ),
+            matchWidth(),
+        )
+
+        container.addView(
+            Button(this).apply {
+                text =
+                    "Изменить значение"
+                setOnClickListener {
+                    writeSelected()
+                }
+            },
+            matchWidth(),
+        )
+        val freeze =
+            Button(this).apply {
+                text =
+                    if (
+                        freezeTask ==
+                        null
+                    ) {
+                        "Заморозить значение"
+                    } else {
+                        "Остановить заморозку"
+                    }
+                setOnClickListener {
+                    toggleFreeze()
+                    renderCurrentPage()
+                }
+            }
+        freezeButton = freeze
+        container.addView(
+            freeze,
+            matchWidth(),
+        )
+
+        container.addView(
+            sectionTitle(
+                "Что изменяет это значение",
+            ),
+        )
+        container.addView(
+            Button(this).apply {
+                text =
+                    "Найти код, который меняет значение · 5 сек"
+                setOnClickListener {
+                    traceSelectedCodeAccess()
+                }
+            },
+            matchWidth(),
+        )
+        codeAccessList =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
+            }
+        container.addView(
+            requireNotNull(
+                codeAccessList,
+            ),
+            matchWidth(),
+        )
+        rebuildCodeAccessList()
+
+        val writer =
+            Button(this).apply {
+                text =
+                    writerActionTitle(
+                        candidate,
+                    )
+                setOnClickListener {
+                    toggleSelectedWriterBlock()
+                }
+            }
+        codePatchButton =
+            writer
+        container.addView(
+            writer,
+            matchWidth(),
+        )
+
+        container.addView(
+            Button(this).apply {
+                text =
+                    if (
+                        candidate.persistent
+                    ) {
+                        "Перепроверить и обновить привязку"
+                    } else {
+                        "Сохранить в «Мои моды»"
+                    }
+                setOnClickListener {
+                    persistSelectedCandidate()
+                }
+            },
+            matchWidth(),
+        )
+
+        if (candidate.persistent) {
+            renameValue =
+                EditText(this).apply {
+                    hint =
+                        "Новое имя мода"
+                    setSingleLine(true)
+                    setTextColor(
+                        Color.WHITE,
+                    )
+                    setHintTextColor(
+                        Color.GRAY,
+                    )
+                    setText(
+                        candidate.title,
+                    )
+                }
+            container.addView(
+                requireNotNull(
+                    renameValue,
+                ),
+                matchWidth(),
+            )
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Переименовать мод"
+                    setOnClickListener {
+                        renameSelectedPersistentCandidate()
+                    }
+                },
+                matchWidth(),
+            )
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Удалить эту привязку"
+                    setOnClickListener {
+                        removeSelectedPersistentCandidate()
+                    }
+                },
+                matchWidth(),
+            )
+        }
+
+        container.addView(
+            Button(this).apply {
+                text =
+                    "Технические детали"
+                setOnClickListener {
+                    navigate(
+                        OverlayPage.EXPERT,
+                    )
+                }
+            },
+            matchWidth(),
+        )
+    }
+
+    private fun renderExpertPage(
+        container: LinearLayout,
+    ) {
+        manualAutoType = false
+        container.addView(
+            pageTitle(
+                "Эксперт",
+                "Ручной выбор типа, полный scan, диапазоны, fuzzy/group и фильтры неизвестного значения. Обычный пользователь сюда заходить не обязан.",
+            ),
+        )
+
+        val top =
             LinearLayout(this).apply {
                 orientation =
                     LinearLayout.HORIZONTAL
@@ -644,8 +1316,10 @@ class LiveProcessOverlayService : Service() {
                     clearManualSearch()
                 }
             }
-        manualTop.addView(
-            manualTypeButton,
+        top.addView(
+            requireNotNull(
+                manualTypeButton,
+            ),
             LinearLayout.LayoutParams(
                 dp(112),
                 LinearLayout.LayoutParams
@@ -654,7 +1328,8 @@ class LiveProcessOverlayService : Service() {
         )
         manualQuery =
             EditText(this).apply {
-                hint = "100 · 10..20 · 1.0~0.1 · 10,20"
+                hint =
+                    "100 · 10..20 · 1.0~0.1 · 10,20"
                 setSingleLine(true)
                 setTextColor(
                     Color.WHITE,
@@ -663,8 +1338,10 @@ class LiveProcessOverlayService : Service() {
                     Color.GRAY,
                 )
             }
-        manualTop.addView(
-            manualQuery,
+        top.addView(
+            requireNotNull(
+                manualQuery,
+            ),
             LinearLayout.LayoutParams(
                 0,
                 LinearLayout.LayoutParams
@@ -672,40 +1349,39 @@ class LiveProcessOverlayService : Service() {
                 1f,
             ),
         )
-        body.addView(
-            manualTop,
+        container.addView(
+            top,
             matchWidth(),
         )
 
-        body.addView(
+        container.addView(
             Button(this).apply {
                 text =
-                    "Объём: быстрый"
+                    if (
+                        manualFullScan
+                    ) {
+                        "Объём: полный"
+                    } else {
+                        "Объём: быстрый"
+                    }
                 setOnClickListener {
                     manualFullScan =
                         !manualFullScan
-                    text =
-                        if (
-                            manualFullScan
-                        ) {
-                            "Объём: полный"
-                        } else {
-                            "Объём: быстрый"
-                        }
                     clearManualSearch()
+                    renderCurrentPage()
                 }
             },
             matchWidth(),
         )
 
-        val exactRow =
+        val exact =
             LinearLayout(this).apply {
                 orientation =
                     LinearLayout.HORIZONTAL
             }
-        exactRow.addView(
+        exact.addView(
             Button(this).apply {
-                text = "Новый поиск"
+                text = "Новый"
                 setOnClickListener {
                     manualExact(
                         refine = false,
@@ -714,7 +1390,7 @@ class LiveProcessOverlayService : Service() {
             },
             weighted(),
         )
-        exactRow.addView(
+        exact.addView(
             Button(this).apply {
                 text = "Уточнить ="
                 setOnClickListener {
@@ -725,26 +1401,28 @@ class LiveProcessOverlayService : Service() {
             },
             weighted(),
         )
-        exactRow.addView(
+        exact.addView(
             Button(this).apply {
                 text = "Неизвестно"
                 setOnClickListener {
+                    manualUnknownAuto =
+                        false
                     manualUnknownBaseline()
                 }
             },
             weighted(),
         )
-        body.addView(
-            exactRow,
+        container.addView(
+            exact,
             matchWidth(),
         )
 
-        val refineRow1 =
+        val filters =
             LinearLayout(this).apply {
                 orientation =
                     LinearLayout.HORIZONTAL
             }
-        refineRow1.addView(
+        filters.addView(
             refineButton(
                 "Изм.",
                 RuntimeValueRefinement
@@ -752,7 +1430,7 @@ class LiveProcessOverlayService : Service() {
             ),
             weighted(),
         )
-        refineRow1.addView(
+        filters.addView(
             refineButton(
                 "Не изм.",
                 RuntimeValueRefinement
@@ -760,7 +1438,7 @@ class LiveProcessOverlayService : Service() {
             ),
             weighted(),
         )
-        refineRow1.addView(
+        filters.addView(
             refineButton(
                 "↑",
                 RuntimeValueRefinement
@@ -768,7 +1446,7 @@ class LiveProcessOverlayService : Service() {
             ),
             weighted(),
         )
-        refineRow1.addView(
+        filters.addView(
             refineButton(
                 "↓",
                 RuntimeValueRefinement
@@ -776,350 +1454,217 @@ class LiveProcessOverlayService : Service() {
             ),
             weighted(),
         )
-        body.addView(
-            refineRow1,
+        container.addView(
+            filters,
             matchWidth(),
         )
 
         manualCount =
             TextView(this).apply {
-                text = "Результатов: 0"
                 setTextColor(
                     Color.LTGRAY,
                 )
                 textSize = 11f
             }
-        body.addView(
-            manualCount,
+        container.addView(
+            requireNotNull(
+                manualCount,
+            ),
         )
         manualList =
             LinearLayout(this).apply {
                 orientation =
                     LinearLayout.VERTICAL
             }
-        body.addView(
-            manualList,
+        container.addView(
+            requireNotNull(
+                manualList,
+            ),
             matchWidth(),
         )
+        if (manualScan != null) {
+            renderManualScan()
+        }
 
-        body.addView(
-            sectionTitle(
-                "Изменить выбранное",
-            ),
-        )
-        editorTitle =
+        selectedCandidate
+            ?.let {
+                candidate ->
+                container.addView(
+                    sectionTitle(
+                        "Выбрано: " +
+                            candidate.title,
+                    ),
+                )
+                container.addView(
+                    hintText(
+                        "0x" +
+                            candidate.address
+                                .toString(
+                                    16,
+                                ) +
+                            " · " +
+                            candidate.valueType
+                                .title +
+                            " · " +
+                            candidate.value,
+                    ),
+                )
+            }
+    }
+
+    private fun pageTitle(
+        title: String,
+        subtitle: String,
+        showBack: Boolean = true,
+    ): View {
+        val group =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
+                setPadding(
+                    0,
+                    dp(4),
+                    0,
+                    dp(8),
+                )
+            }
+        if (showBack) {
+            group.addView(
+                Button(this).apply {
+                    text = "← Назад"
+                    setOnClickListener {
+                        navigate(
+                            OverlayPage.HOME,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+        }
+        group.addView(
             TextView(this).apply {
-                text =
-                    "Кандидат не выбран"
+                text = title
+                setTextColor(
+                    Color.WHITE,
+                )
+                textSize = 18f
+            },
+        )
+        group.addView(
+            TextView(this).apply {
+                text = subtitle
                 setTextColor(
                     Color.LTGRAY,
                 )
                 textSize = 11f
-            }
-        body.addView(
-            editorTitle,
-        )
-        editorValue =
-            EditText(this).apply {
-                hint =
-                    "Новое значение"
-                setSingleLine(true)
-                setTextColor(
-                    Color.WHITE,
-                )
-                setHintTextColor(
-                    Color.GRAY,
-                )
-            }
-        body.addView(
-            editorValue,
-            matchWidth(),
-        )
-
-        val writeRow =
-            LinearLayout(this).apply {
-                orientation =
-                    LinearLayout.HORIZONTAL
-            }
-        writeRow.addView(
-            Button(this).apply {
-                text = "Записать"
-                setOnClickListener {
-                    writeSelected()
-                }
             },
-            weighted(),
         )
-        val freeze =
-            Button(this).apply {
-                text = "Freeze: OFF"
-                setOnClickListener {
-                    toggleFreeze()
-                }
-            }
-        freezeButton = freeze
-        writeRow.addView(
-            freeze,
-            weighted(),
-        )
-        body.addView(
-            writeRow,
-            matchWidth(),
-        )
+        return group
+    }
 
-        body.addView(
-            sectionTitle(
-                "Код, который использует значение",
-            ),
-        )
-        body.addView(
-            Button(this).apply {
-                text =
-                    "Найти reader/writer · 5 сек"
-                setOnClickListener {
-                    traceSelectedCodeAccess()
-                }
-            },
-            matchWidth(),
-        )
-        codeAccessList =
+    private fun pageButton(
+        title: String,
+        subtitle: String,
+        onClick: () -> Unit,
+    ): View {
+        val group =
             LinearLayout(this).apply {
                 orientation =
                     LinearLayout.VERTICAL
+                setPadding(
+                    0,
+                    dp(4),
+                    0,
+                    dp(4),
+                )
             }
-        body.addView(
-            codeAccessList,
-            matchWidth(),
-        )
-        rebuildCodeAccessList()
-
-        val writerBlock =
+        group.addView(
             Button(this).apply {
-                text =
-                    "Writer block: OFF"
+                text = title
                 setOnClickListener {
-                    toggleSelectedWriterBlock()
-                }
-            }
-        codePatchButton =
-            writerBlock
-        body.addView(
-            writerBlock,
-            matchWidth(),
-        )
-
-        body.addView(
-            Button(this).apply {
-                text =
-                    "Закрепить для следующих запусков"
-                setOnClickListener {
-                    persistSelectedCandidate()
+                    onClick()
                 }
             },
             matchWidth(),
         )
-        body.addView(
-            Button(this).apply {
-                text =
-                    "Удалить выбранное из сохранённых"
-                setOnClickListener {
-                    removeSelectedPersistentCandidate()
-                }
-            },
-            matchWidth(),
-        )
-
-        val collapse =
-            Button(this).apply {
-                text =
-                    "Свернуть MK"
-                setOnClickListener {
-                    setPanelVisible(
-                        false,
-                    )
-                }
-            }
-        body.addView(
-            collapse,
-            matchWidth(),
-        )
-
-        body.addView(
-            Button(this).apply {
-                text =
-                    "Закрыть MK и остановить сканеры"
-                setOnClickListener {
-                    stopSelf()
-                }
-            },
-            matchWidth(),
-        )
-
-        return ScrollView(this).apply {
-            isFillViewport =
-                true
-            addView(
-                body,
-                android.view.ViewGroup
-                    .LayoutParams(
-                        android.view.ViewGroup
-                            .LayoutParams
-                            .MATCH_PARENT,
-                        android.view.ViewGroup
-                            .LayoutParams
-                            .WRAP_CONTENT,
-                    ),
-            )
-        }
-    }
-
-    private fun scheduleProcessWatch() {
-        stopProcessWatch()
-        processWatchTask =
-            executor.scheduleWithFixedDelay(
-                {
-                    val cfg =
-                        config
-                            ?: return@scheduleWithFixedDelay
-                    val cancellation =
-                        AtomicCancellationSignal()
-                    val alive =
-                        RootProcessReattachCoordinator
-                            .isSameProcess(
-                                packageName =
-                                    cfg.packageName,
-                                pid = cfg.pid,
-                                cancellation =
-                                    cancellation,
-                            )
-                    if (alive) {
-                        if (awaitingReattach) {
-                            awaitingReattach =
-                                false
-                            main.post {
-                                setStatus(
-                                    "Процесс снова доступен · PID " +
-                                        cfg.pid +
-                                        ".",
-                                )
-                            }
-                        }
-                        return@scheduleWithFixedDelay
-                    }
-
-                    val replacement =
-                        runCatching {
-                            RootProcessReattachCoordinator
-                                .findReplacementMainPid(
-                                    packageName =
-                                        cfg.packageName,
-                                    androidUserId =
-                                        cfg.androidUserId,
-                                    cancellation =
-                                        cancellation,
-                                )
-                        }.getOrNull()
-
-                    if (
-                        replacement ==
-                        null
-                    ) {
-                        if (!awaitingReattach) {
-                            awaitingReattach =
-                                true
-                            main.post {
-                                setStatus(
-                                    "Игра закрыта. MK ждёт новый процесс " +
-                                        cfg.packageName +
-                                        " и подключится автоматически после следующего запуска.",
-                                )
-                            }
-                        }
-                        return@scheduleWithFixedDelay
-                    }
-                    if (
-                        replacement ==
-                        cfg.pid
-                    ) {
-                        return@scheduleWithFixedDelay
-                    }
-
-                    main.post {
-                        reattachToProcess(
-                            old =
-                                cfg,
-                            newPid =
-                                replacement,
-                        )
-                    }
-                },
-                3_000L,
-                3_000L,
-                TimeUnit.MILLISECONDS,
-            )
-    }
-
-    private fun stopProcessWatch() {
-        processWatchTask?.cancel(
-            false,
-        )
-        processWatchTask = null
-        awaitingReattach =
-            false
-    }
-
-    private fun reattachToProcess(
-        old: ProcessOverlayConfig,
-        newPid: Int,
-    ) {
-        val current =
-            config
-                ?: return
-        if (
-            current.packageName !=
-                old.packageName ||
-            current.pid !=
-                old.pid
-        ) {
-            return
-        }
-
-        rollbackActiveCodePatchBestEffort()
-        resetRuntimeState()
-        val replacement =
-            old.copy(
-                pid = newPid,
-            )
-        config =
-            replacement
-        manualList
-            ?.removeAllViews()
-        manualCount?.text =
-            "Результатов: 0"
-        learnedList
-            ?.removeAllViews()
-        behavioralList
-            ?.removeAllViews()
-        codeAccessList
-            ?.removeAllViews()
-        awaitingReattach =
-            false
-        startForeground(
-            NOTIFICATION_ID,
-            buildNotification(
-                replacement.label +
-                    " · PID " +
-                    replacement.pid,
+        group.addView(
+            hintText(
+                subtitle,
             ),
         )
-        setStatus(
-            "Игра перезапущена. ModKit автоматически подключился к новому PID " +
-                newPid +
-                " и восстанавливает сохранённые моды.",
-        )
-        loadLearnedProfile(
-            replacement,
-        )
+        return group
+    }
+
+    private fun candidateDisplayTitle(
+        candidate: EditableRuntimeCandidate,
+    ): String =
+        when {
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .DAMAGE_TAKEN ->
+                "❤️ " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .ATTACK ->
+                "⚔ " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .MOVEMENT ->
+                "🏃 " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .STAMINA ->
+                "⚡ " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .COOLDOWN ->
+                "⏱ " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .RESOURCE_CHANGE ->
+                "💰 " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .ITEM_CHANGE ->
+                "🎒 " +
+                    candidate.title
+            else ->
+                candidate.title
+        }
+
+    private fun writerActionTitle(
+        candidate:
+            EditableRuntimeCandidate,
+    ): String {
+        val active =
+            activeCodePatch
+        val enabled =
+            active != null &&
+                active.candidateId ==
+                candidate.id
+        val state =
+            if (enabled) {
+                "ON"
+            } else {
+                "OFF"
+            }
+        return when (
+            candidate.actionHint
+        ) {
+            BehavioralActionHint
+                .DAMAGE_TAKEN ->
+                "Не получать урон: " +
+                    state
+            else ->
+                "Блокировать изменение: " +
+                    state
+        }
     }
 
     private fun startAutoScan() {
