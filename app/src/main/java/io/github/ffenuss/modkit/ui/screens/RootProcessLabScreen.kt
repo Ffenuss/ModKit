@@ -515,8 +515,15 @@ fun RootProcessLabScreen(
                                 it.label
                             },
                         )
+                val currentAndroidUserId =
+                    android.os.Process.myUid() /
+                        100_000
                 val runningPackages =
                     snapshot.first
+                        .filter {
+                            it.androidUserId ==
+                                currentAndroidUserId
+                        }
                         .map {
                             it.packageName
                         }
