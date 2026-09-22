@@ -350,17 +350,6 @@ object RootRuntimeUnknownValueCoordinator {
         require(maxHits in 1..100_000) {
             "Некорректный лимит unknown-value результатов."
         }
-        val snapshot =
-            File(
-                baseline.snapshotPath,
-            )
-        require(
-            snapshot.isFile &&
-                snapshot.canRead()
-        ) {
-            "Unknown-value baseline больше недоступен."
-        }
-
         val capture =
             try {
                 RootRuntimeCaptureCoordinator
@@ -386,11 +375,43 @@ object RootRuntimeUnknownValueCoordinator {
             "PID процесса изменился. Создайте новый unknown-value baseline."
         }
 
-        val reader =
-            RootProcMemRuntimeMemoryReader(
-                pid = capture.pid,
-                runner = runner,
+        return compareBaselineVerified(
+            baseline = baseline,
+            refinement = refinement,
+            reader =
+                RootProcMemRuntimeMemoryReader(
+                    pid = capture.pid,
+                    runner = runner,
+                ),
+            cancellation =
+                cancellation,
+            maxHits = maxHits,
+        )
+    }
+
+    internal fun compareBaselineVerified(
+        baseline: RootRuntimeUnknownBaseline,
+        refinement: RuntimeValueRefinement,
+        reader: RuntimeMemoryReader,
+        cancellation: CancellationSignal,
+        maxHits: Int =
+            RuntimeValueScanner
+                .DEFAULT_MAX_HITS,
+    ): RootRuntimeValueScanResult {
+        require(maxHits in 1..100_000) {
+            "Некорректный лимит unknown-value результатов."
+        }
+        val snapshot =
+            File(
+                baseline.snapshotPath,
             )
+        require(
+            snapshot.isFile &&
+                snapshot.canRead()
+        ) {
+            "Unknown-value baseline больше недоступен."
+        }
+
         val type =
             baseline.valueType
         val hits =
