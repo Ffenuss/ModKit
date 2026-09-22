@@ -112,6 +112,19 @@ class LiveProcessOverlayService : Service() {
         LearnedCandidateSource.AUTO
     private var behavioralActionHint:
         BehavioralActionHint? = null
+    private val trainingRounds =
+        mutableMapOf<
+            BehavioralActionHint,
+            Int
+        >()
+    private val trainingAggregates =
+        mutableMapOf<
+            BehavioralActionHint,
+            MutableMap<
+                String,
+                TrainingAggregate
+            >
+        >()
     private val announcedIds =
         linkedSetOf<String>()
 
@@ -1131,7 +1144,7 @@ class LiveProcessOverlayService : Service() {
                             cancellation =
                                 AtomicCancellationSignal(),
                             visibleLimit =
-                                5,
+                                64,
                         )
                 }
             RootBehavioralScanCoordinator
@@ -1142,23 +1155,42 @@ class LiveProcessOverlayService : Service() {
                 )
                 result.onSuccess {
                     sample ->
+                    val hint =
+                        requireNotNull(
+                            session.actionHint,
+                        )
+                    val consolidated =
+                        consolidateTrainingSample(
+                            sample = sample,
+                            hint = hint,
+                        )
                     applyBehavioralSample(
-                        sample = sample,
+                        sample =
+                            consolidated,
                         source =
                             LearnedCandidateSource
                                 .TRAINING,
                         actionHint =
-                            session.actionHint,
+                            hint,
                     )
                     setStatus(
-                        "Обучение завершено: кандидатов " +
+                        "Обучение «" +
+                            hint.title +
+                            "»: раунд " +
+                            (
+                                trainingRounds[
+                                    hint
+                                ] ?: 1
+                                ) +
+                            " · после фильтра " +
+                            consolidated
+                                .visibleCandidates
+                                .size +
+                            " кандидатов из " +
                             sample
                                 .visibleCandidates
                                 .size +
-                            ", отслеживается " +
-                            sample
-                                .trackedCandidates +
-                            ". Повтори обучение, если кандидатов пока слишком много.",
+                            ". Повтори то же действие, чтобы сузить список дальше.",
                     )
                 }.onFailure {
                     failure ->
@@ -1179,6 +1211,176 @@ class LiveProcessOverlayService : Service() {
                 }
             }
         }
+    }
+
+    private fun consolidateTrainingSample(
+        sample: BehavioralScanSample,
+        hint: BehavioralActionHint,
+    ): BehavioralScanSample {
+        val round =
+            (
+                trainingRounds[
+                    hint
+                ] ?: 0
+                ) +
+                1
+        trainingRounds[
+            hint
+        ] = round
+
+        val aggregates =
+            trainingAggregates
+                .getOrPut(
+                    hint,
+                ) {
+                    linkedMapOf()
+                }
+        val currentIds =
+            sample.visibleCandidates
+                .map {
+                    it.id
+                }
+                .toHashSet()
+
+        sample.visibleCandidates
+            .forEach {
+                candidate ->
+                val previous =
+                    aggregates[
+                        candidate.id
+                    ]
+                val seenRounds =
+                    (
+                        previous
+                            ?.seenRounds
+                            ?: 0
+                        ) +
+                        1
+                val boosted =
+                    candidate.copy(
+                        confidence =
+                            (
+                                maxOf(
+                                    candidate
+                                        .confidence,
+                                    previous
+                                        ?.candidate
+                                        ?.confidence
+                                        ?: 0,
+                                ) +
+                                    minOf(
+                                        24,
+                                        (
+                                            seenRounds -
+                                                1
+                                            ) *
+                                            8,
+                                    )
+                                ).coerceAtMost(
+                                99,
+                            ),
+                        changeCount =
+                            candidate
+                                .changeCount +
+                                (
+                                    previous
+                                        ?.candidate
+                                        ?.changeCount
+                                        ?: 0
+                                    ),
+                        stableCount =
+                            candidate
+                                .stableCount +
+                                (
+                                    previous
+                                        ?.candidate
+                                        ?.stableCount
+                                        ?: 0
+                                    ),
+                        observedSamples =
+                            candidate
+                                .observedSamples +
+                                (
+                                    previous
+                                        ?.candidate
+                                        ?.observedSamples
+                                        ?: 0
+                                    ),
+                    )
+                aggregates[
+                    candidate.id
+                ] =
+                    TrainingAggregate(
+                        candidate =
+                            boosted,
+                        seenRounds =
+                            seenRounds,
+                    )
+            }
+
+        if (round > 1) {
+            val minimumSeen =
+                maxOf(
+                    1,
+                    round - 1,
+                )
+            val iterator =
+                aggregates
+                    .entries
+                    .iterator()
+            while (
+                iterator.hasNext()
+            ) {
+                val entry =
+                    iterator.next()
+                if (
+                    entry.value
+                        .seenRounds <
+                    minimumSeen ||
+                    (
+                        entry.key !in
+                            currentIds &&
+                            entry.value
+                                .seenRounds <
+                            round
+                        )
+                ) {
+                    iterator.remove()
+                }
+            }
+        }
+
+        val visible =
+            aggregates
+                .values
+                .sortedWith(
+                    compareByDescending<
+                        TrainingAggregate
+                    > {
+                        it.seenRounds
+                    }.thenByDescending {
+                        it.candidate
+                            .confidence
+                    },
+                )
+                .map {
+                    it.candidate
+                }
+                .take(8)
+
+        return sample.copy(
+            visibleCandidates =
+                visible,
+            hiddenAsNoise =
+                sample.hiddenAsNoise +
+                    maxOf(
+                        0,
+                        sample
+                            .visibleCandidates
+                            .size -
+                            visible.size,
+                    ),
+        )
     }
 
     private fun applyBehavioralSample(
@@ -2072,6 +2274,8 @@ class LiveProcessOverlayService : Service() {
         behavioralSource =
             LearnedCandidateSource.AUTO
         behavioralActionHint = null
+        trainingRounds.clear()
+        trainingAggregates.clear()
         announcedIds.clear()
         selectedCandidate = null
     }
@@ -3105,6 +3309,12 @@ class LiveProcessOverlayService : Service() {
                 resources.displayMetrics
                     .density
             ).toInt()
+
+    private data class TrainingAggregate(
+        val candidate:
+            BehavioralRuntimeCandidate,
+        val seenRounds: Int,
+    )
 
     private data class EditableRuntimeCandidate(
         val id: String,
