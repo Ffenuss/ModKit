@@ -139,6 +139,13 @@ class LiveProcessOverlayService : Service() {
         >()
     private val announcedIds =
         linkedSetOf<String>()
+    private val autoCodeTraceAttempted =
+        linkedSetOf<String>()
+    private val behavioralCodeSites =
+        mutableMapOf<
+            String,
+            List<RootCodeAccessSite>
+        >()
 
     private var manualType =
         RuntimeValueType.INT32
@@ -1665,6 +1672,30 @@ class LiveProcessOverlayService : Service() {
 
         if (
             source ==
+                LearnedCandidateSource.AUTO &&
+            panel?.visibility !=
+                View.VISIBLE
+        ) {
+            sample.visibleCandidates
+                .firstOrNull {
+                    candidate ->
+                    candidate.confidence >=
+                        88 &&
+                        candidate.changeCount >=
+                        3 &&
+                        candidate.id !in
+                        autoCodeTraceAttempted
+                }
+                ?.let {
+                    candidate ->
+                    startAutomaticCodeTrace(
+                        candidate,
+                    )
+                }
+        }
+
+        if (
+            source ==
             LearnedCandidateSource.TRAINING
         ) {
             sample.visibleCandidates
@@ -1731,7 +1762,20 @@ class LiveProcessOverlayService : Service() {
                                     " · " +
                                     candidate
                                         .valueType
-                                        .title,
+                                        .title +
+                                    (
+                                        behavioralCodeSites[
+                                            candidate.id
+                                        ]
+                                            ?.takeIf {
+                                                it.isNotEmpty()
+                                            }
+                                            ?.let {
+                                                " · code " +
+                                                    it.size
+                                            }
+                                            ?: ""
+                                        ),
                             confidence =
                                 candidate.confidence,
                             source =
@@ -2206,9 +2250,19 @@ class LiveProcessOverlayService : Service() {
         }
         selectedCandidate =
             candidate
-        selectedCodeSite = null
+        val capturedSites =
+            behavioralCodeSites[
+                candidate.id
+            ].orEmpty()
         codeAccessSites =
-            emptyList()
+            capturedSites
+        selectedCodeSite =
+            capturedSites
+                .firstOrNull {
+                    eligibleWriterSite(
+                        it,
+                    )
+                }
         rebuildCodeAccessList()
         editorTitle?.text =
             candidate.title +
@@ -2287,6 +2341,101 @@ class LiveProcessOverlayService : Service() {
                     setStatus(
                         "Сохранённые code-sites больше не подтверждаются; выполни новый code trace.",
                     )
+                }
+            }
+        }
+    }
+
+    private fun startAutomaticCodeTrace(
+        candidate:
+            BehavioralRuntimeCandidate,
+    ) {
+        val cfg =
+            config ?: return
+        if (
+            !autoCodeTraceAttempted
+                .add(
+                    candidate.id,
+                ) ||
+            !codeTraceBusy
+                .compareAndSet(
+                    false,
+                    true,
+                )
+        ) {
+            return
+        }
+
+        val hadAutoSession =
+            autoSession != null
+        autoTask?.cancel(
+            false,
+        )
+        autoTask = null
+
+        executor.execute {
+            val result =
+                runCatching {
+                    RootMemoryWatchCoordinator
+                        .trace(
+                            context =
+                                applicationContext,
+                            packageName =
+                                cfg.packageName,
+                            pid = cfg.pid,
+                            targetAddress =
+                                candidate.address,
+                            width =
+                                candidate
+                                    .valueType
+                                    .byteWidth,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                            durationMs =
+                                3_500,
+                        )
+                }
+            main.post {
+                codeTraceBusy.set(
+                    false,
+                )
+                result.onSuccess {
+                    trace ->
+                    if (
+                        trace.sites
+                            .isNotEmpty()
+                    ) {
+                        behavioralCodeSites[
+                            candidate.id
+                        ] =
+                            trace.sites
+                        rebuildBehavioralList()
+                        val writers =
+                            trace.sites
+                                .count {
+                                    it.accessKind ==
+                                        RuntimeCodeAccessKind
+                                            .WRITE
+                                }
+                        Toast.makeText(
+                            this,
+                            "ModKit: для «" +
+                                candidate.title +
+                                "» найдено code-sites " +
+                                trace.sites.size +
+                                " · writers " +
+                                writers,
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
+                if (
+                    hadAutoSession &&
+                    autoSession !=
+                        null &&
+                    autoTask == null
+                ) {
+                    scheduleAutoSamples()
                 }
             }
         }
@@ -3138,6 +3287,8 @@ class LiveProcessOverlayService : Service() {
         trainingRounds.clear()
         trainingAggregates.clear()
         announcedIds.clear()
+        autoCodeTraceAttempted.clear()
+        behavioralCodeSites.clear()
         selectedCandidate = null
         codeAccessSites =
             emptyList()
