@@ -42,6 +42,8 @@ class LiveProcessOverlayService : Service() {
         )
     private val behavioralBusy =
         AtomicBoolean(false)
+    private val codeTraceBusy =
+        AtomicBoolean(false)
     private val stabilizationBusy =
         AtomicBoolean(false)
     private val profileStore by lazy {
@@ -79,6 +81,8 @@ class LiveProcessOverlayService : Service() {
     private var behavioralList:
         LinearLayout? = null
     private var manualList:
+        LinearLayout? = null
+    private var codeAccessList:
         LinearLayout? = null
     private var manualCount:
         TextView? = null
@@ -139,6 +143,8 @@ class LiveProcessOverlayService : Service() {
 
     private var selectedCandidate:
         EditableRuntimeCandidate? = null
+    private var codeAccessSites =
+        emptyList<RootCodeAccessSite>()
     private var freezeTask:
         ScheduledFuture<*>? = null
     private var freezeTarget:
@@ -809,6 +815,32 @@ class LiveProcessOverlayService : Service() {
             writeRow,
             matchWidth(),
         )
+
+        body.addView(
+            sectionTitle(
+                "Код, который использует значение",
+            ),
+        )
+        body.addView(
+            Button(this).apply {
+                text =
+                    "Найти reader/writer · 5 сек"
+                setOnClickListener {
+                    traceSelectedCodeAccess()
+                }
+            },
+            matchWidth(),
+        )
+        codeAccessList =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
+            }
+        body.addView(
+            codeAccessList,
+            matchWidth(),
+        )
+        rebuildCodeAccessList()
 
         body.addView(
             Button(this).apply {
@@ -1982,6 +2014,9 @@ class LiveProcessOverlayService : Service() {
     ) {
         selectedCandidate =
             candidate
+        codeAccessSites =
+            emptyList()
+        rebuildCodeAccessList()
         editorTitle?.text =
             candidate.title +
                 "\n0x" +
@@ -1997,6 +2032,239 @@ class LiveProcessOverlayService : Service() {
         editorValue?.setText(
             candidate.value,
         )
+    }
+
+    private fun traceSelectedCodeAccess() {
+        val cfg =
+            config ?: return
+        val candidate =
+            selectedCandidate
+                ?: run {
+                    setStatus(
+                        "Сначала выбери найденное значение.",
+                    )
+                    return
+                }
+        if (
+            !codeTraceBusy
+                .compareAndSet(
+                    false,
+                    true,
+                )
+        ) {
+            setStatus(
+                "Code trace уже выполняется.",
+            )
+            return
+        }
+
+        stopFreeze()
+        if (autoSession != null) {
+            stopAutoScan(
+                userRequested =
+                    false,
+            )
+        }
+        setStatus(
+            "Hardware watch активен 5 секунд. Сверни MK и выполни действие, которое должно читать/менять выбранное значение.",
+        )
+        setPanelVisible(
+            false,
+        )
+
+        executor.execute {
+            val result =
+                runCatching {
+                    val address =
+                        resolveCandidateAddress(
+                            candidate =
+                                candidate,
+                            cfg = cfg,
+                        )
+                    RootMemoryWatchCoordinator
+                        .trace(
+                            context =
+                                applicationContext,
+                            packageName =
+                                cfg.packageName,
+                            pid =
+                                cfg.pid,
+                            targetAddress =
+                                address,
+                            width =
+                                candidate
+                                    .valueType
+                                    .byteWidth,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                            durationMs =
+                                5_000,
+                        )
+                }
+            main.post {
+                codeTraceBusy.set(
+                    false,
+                )
+                result.onSuccess {
+                    trace ->
+                    codeAccessSites =
+                        trace.sites
+                    rebuildCodeAccessList()
+                    val writers =
+                        trace.sites
+                            .count {
+                                it.accessKind ==
+                                    RuntimeCodeAccessKind
+                                        .WRITE
+                            }
+                    val readers =
+                        trace.sites
+                            .count {
+                                it.accessKind ==
+                                    RuntimeCodeAccessKind
+                                        .READ
+                            }
+                    setStatus(
+                        "Code trace: " +
+                            trace.totalTraps +
+                            " обращений · writers " +
+                            writers +
+                            " · readers " +
+                            readers +
+                            " · потоков " +
+                            trace.watchedThreads +
+                            ".",
+                    )
+                    Toast.makeText(
+                        this,
+                        if (
+                            trace.sites
+                                .isEmpty()
+                        ) {
+                            "ModKit: обращений к значению за окно trace не найдено."
+                        } else {
+                            "ModKit: найден код, использующий выбранное значение — " +
+                                trace.sites.size +
+                                " участков."
+                        },
+                        Toast.LENGTH_LONG,
+                    ).show()
+                }.onFailure {
+                    failure ->
+                    codeAccessSites =
+                        emptyList()
+                    rebuildCodeAccessList()
+                    setStatus(
+                        "Code trace недоступен: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun rebuildCodeAccessList() {
+        val list =
+            codeAccessList
+                ?: return
+        list.removeAllViews()
+        if (
+            codeAccessSites
+                .isEmpty()
+        ) {
+            list.addView(
+                hintText(
+                    "Выбери значение и запусти 5-секундный trace. На ARM64 ModKit использует hardware watchpoint и покажет native reader/writer.",
+                ),
+            )
+            return
+        }
+
+        codeAccessSites
+            .take(10)
+            .forEach {
+                site ->
+                val kind =
+                    when (
+                        site.accessKind
+                    ) {
+                        RuntimeCodeAccessKind
+                            .WRITE ->
+                            "WRITE"
+                        RuntimeCodeAccessKind
+                            .READ ->
+                            "READ"
+                        RuntimeCodeAccessKind
+                            .UNKNOWN ->
+                            "ACCESS"
+                    }
+                val offset =
+                    site.moduleFileOffset
+                        ?.let {
+                            " +0x" +
+                                it.toString(
+                                    16,
+                                )
+                        }
+                        .orEmpty()
+                val instruction =
+                    site.instructionText
+                        ?.substringAfter(
+                            ": ",
+                        )
+                        ?.takeIf {
+                            it.isNotBlank()
+                        }
+                        ?.let {
+                            " · " +
+                                it
+                        }
+                        .orEmpty()
+                val method =
+                    site.managedMethodCandidate
+                        ?.let {
+                            "\n" +
+                                it
+                        }
+                        .orEmpty()
+                list.addView(
+                    TextView(this).apply {
+                        text =
+                            kind +
+                                " · " +
+                                site.moduleName +
+                                offset +
+                                " · x" +
+                                site.count +
+                                instruction +
+                                method
+                        setTextColor(
+                            if (
+                                site.accessKind ==
+                                RuntimeCodeAccessKind
+                                    .WRITE
+                            ) {
+                                Color.WHITE
+                            } else {
+                                Color.LTGRAY
+                            },
+                        )
+                        textSize =
+                            10f
+                        setPadding(
+                            dp(4),
+                            dp(4),
+                            dp(4),
+                            dp(4),
+                        )
+                    },
+                )
+            }
     }
 
     private fun writeSelected() {
@@ -2287,6 +2555,13 @@ class LiveProcessOverlayService : Service() {
         trainingAggregates.clear()
         announcedIds.clear()
         selectedCandidate = null
+        codeAccessSites =
+            emptyList()
+        codeTraceBusy.set(
+            false,
+        )
+        codeAccessList
+            ?.removeAllViews()
     }
 
     private fun loadLearnedProfile(
