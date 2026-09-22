@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.14**
+Current application version: **0.0.15**
 
 ## Product flow
 
@@ -114,3 +114,12 @@ Root-mode audit and remaining architectural gaps are tracked in [docs/ROOT_MODE_
 On rooted ARM64 targets, a confirmed live value can now be traced with a bounded hardware watchpoint window. ModKit records native PCs that read/write the selected address, validates those PCs against executable mappings, decodes the ARM64 instruction, correlates the site with cached IL2CPP method evidence when possible, and exposes confirmed writer sites in the MK overlay. A selected writer can be temporarily blocked with a verified NOP toggle; the original instruction is restored on disable, overlay shutdown, process loss, or reattach. Saved code-sites are resolved by module + file offset and revalidated before reuse. The overlay also watches for target-process restarts and reattaches to a replacement main PID when the package/user identity remains unambiguous.
 
 This code-access layer is currently implemented for ARM64 hardware watchpoints. Other ABIs keep the live value scanner, training, writes/Freeze, pointer-chain persistence and static analysis, but do not claim hardware watch tracing.
+
+
+### Root / MK overlay UX v2
+
+The root overlay has been redesigned around user-facing tasks rather than raw scanner controls. The home screen now exposes four primary actions: automatic mod discovery, action training, guided manual search and saved mods. Raw value types, unknown-value refinement controls, full-memory scans and range/fuzzy/group searches are moved into Expert tools.
+
+Guided manual search uses automatic numeric type selection and a native root scanner for the initial exact-value pass. Integer values such as item counts are searched as integer types before Float/Double. The native scanner reads writable private process memory in large blocks, bounds the quick pass, and revalidates the exact target PID after scanning. The older Kotlin/root-shell scanner remains a bounded fallback.
+
+Automatic behavioral discovery now requires repeated, stable evidence before surfacing candidates and suppresses obvious background/noise values. Repeated action training narrows candidates across rounds. Candidate cards open a dedicated page for editing, Freeze, code-access tracing and saving. Saved mods can be renamed, revalidated or deleted when a binding is wrong.
