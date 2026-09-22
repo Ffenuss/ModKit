@@ -28,6 +28,14 @@ enum class BehavioralActionHint(
         "Получение урона",
         "Здоровье / получаемый урон",
     ),
+    STAMINA(
+        "Выносливость",
+        "Выносливость / энергия",
+    ),
+    COOLDOWN(
+        "Cooldown / перезарядка",
+        "Cooldown / таймер способности",
+    ),
     RESOURCE_CHANGE(
         "Покупка / продажа / ресурс",
         "Ресурс / валюта",
@@ -56,6 +64,8 @@ data class BehavioralRuntimeCandidate(
     val decreaseCount: Int,
     val observedSamples: Int,
     val regionPath: String?,
+    val activityTransitions: Int = 0,
+    val recentChangeMask: Int = 0,
 )
 
 data class BehavioralScanSample(
@@ -83,6 +93,8 @@ internal data class BehavioralTrack(
     var increaseCount: Int = 0,
     var decreaseCount: Int = 0,
     var observedSamples: Int = 1,
+    var recentChangeMask: Int = 1,
+    var patternSamples: Int = 1,
     val distinctBits: LinkedHashSet<Long> =
         linkedSetOf(),
 ) {
@@ -134,9 +146,9 @@ object RootBehavioralScanCoordinator {
     private const val DISTINCT_VALUE_LIMIT =
         16
     private const val AUTO_VISIBLE_THRESHOLD =
-        56
+        78
     private const val TRAINING_VISIBLE_THRESHOLD =
-        40
+        46
 
     private val sweepOrder =
         listOf(
@@ -342,6 +354,14 @@ object RootBehavioralScanCoordinator {
                 .filter {
                     it.confidence >=
                         threshold
+                }
+                .filter {
+                    candidate ->
+                    session.mode !=
+                        BehavioralScanMode.AUTO ||
+                        autoCandidateRelevant(
+                            candidate,
+                        )
                 }
                 .take(
                     visibleLimit,
@@ -615,9 +635,28 @@ object RootBehavioralScanCoordinator {
             track.lastBits
         track.previousBits =
             old
-        if (
-            old == newBits
-        ) {
+        val changed =
+            old != newBits
+        track.recentChangeMask =
+            (
+                (
+                    track.recentChangeMask
+                        shl 1
+                    ) or
+                    if (changed) {
+                        1
+                    } else {
+                        0
+                    }
+                ) and
+                0xffff
+        track.patternSamples =
+            min(
+                16,
+                track.patternSamples +
+                    1,
+            )
+        if (!changed) {
             track.stableCount++
         } else {
             track.changeCount++
@@ -712,6 +751,13 @@ object RootBehavioralScanCoordinator {
                 track.observedSamples,
             regionPath =
                 track.regionPath,
+            activityTransitions =
+                activityTransitions(
+                    track.recentChangeMask,
+                    track.patternSamples,
+                ),
+            recentChangeMask =
+                track.recentChangeMask,
         )
     }
 
@@ -797,51 +843,106 @@ object RootBehavioralScanCoordinator {
     private fun confidence(
         track: BehavioralTrack,
         mode: BehavioralScanMode,
-    ): Int =
-        confidence(
-            changeCount =
-                track.changeCount,
-            stableCount =
-                track.stableCount,
-            increaseCount =
-                track.increaseCount,
-            decreaseCount =
-                track.decreaseCount,
-            observedSamples =
-                track.observedSamples,
-            distinctValueCount =
-                track.distinctBits.size,
-            preferredRegion =
-                preferredRegion(
-                    track.regionPath,
-                ),
-            plausibleValue =
-                plausible(
-                    type =
-                        track.valueType,
-                    bits =
-                        track.lastBits,
-                ),
-            training =
-                mode ==
-                    BehavioralScanMode
-                        .TRAINING,
+    ): Int {
+        var score =
+            confidence(
+                changeCount =
+                    track.changeCount,
+                stableCount =
+                    track.stableCount,
+                increaseCount =
+                    track.increaseCount,
+                decreaseCount =
+                    track.decreaseCount,
+                observedSamples =
+                    track.observedSamples,
+                distinctValueCount =
+                    track.distinctBits.size,
+                preferredRegion =
+                    preferredRegion(
+                        track.regionPath,
+                    ),
+                plausibleValue =
+                    plausible(
+                        type =
+                            track.valueType,
+                        bits =
+                            track.lastBits,
+                    ),
+                training =
+                    mode ==
+                        BehavioralScanMode
+                            .TRAINING,
+            )
+        val transitions =
+            activityTransitions(
+                track.recentChangeMask,
+                track.patternSamples,
+            )
+        if (transitions >= 4) {
+            score += 10
+        } else if (transitions >= 2) {
+            score += 6
+        }
+        if (
+            track.patternSamples >= 8 &&
+            transitions == 0
+        ) {
+            score -= 18
+        }
+        return score.coerceIn(
+            1,
+            99,
         )
+    }
+
+    private fun activityTransitions(
+        mask: Int,
+        samples: Int,
+    ): Int {
+        val count =
+            samples.coerceIn(
+                0,
+                16,
+            )
+        if (count <= 1) {
+            return 0
+        }
+        var transitions = 0
+        var previous =
+            mask and 1
+        for (
+            index in
+            1 until count
+        ) {
+            val current =
+                (
+                    mask ushr
+                        index
+                    ) and
+                    1
+            if (current != previous) {
+                transitions++
+            }
+            previous =
+                current
+        }
+        return transitions
+    }
 
     private fun candidateTitle(
         track: BehavioralTrack,
         hint: BehavioralActionHint?,
     ): String {
         if (hint != null) {
-            return hint.candidateTitle +
-                " — кандидат"
+            return hint.candidateTitle
         }
 
         val directional =
             track.increaseCount +
                 track.decreaseCount
         if (
-            directional >= 2 &&
+            directional >= 3 &&
             track.decreaseCount >=
             track.increaseCount * 2 &&
             nonNegative(
@@ -849,14 +950,14 @@ object RootBehavioralScanCoordinator {
                 track.lastBits,
             )
         ) {
-            return "Здоровье / ресурс — кандидат"
+            return "Убывающий параметр игрока"
         }
         if (
-            directional >= 2 &&
+            directional >= 3 &&
             track.increaseCount >=
             track.decreaseCount * 2
         ) {
-            return "Счётчик / ресурс — кандидат"
+            return "Растущий параметр игрока"
         }
 
         if (
@@ -865,13 +966,7 @@ object RootBehavioralScanCoordinator {
             track.valueType ==
                 RuntimeValueType.FLOAT64
         ) {
-            return if (
-                track.changeCount >= 3
-            ) {
-                "Движение / скорость / координата — кандидат"
-            } else {
-                "Игровой Float-параметр — кандидат"
-            }
+            return "Параметр движения / состояния"
         }
 
         if (
@@ -881,10 +976,82 @@ object RootBehavioralScanCoordinator {
             ) &&
             track.distinctBits.size <= 4
         ) {
-            return "Флаг / состояние — кандидат"
+            return "Состояние / флаг"
         }
 
-        return "Игровой параметр — кандидат"
+        return "Повторяющийся параметр игрока"
+    }
+
+    private fun autoCandidateRelevant(
+        candidate:
+            BehavioralRuntimeCandidate,
+    ): Boolean {
+        if (
+            candidate.observedSamples < 6 ||
+            candidate.changeCount < 4 ||
+            candidate.stableCount < 1 ||
+            candidate.activityTransitions < 2
+        ) {
+            return false
+        }
+
+        return when (
+            candidate.valueType
+        ) {
+            RuntimeValueType.INT32 -> {
+                val value =
+                    candidate.value
+                        .toIntOrNull()
+                        ?: return false
+                if (
+                    value < 0 &&
+                    kotlin.math.abs(
+                        value.toLong(),
+                    ) >
+                    1_000_000L
+                ) {
+                    return false
+                }
+                kotlin.math.abs(
+                    value.toLong(),
+                ) <=
+                    100_000_000L
+            }
+
+            RuntimeValueType.INT64 -> {
+                val value =
+                    candidate.value
+                        .toLongOrNull()
+                        ?: return false
+                if (
+                    value < 0L &&
+                    kotlin.math.abs(
+                        value.toDouble(),
+                    ) >
+                    1.0e7
+                ) {
+                    return false
+                }
+                kotlin.math.abs(
+                    value.toDouble(),
+                ) <=
+                    1.0e11
+            }
+
+            RuntimeValueType.FLOAT32,
+            RuntimeValueType.FLOAT64,
+            -> {
+                val value =
+                    candidate.value
+                        .toDoubleOrNull()
+                        ?: return false
+                value.isFinite() &&
+                    kotlin.math.abs(
+                        value,
+                    ) <=
+                    1.0e6
+            }
+        }
     }
 
     private fun plausible(

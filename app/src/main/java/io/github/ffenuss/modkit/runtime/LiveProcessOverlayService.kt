@@ -81,6 +81,10 @@ class LiveProcessOverlayService : Service() {
         WindowManager.LayoutParams? = null
     private var panel:
         View? = null
+    private var pageContainer:
+        LinearLayout? = null
+    private var currentPage =
+        OverlayPage.HOME
     private var floating:
         Button? = null
 
@@ -105,6 +109,8 @@ class LiveProcessOverlayService : Service() {
     private var editorTitle:
         TextView? = null
     private var editorValue:
+        EditText? = null
+    private var renameValue:
         EditText? = null
     private var freezeButton:
         Button? = null
@@ -157,6 +163,10 @@ class LiveProcessOverlayService : Service() {
 
     private var manualType =
         RuntimeValueType.INT32
+    private var manualAutoType =
+        true
+    private var manualUnknownAuto =
+        false
     private var manualFullScan =
         false
     private var manualScan:
@@ -178,6 +188,16 @@ class LiveProcessOverlayService : Service() {
         EditableRuntimeCandidate? = null
     private var freezeValue:
         String? = null
+
+    private enum class OverlayPage {
+        HOME,
+        AUTO,
+        TRAINING,
+        MANUAL,
+        MODS,
+        CANDIDATE,
+        EXPERT,
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -303,24 +323,52 @@ class LiveProcessOverlayService : Service() {
         panel = builtPanel
         val display =
             resources.displayMetrics
+        val availableWidth =
+            (
+                display.widthPixels -
+                    dp(16)
+                ).coerceAtLeast(
+                dp(96),
+            )
+        val availableHeight =
+            (
+                display.heightPixels -
+                    dp(80)
+                ).coerceAtLeast(
+                dp(96),
+            )
         val panelWidth =
             kotlin.math.min(
-                dp(340),
-                (
-                    display.widthPixels -
-                        dp(20)
-                    ).coerceAtLeast(
-                    dp(96),
+                availableWidth,
+                kotlin.math.max(
+                    kotlin.math.min(
+                        dp(220),
+                        availableWidth,
+                    ),
+                    kotlin.math.min(
+                        dp(300),
+                        (
+                            display.widthPixels *
+                                0.36f
+                            ).toInt(),
+                    ),
                 ),
             )
         val panelHeight =
             kotlin.math.min(
-                dp(590),
-                (
-                    display.heightPixels -
-                        dp(170)
-                    ).coerceAtLeast(
-                    dp(64),
+                availableHeight,
+                kotlin.math.max(
+                    kotlin.math.min(
+                        dp(260),
+                        availableHeight,
+                    ),
+                    kotlin.math.min(
+                        dp(520),
+                        (
+                            display.heightPixels *
+                                0.78f
+                            ).toInt(),
+                    ),
                 ),
             )
         root.addView(
@@ -357,17 +405,26 @@ class LiveProcessOverlayService : Service() {
         windowParams = params
 
         mk.setOnClickListener {
-            val showing =
-                builtPanel.visibility ==
+            val opening =
+                builtPanel.visibility !=
                     View.VISIBLE
             setPanelVisible(
-                !showing,
+                opening,
             )
             if (
-                showing.not() &&
+                opening &&
                 trainingSession != null
             ) {
                 finishTraining()
+            } else if (
+                opening &&
+                manualUnknownAuto &&
+                (
+                    manualBaseline != null ||
+                        manualScan != null
+                    )
+            ) {
+                advanceManualUnknownAuto()
             }
         }
 
@@ -408,10 +465,10 @@ class LiveProcessOverlayService : Service() {
                         .apply {
                             setColor(
                                 Color.argb(
-                                    244,
-                                    25,
-                                    25,
-                                    30,
+                                    246,
+                                    24,
+                                    24,
+                                    29,
                                 ),
                             )
                             cornerRadius =
@@ -420,175 +477,364 @@ class LiveProcessOverlayService : Service() {
                         }
             }
 
-        body.addView(
+        val header =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.HORIZONTAL
+            }
+        header.addView(
             TextView(this).apply {
                 text =
-                    "ModKit Live · " +
+                    "ModKit · " +
                         config.label
                 setTextColor(
                     Color.WHITE,
                 )
-                textSize = 18f
+                textSize = 17f
             },
+            LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams
+                    .WRAP_CONTENT,
+                1f,
+            ),
+        )
+        header.addView(
+            Button(this).apply {
+                text = "—"
+                minWidth = dp(48)
+                minimumWidth = dp(48)
+                setOnClickListener {
+                    setPanelVisible(
+                        false,
+                    )
+                }
+            },
+            LinearLayout.LayoutParams(
+                dp(54),
+                LinearLayout.LayoutParams
+                    .WRAP_CONTENT,
+            ),
         )
         body.addView(
-            TextView(this).apply {
-                text =
-                    config.packageName +
-                        " · PID " +
-                        config.pid
-                setTextColor(
-                    Color.LTGRAY,
-                )
-                textSize = 11f
-            },
+            header,
+            matchWidth(),
         )
 
         statusView =
             TextView(this).apply {
                 text =
-                    "Подключено. Автоскан ещё не запущен."
+                    "Подключено · PID " +
+                        config.pid
                 setTextColor(
-                    Color.WHITE,
+                    Color.LTGRAY,
                 )
-                textSize = 12f
+                textSize = 11f
                 setPadding(
                     0,
-                    dp(8),
+                    dp(4),
                     0,
-                    dp(8),
+                    dp(6),
                 )
             }
         body.addView(
             statusView,
+            matchWidth(),
         )
 
-        body.addView(
-            sectionTitle(
-                "Сохранённые моды",
-            ),
-        )
-        learnedList =
+        val content =
             LinearLayout(this).apply {
                 orientation =
                     LinearLayout.VERTICAL
             }
+        pageContainer =
+            content
+
         body.addView(
-            learnedList,
+            ScrollView(this).apply {
+                isFillViewport =
+                    true
+                addView(
+                    content,
+                    android.view.ViewGroup
+                        .LayoutParams(
+                            android.view.ViewGroup
+                                .LayoutParams
+                                .MATCH_PARENT,
+                            android.view.ViewGroup
+                                .LayoutParams
+                                .WRAP_CONTENT,
+                        ),
+                )
+            },
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams
+                    .MATCH_PARENT,
+                0,
+                1f,
+            ),
+        )
+
+        currentPage =
+            OverlayPage.HOME
+        renderCurrentPage()
+        return body
+    }
+
+    private fun navigate(
+        page: OverlayPage,
+    ) {
+        currentPage = page
+        renderCurrentPage()
+    }
+
+    private fun renderCurrentPage() {
+        val container =
+            pageContainer
+                ?: return
+        container.removeAllViews()
+        learnedList = null
+        behavioralList = null
+        manualList = null
+        codeAccessList = null
+        manualCount = null
+        autoButton = null
+        manualTypeButton = null
+        manualQuery = null
+        editorTitle = null
+        editorValue = null
+        renameValue = null
+        freezeButton = null
+        codePatchButton = null
+
+        when (currentPage) {
+            OverlayPage.HOME ->
+                renderHomePage(
+                    container,
+                )
+            OverlayPage.AUTO ->
+                renderAutoPage(
+                    container,
+                )
+            OverlayPage.TRAINING ->
+                renderTrainingPage(
+                    container,
+                )
+            OverlayPage.MANUAL ->
+                renderManualPage(
+                    container,
+                )
+            OverlayPage.MODS ->
+                renderModsPage(
+                    container,
+                )
+            OverlayPage.CANDIDATE ->
+                renderCandidatePage(
+                    container,
+                )
+            OverlayPage.EXPERT ->
+                renderExpertPage(
+                    container,
+                )
+        }
+        styleOverlayButtons(
+            container,
+        )
+    }
+
+    private fun styleOverlayButtons(
+        root:
+            android.view.ViewGroup,
+    ) {
+        for (
+            index in
+            0 until root.childCount
+        ) {
+            when (
+                val child =
+                    root.getChildAt(
+                        index,
+                    )
+            ) {
+                is Button -> {
+                    child.isAllCaps =
+                        false
+                    child.textSize =
+                        12f
+                    child.minHeight = 0
+                    child.minimumHeight =
+                        dp(42)
+                    child.setTextColor(
+                        Color.WHITE,
+                    )
+                    child.background =
+                        GradientDrawable()
+                            .apply {
+                                setColor(
+                                    Color.argb(
+                                        245,
+                                        52,
+                                        52,
+                                        60,
+                                    ),
+                                )
+                                cornerRadius =
+                                    dp(10)
+                                        .toFloat()
+                            }
+                }
+
+                is android.view.ViewGroup ->
+                    styleOverlayButtons(
+                        child,
+                    )
+            }
+        }
+    }
+
+    private fun renderHomePage(
+        container: LinearLayout,
+    ) {
+        container.addView(
+            pageTitle(
+                "Что хочешь сделать?",
+                "Основные действия вынесены отдельно. Технические параметры спрятаны в «Эксперт».",
+                showBack = false,
+            ),
+        )
+
+        container.addView(
+            pageButton(
+                "🔎  Автопоиск модов",
+                "Играй как обычно и повторяй действия несколько раз. ModKit покажет только устойчивые кандидаты.",
+            ) {
+                navigate(
+                    OverlayPage.AUTO,
+                )
+            },
+        )
+        container.addView(
+            pageButton(
+                "🎯  Обучить действие",
+                "Скажи ModKit, что именно собираешься делать: получать урон, атаковать, двигаться и т. д.",
+            ) {
+                navigate(
+                    OverlayPage.TRAINING,
+                )
+            },
+        )
+        container.addView(
+            pageButton(
+                "⌨  Ручной поиск",
+                "Простой сценарий: было число → найти → изменить в игре → уточнить.",
+            ) {
+                manualAutoType =
+                    true
+                navigate(
+                    OverlayPage.MANUAL,
+                )
+            },
+        )
+        container.addView(
+            pageButton(
+                "★  Мои моды · " +
+                    learnedCandidates.size,
+                "Сохранённые и восстановленные привязки этой игры.",
+            ) {
+                navigate(
+                    OverlayPage.MODS,
+                )
+            },
+        )
+
+        if (
+            autoSession != null
+        ) {
+            container.addView(
+                hintText(
+                    "Автоскан сейчас работает в фоне.",
+                ),
+            )
+        }
+
+        container.addView(
+            Button(this).apply {
+                text =
+                    "Экспертные инструменты"
+                setOnClickListener {
+                    navigate(
+                        OverlayPage.EXPERT,
+                    )
+                }
+            },
             matchWidth(),
         )
-        rebuildLearnedList()
+        container.addView(
+            Button(this).apply {
+                text =
+                    "Закрыть MK и остановить сканеры"
+                setOnClickListener {
+                    stopSelf()
+                }
+            },
+            matchWidth(),
+        )
+    }
+
+    private fun renderAutoPage(
+        container: LinearLayout,
+    ) {
+        container.addView(
+            pageTitle(
+                "Автопоиск модов",
+                "Нажми старт, сверни MK и несколько раз повтори интересующие действия. Необязательно делать только одно действие.",
+            ),
+        )
 
         val auto =
             Button(this).apply {
                 text =
-                    "▶ Автоскан"
+                    if (
+                        autoSession ==
+                        null
+                    ) {
+                        "▶ Начать скан"
+                    } else {
+                        "■ Остановить скан"
+                    }
                 setOnClickListener {
                     if (
                         autoSession ==
                         null
                     ) {
                         startAutoScan()
+                        setPanelVisible(
+                            false,
+                        )
                     } else {
                         stopAutoScan(
                             userRequested =
                                 true,
                         )
+                        renderCurrentPage()
                     }
                 }
             }
         autoButton = auto
-        body.addView(
+        container.addView(
             auto,
             matchWidth(),
         )
 
-        body.addView(
+        container.addView(
+            hintText(
+                "ModKit скрывает значения, которые выглядят как фоновые счётчики, указатели, случайные битовые шаблоны или меняются без устойчивой связи с действиями.",
+            ),
+        )
+
+        container.addView(
             sectionTitle(
-                "Обучить действие",
-            ),
-        )
-        val trainingRow1 =
-            LinearLayout(this).apply {
-                orientation =
-                    LinearLayout.HORIZONTAL
-            }
-        trainingRow1.addView(
-            trainingButton(
-                "Ходьба",
-                BehavioralActionHint
-                    .MOVEMENT,
-            ),
-            weighted(),
-        )
-        trainingRow1.addView(
-            trainingButton(
-                "Атака",
-                BehavioralActionHint
-                    .ATTACK,
-            ),
-            weighted(),
-        )
-        body.addView(
-            trainingRow1,
-            matchWidth(),
-        )
-
-        val trainingRow2 =
-            LinearLayout(this).apply {
-                orientation =
-                    LinearLayout.HORIZONTAL
-            }
-        trainingRow2.addView(
-            trainingButton(
-                "Получаю урон",
-                BehavioralActionHint
-                    .DAMAGE_TAKEN,
-            ),
-            weighted(),
-        )
-        trainingRow2.addView(
-            trainingButton(
-                "Ресурс",
-                BehavioralActionHint
-                    .RESOURCE_CHANGE,
-            ),
-            weighted(),
-        )
-        body.addView(
-            trainingRow2,
-            matchWidth(),
-        )
-
-        val trainingRow3 =
-            LinearLayout(this).apply {
-                orientation =
-                    LinearLayout.HORIZONTAL
-            }
-        trainingRow3.addView(
-            trainingButton(
-                "Предмет",
-                BehavioralActionHint
-                    .ITEM_CHANGE,
-            ),
-            weighted(),
-        )
-        trainingRow3.addView(
-            trainingButton(
-                "Другое",
-                BehavioralActionHint
-                    .OTHER,
-            ),
-            weighted(),
-        )
-        body.addView(
-            trainingRow3,
-            matchWidth(),
-        )
-
-        body.addView(
-            sectionTitle(
-                "Кандидаты автосканирования",
+                "Подтверждаемые находки",
             ),
         )
         behavioralList =
@@ -596,18 +842,662 @@ class LiveProcessOverlayService : Service() {
                 orientation =
                     LinearLayout.VERTICAL
             }
-        body.addView(
-            behavioralList,
+        container.addView(
+            requireNotNull(
+                behavioralList,
+            ),
             matchWidth(),
         )
+        rebuildBehavioralList()
+    }
 
-        body.addView(
-            sectionTitle(
-                "Ручной поиск значений",
+    private fun renderTrainingPage(
+        container: LinearLayout,
+    ) {
+        container.addView(
+            pageTitle(
+                "Обучить действие",
+                "Выбери действие. MK свернётся: повтори действие 3–5 раз и снова нажми MK. Повторный раунд того же действия сужает список.",
             ),
         )
 
-        val manualTop =
+        val actions =
+            listOf(
+                "❤️ Здоровье / получаю урон" to
+                    BehavioralActionHint
+                        .DAMAGE_TAKEN,
+                "⚔ Урон моей атаки" to
+                    BehavioralActionHint
+                        .ATTACK,
+                "🏃 Движение / скорость" to
+                    BehavioralActionHint
+                        .MOVEMENT,
+                "⚡ Выносливость" to
+                    BehavioralActionHint
+                        .STAMINA,
+                "⏱ Cooldown / перезарядка" to
+                    BehavioralActionHint
+                        .COOLDOWN,
+                "💰 Валюта / ресурс" to
+                    BehavioralActionHint
+                        .RESOURCE_CHANGE,
+                "🎒 Предмет / количество" to
+                    BehavioralActionHint
+                        .ITEM_CHANGE,
+                "🎯 Другое действие" to
+                    BehavioralActionHint
+                        .OTHER,
+            )
+        actions.forEach {
+            (title, hint) ->
+            container.addView(
+                Button(this).apply {
+                    text = title
+                    setOnClickListener {
+                        startTraining(
+                            hint,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+        }
+
+        if (
+            behavioralSource ==
+                LearnedCandidateSource
+                    .TRAINING &&
+            behavioralCandidates
+                .isNotEmpty()
+        ) {
+            container.addView(
+                sectionTitle(
+                    "Результат обучения",
+                ),
+            )
+            behavioralList =
+                LinearLayout(this).apply {
+                    orientation =
+                        LinearLayout.VERTICAL
+                }
+            container.addView(
+                requireNotNull(
+                    behavioralList,
+                ),
+                matchWidth(),
+            )
+            rebuildBehavioralList()
+        }
+    }
+
+    private fun renderManualPage(
+        container: LinearLayout,
+    ) {
+        manualAutoType = true
+        container.addView(
+            pageTitle(
+                "Ручной поиск",
+                "Тип данных выбирается автоматически. Для обычного количества предметов вроде 28 сначала ищется Int32, а не Double.",
+            ),
+        )
+
+        if (
+            manualBaseline !=
+                null &&
+            manualUnknownAuto
+        ) {
+            container.addView(
+                hintText(
+                    "Снимок памяти готов. Вернись в игру, измени интересующий параметр, затем снова открой MK — ModKit сам оставит изменившиеся значения.",
+                ),
+            )
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Вернуться в игру"
+                    setOnClickListener {
+                        setPanelVisible(
+                            false,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Отменить неизвестный поиск"
+                    setOnClickListener {
+                        clearManualSearch()
+                        manualUnknownAuto =
+                            false
+                        renderCurrentPage()
+                    }
+                },
+                matchWidth(),
+            )
+            return
+        }
+
+        if (
+            manualUnknownAuto &&
+            manualScan != null
+        ) {
+            manualCount =
+                TextView(this).apply {
+                    setTextColor(
+                        Color.WHITE,
+                    )
+                    textSize = 12f
+                }
+            container.addView(
+                requireNotNull(
+                    manualCount,
+                ),
+            )
+            manualList =
+                LinearLayout(this).apply {
+                    orientation =
+                        LinearLayout.VERTICAL
+                }
+            container.addView(
+                requireNotNull(
+                    manualList,
+                ),
+                matchWidth(),
+            )
+            renderManualScan()
+
+            val count =
+                manualScan
+                    ?.snapshot
+                    ?.hits
+                    ?.size
+                    ?: 0
+            container.addView(
+                hintText(
+                    if (count > 5) {
+                        "Результатов ещё много. Вернись в игру и снова измени интересующий параметр; при следующем открытии MK список автоматически сузится."
+                    } else {
+                        "Осталось мало кандидатов. Нажми подходящий результат, чтобы проверить и изменить его."
+                    },
+                ),
+            )
+            if (count > 5) {
+                container.addView(
+                    Button(this).apply {
+                        text =
+                            "Продолжить наблюдение"
+                        setOnClickListener {
+                            setPanelVisible(
+                                false,
+                            )
+                        }
+                    },
+                    matchWidth(),
+                )
+            }
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Начать заново"
+                    setOnClickListener {
+                        clearManualSearch()
+                        manualUnknownAuto =
+                            false
+                        renderCurrentPage()
+                    }
+                },
+                matchWidth(),
+            )
+            return
+        }
+
+        manualQuery =
+            EditText(this).apply {
+                hint =
+                    if (
+                        manualScan ==
+                        null
+                    ) {
+                        "Какое значение сейчас? Например 28"
+                    } else {
+                        "Новое значение после изменения"
+                    }
+                setSingleLine(true)
+                setTextColor(
+                    Color.WHITE,
+                )
+                setHintTextColor(
+                    Color.GRAY,
+                )
+            }
+        container.addView(
+            requireNotNull(
+                manualQuery,
+            ),
+            matchWidth(),
+        )
+
+        if (
+            manualScan == null
+        ) {
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Найти значение"
+                    setOnClickListener {
+                        manualExact(
+                            refine = false,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Не знаю число — наблюдать изменения"
+                    setOnClickListener {
+                        manualUnknownAuto =
+                            true
+                        manualType =
+                            RuntimeValueType
+                                .INT32
+                        manualUnknownBaseline()
+                    }
+                },
+                matchWidth(),
+            )
+            container.addView(
+                hintText(
+                    "Обычный поиск использует быстрый native scanner. Полный диапазон памяти, типы Float/Double вручную и технические фильтры находятся в «Эксперт».",
+                ),
+            )
+            return
+        }
+
+        manualCount =
+            TextView(this).apply {
+                setTextColor(
+                    Color.WHITE,
+                )
+                textSize = 12f
+            }
+        container.addView(
+            requireNotNull(
+                manualCount,
+            ),
+        )
+        manualList =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
+            }
+        container.addView(
+            requireNotNull(
+                manualList,
+            ),
+            matchWidth(),
+        )
+        renderManualScan()
+
+        val hitCount =
+            manualScan
+                ?.snapshot
+                ?.hits
+                ?.size
+                ?: 0
+        if (hitCount > 5) {
+            container.addView(
+                hintText(
+                    "Теперь измени это число в игре, вернись сюда, введи новое значение и нажми «Уточнить». Повторяй, пока не останется несколько результатов.",
+                ),
+            )
+            container.addView(
+                Button(this).apply {
+                    text = "Уточнить"
+                    setOnClickListener {
+                        manualExact(
+                            refine = true,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Свернуть и изменить значение в игре"
+                    setOnClickListener {
+                        setPanelVisible(
+                            false,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+        } else if (
+            hitCount in 1..5
+        ) {
+            container.addView(
+                hintText(
+                    "Осталось мало результатов. Нажми подходящий результат — откроется изменение, Freeze, code trace и сохранение мода.",
+                ),
+            )
+        } else {
+            container.addView(
+                hintText(
+                    "Совпадений нет. Проверь число и начни поиск заново. Для редких типов можно открыть «Эксперт».",
+                ),
+            )
+        }
+
+        container.addView(
+            Button(this).apply {
+                text =
+                    "Начать поиск заново"
+                setOnClickListener {
+                    clearManualSearch()
+                    renderCurrentPage()
+                }
+            },
+            matchWidth(),
+        )
+    }
+
+    private fun renderModsPage(
+        container: LinearLayout,
+    ) {
+        container.addView(
+            pageTitle(
+                "Мои моды",
+                "Здесь только сохранённые привязки. Ошибочную привязку можно открыть, перепроверить, переименовать или удалить.",
+            ),
+        )
+        learnedList =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
+            }
+        container.addView(
+            requireNotNull(
+                learnedList,
+            ),
+            matchWidth(),
+        )
+        rebuildLearnedList()
+    }
+
+    private fun renderCandidatePage(
+        container: LinearLayout,
+    ) {
+        val candidate =
+            selectedCandidate
+        if (candidate == null) {
+            navigate(
+                OverlayPage.HOME,
+            )
+            return
+        }
+
+        container.addView(
+            pageTitle(
+                candidateDisplayTitle(
+                    candidate,
+                ),
+                candidate.subtitle,
+                backPage =
+                    when {
+                        candidate.persistent ->
+                            OverlayPage.MODS
+                        candidate.source ==
+                            LearnedCandidateSource.MANUAL ->
+                            OverlayPage.MANUAL
+                        candidate.source ==
+                            LearnedCandidateSource.TRAINING ->
+                            OverlayPage.TRAINING
+                        else ->
+                            OverlayPage.AUTO
+                    },
+            ),
+        )
+
+        editorTitle =
+            TextView(this).apply {
+                text =
+                    "Сейчас: " +
+                        candidate.value +
+                        " · " +
+                        candidate.valueType
+                            .title +
+                        (
+                            candidate.confidence
+                                ?.let {
+                                    " · уверенность " +
+                                        it +
+                                        "%"
+                                }
+                                ?: ""
+                            )
+                setTextColor(
+                    Color.WHITE,
+                )
+                textSize = 13f
+            }
+        container.addView(
+            requireNotNull(
+                editorTitle,
+            ),
+        )
+
+        editorValue =
+            EditText(this).apply {
+                hint =
+                    "Новое значение"
+                setSingleLine(true)
+                setTextColor(
+                    Color.WHITE,
+                )
+                setHintTextColor(
+                    Color.GRAY,
+                )
+                setText(
+                    candidate.value,
+                )
+            }
+        container.addView(
+            requireNotNull(
+                editorValue,
+            ),
+            matchWidth(),
+        )
+
+        container.addView(
+            Button(this).apply {
+                text =
+                    "Изменить значение"
+                setOnClickListener {
+                    writeSelected()
+                }
+            },
+            matchWidth(),
+        )
+        val freeze =
+            Button(this).apply {
+                text =
+                    if (
+                        freezeTask ==
+                        null
+                    ) {
+                        "Заморозить значение"
+                    } else {
+                        "Остановить заморозку"
+                    }
+                setOnClickListener {
+                    toggleFreeze()
+                    renderCurrentPage()
+                }
+            }
+        freezeButton = freeze
+        container.addView(
+            freeze,
+            matchWidth(),
+        )
+
+        container.addView(
+            sectionTitle(
+                "Что изменяет это значение",
+            ),
+        )
+        container.addView(
+            Button(this).apply {
+                text =
+                    "Найти код, который меняет значение · 5 сек"
+                setOnClickListener {
+                    traceSelectedCodeAccess()
+                }
+            },
+            matchWidth(),
+        )
+        codeAccessList =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
+            }
+        container.addView(
+            requireNotNull(
+                codeAccessList,
+            ),
+            matchWidth(),
+        )
+        rebuildCodeAccessList()
+
+        val writerReady =
+            (
+                activeCodePatch
+                    ?.candidateId ==
+                candidate.id
+                ) ||
+                (
+                    selectedCodeSite
+                        ?.let {
+                            eligibleWriterSite(
+                                it,
+                            )
+                        } ==
+                    true
+                    )
+        val writer =
+            Button(this).apply {
+                text =
+                    if (writerReady) {
+                        writerActionTitle(
+                            candidate,
+                        )
+                    } else {
+                        "Сначала найди код, который изменяет значение"
+                    }
+                isEnabled =
+                    writerReady
+                setOnClickListener {
+                    toggleSelectedWriterBlock()
+                }
+            }
+        codePatchButton =
+            writer
+        container.addView(
+            writer,
+            matchWidth(),
+        )
+
+        container.addView(
+            Button(this).apply {
+                text =
+                    if (
+                        candidate.persistent
+                    ) {
+                        "Перепроверить и обновить привязку"
+                    } else {
+                        "Сохранить в «Мои моды»"
+                    }
+                setOnClickListener {
+                    persistSelectedCandidate()
+                }
+            },
+            matchWidth(),
+        )
+
+        if (candidate.persistent) {
+            renameValue =
+                EditText(this).apply {
+                    hint =
+                        "Новое имя мода"
+                    setSingleLine(true)
+                    setTextColor(
+                        Color.WHITE,
+                    )
+                    setHintTextColor(
+                        Color.GRAY,
+                    )
+                    setText(
+                        candidate.title,
+                    )
+                }
+            container.addView(
+                requireNotNull(
+                    renameValue,
+                ),
+                matchWidth(),
+            )
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Переименовать мод"
+                    setOnClickListener {
+                        renameSelectedPersistentCandidate()
+                    }
+                },
+                matchWidth(),
+            )
+            container.addView(
+                Button(this).apply {
+                    text =
+                        "Удалить эту привязку"
+                    setOnClickListener {
+                        removeSelectedPersistentCandidate()
+                    }
+                },
+                matchWidth(),
+            )
+        }
+
+        container.addView(
+            Button(this).apply {
+                text =
+                    "Технические детали"
+                setOnClickListener {
+                    navigate(
+                        OverlayPage.EXPERT,
+                    )
+                }
+            },
+            matchWidth(),
+        )
+    }
+
+    private fun renderExpertPage(
+        container: LinearLayout,
+    ) {
+        manualAutoType = false
+        container.addView(
+            pageTitle(
+                "Эксперт",
+                "Ручной выбор типа, полный scan, диапазоны, fuzzy/group и фильтры неизвестного значения. Обычный пользователь сюда заходить не обязан.",
+            ),
+        )
+
+        val top =
             LinearLayout(this).apply {
                 orientation =
                     LinearLayout.HORIZONTAL
@@ -624,8 +1514,10 @@ class LiveProcessOverlayService : Service() {
                     clearManualSearch()
                 }
             }
-        manualTop.addView(
-            manualTypeButton,
+        top.addView(
+            requireNotNull(
+                manualTypeButton,
+            ),
             LinearLayout.LayoutParams(
                 dp(112),
                 LinearLayout.LayoutParams
@@ -634,7 +1526,8 @@ class LiveProcessOverlayService : Service() {
         )
         manualQuery =
             EditText(this).apply {
-                hint = "100 · 10..20 · 1.0~0.1 · 10,20"
+                hint =
+                    "100 · 10..20 · 1.0~0.1 · 10,20"
                 setSingleLine(true)
                 setTextColor(
                     Color.WHITE,
@@ -643,8 +1536,10 @@ class LiveProcessOverlayService : Service() {
                     Color.GRAY,
                 )
             }
-        manualTop.addView(
-            manualQuery,
+        top.addView(
+            requireNotNull(
+                manualQuery,
+            ),
             LinearLayout.LayoutParams(
                 0,
                 LinearLayout.LayoutParams
@@ -652,40 +1547,39 @@ class LiveProcessOverlayService : Service() {
                 1f,
             ),
         )
-        body.addView(
-            manualTop,
+        container.addView(
+            top,
             matchWidth(),
         )
 
-        body.addView(
+        container.addView(
             Button(this).apply {
                 text =
-                    "Объём: быстрый"
+                    if (
+                        manualFullScan
+                    ) {
+                        "Объём: полный"
+                    } else {
+                        "Объём: быстрый"
+                    }
                 setOnClickListener {
                     manualFullScan =
                         !manualFullScan
-                    text =
-                        if (
-                            manualFullScan
-                        ) {
-                            "Объём: полный"
-                        } else {
-                            "Объём: быстрый"
-                        }
                     clearManualSearch()
+                    renderCurrentPage()
                 }
             },
             matchWidth(),
         )
 
-        val exactRow =
+        val exact =
             LinearLayout(this).apply {
                 orientation =
                     LinearLayout.HORIZONTAL
             }
-        exactRow.addView(
+        exact.addView(
             Button(this).apply {
-                text = "Новый поиск"
+                text = "Новый"
                 setOnClickListener {
                     manualExact(
                         refine = false,
@@ -694,7 +1588,7 @@ class LiveProcessOverlayService : Service() {
             },
             weighted(),
         )
-        exactRow.addView(
+        exact.addView(
             Button(this).apply {
                 text = "Уточнить ="
                 setOnClickListener {
@@ -705,26 +1599,28 @@ class LiveProcessOverlayService : Service() {
             },
             weighted(),
         )
-        exactRow.addView(
+        exact.addView(
             Button(this).apply {
                 text = "Неизвестно"
                 setOnClickListener {
+                    manualUnknownAuto =
+                        false
                     manualUnknownBaseline()
                 }
             },
             weighted(),
         )
-        body.addView(
-            exactRow,
+        container.addView(
+            exact,
             matchWidth(),
         )
 
-        val refineRow1 =
+        val filters =
             LinearLayout(this).apply {
                 orientation =
                     LinearLayout.HORIZONTAL
             }
-        refineRow1.addView(
+        filters.addView(
             refineButton(
                 "Изм.",
                 RuntimeValueRefinement
@@ -732,7 +1628,7 @@ class LiveProcessOverlayService : Service() {
             ),
             weighted(),
         )
-        refineRow1.addView(
+        filters.addView(
             refineButton(
                 "Не изм.",
                 RuntimeValueRefinement
@@ -740,7 +1636,7 @@ class LiveProcessOverlayService : Service() {
             ),
             weighted(),
         )
-        refineRow1.addView(
+        filters.addView(
             refineButton(
                 "↑",
                 RuntimeValueRefinement
@@ -748,7 +1644,7 @@ class LiveProcessOverlayService : Service() {
             ),
             weighted(),
         )
-        refineRow1.addView(
+        filters.addView(
             refineButton(
                 "↓",
                 RuntimeValueRefinement
@@ -756,200 +1652,218 @@ class LiveProcessOverlayService : Service() {
             ),
             weighted(),
         )
-        body.addView(
-            refineRow1,
+        container.addView(
+            filters,
             matchWidth(),
         )
 
         manualCount =
             TextView(this).apply {
-                text = "Результатов: 0"
                 setTextColor(
                     Color.LTGRAY,
                 )
                 textSize = 11f
             }
-        body.addView(
-            manualCount,
+        container.addView(
+            requireNotNull(
+                manualCount,
+            ),
         )
         manualList =
             LinearLayout(this).apply {
                 orientation =
                     LinearLayout.VERTICAL
             }
-        body.addView(
-            manualList,
+        container.addView(
+            requireNotNull(
+                manualList,
+            ),
             matchWidth(),
         )
+        if (manualScan != null) {
+            renderManualScan()
+        }
 
-        body.addView(
-            sectionTitle(
-                "Изменить выбранное",
-            ),
-        )
-        editorTitle =
+        selectedCandidate
+            ?.let {
+                candidate ->
+                container.addView(
+                    sectionTitle(
+                        "Выбрано: " +
+                            candidate.title,
+                    ),
+                )
+                container.addView(
+                    hintText(
+                        "0x" +
+                            candidate.address
+                                .toString(
+                                    16,
+                                ) +
+                            " · " +
+                            candidate.valueType
+                                .title +
+                            " · " +
+                            candidate.value,
+                    ),
+                )
+            }
+    }
+
+    private fun pageTitle(
+        title: String,
+        subtitle: String,
+        showBack: Boolean = true,
+        backPage: OverlayPage =
+            OverlayPage.HOME,
+    ): View {
+        val group =
+            LinearLayout(this).apply {
+                orientation =
+                    LinearLayout.VERTICAL
+                setPadding(
+                    0,
+                    dp(4),
+                    0,
+                    dp(8),
+                )
+            }
+        if (showBack) {
+            group.addView(
+                Button(this).apply {
+                    text = "← Назад"
+                    setOnClickListener {
+                        navigate(
+                            backPage,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+        }
+        group.addView(
             TextView(this).apply {
-                text =
-                    "Кандидат не выбран"
+                text = title
+                setTextColor(
+                    Color.WHITE,
+                )
+                textSize = 18f
+            },
+        )
+        group.addView(
+            TextView(this).apply {
+                text = subtitle
                 setTextColor(
                     Color.LTGRAY,
                 )
                 textSize = 11f
-            }
-        body.addView(
-            editorTitle,
-        )
-        editorValue =
-            EditText(this).apply {
-                hint =
-                    "Новое значение"
-                setSingleLine(true)
-                setTextColor(
-                    Color.WHITE,
-                )
-                setHintTextColor(
-                    Color.GRAY,
-                )
-            }
-        body.addView(
-            editorValue,
-            matchWidth(),
-        )
-
-        val writeRow =
-            LinearLayout(this).apply {
-                orientation =
-                    LinearLayout.HORIZONTAL
-            }
-        writeRow.addView(
-            Button(this).apply {
-                text = "Записать"
-                setOnClickListener {
-                    writeSelected()
-                }
             },
-            weighted(),
         )
-        val freeze =
-            Button(this).apply {
-                text = "Freeze: OFF"
-                setOnClickListener {
-                    toggleFreeze()
-                }
-            }
-        freezeButton = freeze
-        writeRow.addView(
-            freeze,
-            weighted(),
-        )
-        body.addView(
-            writeRow,
-            matchWidth(),
-        )
+        return group
+    }
 
-        body.addView(
-            sectionTitle(
-                "Код, который использует значение",
-            ),
-        )
-        body.addView(
-            Button(this).apply {
-                text =
-                    "Найти reader/writer · 5 сек"
-                setOnClickListener {
-                    traceSelectedCodeAccess()
-                }
-            },
-            matchWidth(),
-        )
-        codeAccessList =
+    private fun pageButton(
+        title: String,
+        subtitle: String,
+        onClick: () -> Unit,
+    ): View {
+        val group =
             LinearLayout(this).apply {
                 orientation =
                     LinearLayout.VERTICAL
+                setPadding(
+                    0,
+                    dp(4),
+                    0,
+                    dp(4),
+                )
             }
-        body.addView(
-            codeAccessList,
-            matchWidth(),
-        )
-        rebuildCodeAccessList()
-
-        val writerBlock =
+        group.addView(
             Button(this).apply {
-                text =
-                    "Writer block: OFF"
+                text = title
                 setOnClickListener {
-                    toggleSelectedWriterBlock()
-                }
-            }
-        codePatchButton =
-            writerBlock
-        body.addView(
-            writerBlock,
-            matchWidth(),
-        )
-
-        body.addView(
-            Button(this).apply {
-                text =
-                    "Закрепить для следующих запусков"
-                setOnClickListener {
-                    persistSelectedCandidate()
+                    onClick()
                 }
             },
             matchWidth(),
         )
-        body.addView(
-            Button(this).apply {
-                text =
-                    "Удалить выбранное из сохранённых"
-                setOnClickListener {
-                    removeSelectedPersistentCandidate()
-                }
-            },
-            matchWidth(),
+        group.addView(
+            hintText(
+                subtitle,
+            ),
         )
+        return group
+    }
 
-        val collapse =
-            Button(this).apply {
-                text =
-                    "Свернуть MK"
-                setOnClickListener {
-                    setPanelVisible(
-                        false,
-                    )
-                }
+    private fun candidateDisplayTitle(
+        candidate: EditableRuntimeCandidate,
+    ): String =
+        when {
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .DAMAGE_TAKEN ->
+                "❤️ " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .ATTACK ->
+                "⚔ " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .MOVEMENT ->
+                "🏃 " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .STAMINA ->
+                "⚡ " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .COOLDOWN ->
+                "⏱ " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .RESOURCE_CHANGE ->
+                "💰 " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .ITEM_CHANGE ->
+                "🎒 " +
+                    candidate.title
+            else ->
+                candidate.title
+        }
+
+    private fun writerActionTitle(
+        candidate:
+            EditableRuntimeCandidate,
+    ): String {
+        val active =
+            activeCodePatch
+        val enabled =
+            active != null &&
+                active.candidateId ==
+                candidate.id
+        val state =
+            if (enabled) {
+                "ON"
+            } else {
+                "OFF"
             }
-        body.addView(
-            collapse,
-            matchWidth(),
-        )
-
-        body.addView(
-            Button(this).apply {
-                text =
-                    "Закрыть MK и остановить сканеры"
-                setOnClickListener {
-                    stopSelf()
-                }
-            },
-            matchWidth(),
-        )
-
-        return ScrollView(this).apply {
-            isFillViewport =
-                true
-            addView(
-                body,
-                android.view.ViewGroup
-                    .LayoutParams(
-                        android.view.ViewGroup
-                            .LayoutParams
-                            .MATCH_PARENT,
-                        android.view.ViewGroup
-                            .LayoutParams
-                            .WRAP_CONTENT,
-                    ),
-            )
+        return when (
+            candidate.actionHint
+        ) {
+            BehavioralActionHint
+                .DAMAGE_TAKEN ->
+                "Не получать урон: " +
+                    state
+            else ->
+                "Блокировать изменение: " +
+                    state
         }
     }
 
@@ -1064,6 +1978,7 @@ class LiveProcessOverlayService : Service() {
             return
         }
 
+        stopProcessWatch()
         rollbackActiveCodePatchBestEffort()
         resetRuntimeState()
         val replacement =
@@ -1072,16 +1987,6 @@ class LiveProcessOverlayService : Service() {
             )
         config =
             replacement
-        manualList
-            ?.removeAllViews()
-        manualCount?.text =
-            "Результатов: 0"
-        learnedList
-            ?.removeAllViews()
-        behavioralList
-            ?.removeAllViews()
-        codeAccessList
-            ?.removeAllViews()
         awaitingReattach =
             false
         startForeground(
@@ -1092,14 +1997,16 @@ class LiveProcessOverlayService : Service() {
                     replacement.pid,
             ),
         )
+        showOverlay(
+            replacement,
+        )
         setStatus(
-            "Игра перезапущена. ModKit автоматически подключился к новому PID " +
-                newPid +
-                " и восстанавливает сохранённые моды.",
+            "Игра перезапущена. MK подключился к новому процессу и восстанавливает сохранённые моды.",
         )
         loadLearnedProfile(
             replacement,
         )
+        scheduleProcessWatch()
     }
 
     private fun startAutoScan() {
@@ -1619,13 +2526,64 @@ class LiveProcessOverlayService : Service() {
         )
     }
 
+    private fun collapseAutoActivityGroups(
+        candidates:
+            List<BehavioralRuntimeCandidate>,
+    ): List<BehavioralRuntimeCandidate> {
+        val selected =
+            mutableListOf<
+                BehavioralRuntimeCandidate
+            >()
+        candidates
+            .sortedWith(
+                compareByDescending<
+                    BehavioralRuntimeCandidate
+                > {
+                    it.confidence
+                }.thenByDescending {
+                    it.changeCount
+                },
+            )
+            .forEach {
+                candidate ->
+                val duplicatePattern =
+                    selected.any {
+                        existing ->
+                        Integer.bitCount(
+                            existing
+                                .recentChangeMask xor
+                                candidate
+                                    .recentChangeMask,
+                        ) <= 2 &&
+                            existing.valueType
+                                .byteWidth ==
+                            candidate.valueType
+                                .byteWidth
+                    }
+                if (!duplicatePattern) {
+                    selected +=
+                        candidate
+                }
+            }
+        return selected.take(5)
+    }
+
     private fun applyBehavioralSample(
         sample: BehavioralScanSample,
         source: LearnedCandidateSource,
         actionHint: BehavioralActionHint?,
     ) {
         behavioralCandidates =
-            sample.visibleCandidates
+            if (
+                source ==
+                LearnedCandidateSource.AUTO
+            ) {
+                collapseAutoActivityGroups(
+                    sample.visibleCandidates,
+                )
+            } else {
+                sample.visibleCandidates
+            }
         behavioralSource =
             source
         behavioralActionHint =
@@ -1643,22 +2601,26 @@ class LiveProcessOverlayService : Service() {
                         .size
             }
         setStatus(
-            "Автоскан: цикл " +
-                sample.cycle +
-                " · отслеживается " +
-                sample.trackedCandidates +
-                " · показано " +
-                sample.visibleCandidates
-                    .size +
-                " · скрыто как шум " +
-                sample.hiddenAsNoise +
-                " · " +
-                sample.elapsedMs +
-                " мс",
+            if (
+                source ==
+                LearnedCandidateSource.TRAINING
+            ) {
+                "Обучение: найдено " +
+                    sample.visibleCandidates
+                        .size +
+                    " устойчивых кандидатов."
+            } else {
+                "Автоскан: подтверждаемых " +
+                    behavioralCandidates
+                        .size +
+                    " · скрыто шумных " +
+                    sample.hiddenAsNoise +
+                    "."
+            },
         )
 
         val fresh =
-            sample.visibleCandidates
+            behavioralCandidates
                 .firstOrNull {
                     it.confidence >=
                         70 &&
@@ -1676,30 +2638,6 @@ class LiveProcessOverlayService : Service() {
                     "%",
                 Toast.LENGTH_SHORT,
             ).show()
-        }
-
-        if (
-            source ==
-                LearnedCandidateSource.AUTO &&
-            panel?.visibility !=
-                View.VISIBLE
-        ) {
-            sample.visibleCandidates
-                .firstOrNull {
-                    candidate ->
-                    candidate.confidence >=
-                        88 &&
-                        candidate.changeCount >=
-                        3 &&
-                        candidate.id !in
-                        autoCodeTraceAttempted
-                }
-                ?.let {
-                    candidate ->
-                    startAutomaticCodeTrace(
-                        candidate,
-                    )
-                }
         }
 
         if (
@@ -1745,7 +2683,7 @@ class LiveProcessOverlayService : Service() {
             return
         }
         behavioralCandidates
-            .take(12)
+            .take(5)
             .forEach {
                 candidate ->
                 list.addView(
@@ -1765,7 +2703,7 @@ class LiveProcessOverlayService : Service() {
                             subtitle =
                                 "Уверенность " +
                                     candidate.confidence +
-                                    "% · изменений " +
+                                    "% · повторений изменения " +
                                     candidate.changeCount +
                                     " · " +
                                     candidate
@@ -1814,21 +2752,31 @@ class LiveProcessOverlayService : Service() {
                 .trim()
         if (query.isBlank()) {
             setStatus(
-                "Введите значение для ручного поиска.",
+                "Введи значение для поиска.",
             )
             return
         }
+
         setStatus(
             if (refine) {
-                "Уточняем ручной поиск…"
+                "Уточняем результаты по новому значению " +
+                    query +
+                    "…"
+            } else if (
+                manualAutoType
+            ) {
+                "Быстрый поиск " +
+                    query +
+                    " · тип определится автоматически…"
             } else {
-                "Ищем " +
+                "Поиск " +
                     manualType.title +
                     " = " +
                     query +
                     "…"
             },
         )
+
         executor.execute {
             val result =
                 runCatching {
@@ -1837,138 +2785,41 @@ class LiveProcessOverlayService : Service() {
                         manualScan !=
                         null
                     ) {
-                        RootRuntimeValueScanCoordinator
-                            .refineExact(
-                                previous =
-                                    requireNotNull(
-                                        manualScan,
-                                    ),
-                                query =
-                                    query,
-                                cancellation =
-                                    AtomicCancellationSignal(),
-                            )
+                        manualType to
+                            RootRuntimeValueScanCoordinator
+                                .refineExact(
+                                    previous =
+                                        requireNotNull(
+                                            manualScan,
+                                        ),
+                                    query =
+                                        query,
+                                    cancellation =
+                                        AtomicCancellationSignal(),
+                                )
+                    } else if (
+                        manualAutoType
+                    ) {
+                        fastAutoExactScan(
+                            cfg = cfg,
+                            query = query,
+                        )
                     } else {
-                        when {
-                            "," in query -> {
-                                val values =
-                                    query
-                                        .split(",")
-                                        .map {
-                                            it.trim()
-                                        }
-                                        .filter {
-                                            it.isNotBlank()
-                                        }
-                                RootRuntimeAdvancedValueScanCoordinator
-                                    .scanGroup(
-                                        packageName =
-                                            cfg.packageName,
-                                        expectedPid =
-                                            cfg.pid,
-                                        valueType =
-                                            manualType,
-                                        queryTexts =
-                                            values,
-                                        cancellation =
-                                            AtomicCancellationSignal(),
-                                        maxScanBytes =
-                                            manualScanByteLimit(),
-
-                                    )
-                            }
-
-                            ".." in query -> {
-                                val bounds =
-                                    query.split(
-                                        "..",
-                                        limit = 2,
-                                    )
-                                require(
-                                    bounds.size == 2 &&
-                                        bounds.all {
-                                            it.trim()
-                                                .isNotBlank()
-                                        },
-                                ) {
-                                    "Диапазон вводится как минимум..максимум, например 90..110."
-                                }
-                                RootRuntimeAdvancedValueScanCoordinator
-                                    .scanRange(
-                                        packageName =
-                                            cfg.packageName,
-                                        expectedPid =
-                                            cfg.pid,
-                                        valueType =
-                                            manualType,
-                                        minText =
-                                            bounds[0],
-                                        maxText =
-                                            bounds[1],
-                                        cancellation =
-                                            AtomicCancellationSignal(),
-                                        maxScanBytes =
-                                            manualScanByteLimit(),
-
-                                    )
-                            }
-
-                            "~" in query -> {
-                                val fuzzy =
-                                    query.split(
-                                        "~",
-                                        limit = 2,
-                                    )
-                                require(
-                                    fuzzy.size == 2 &&
-                                        fuzzy.all {
-                                            it.trim()
-                                                .isNotBlank()
-                                        },
-                                ) {
-                                    "Fuzzy вводится как значение~допуск, например 1.0~0.05."
-                                }
-                                RootRuntimeAdvancedValueScanCoordinator
-                                    .scanFuzzy(
-                                        packageName =
-                                            cfg.packageName,
-                                        expectedPid =
-                                            cfg.pid,
-                                        valueType =
-                                            manualType,
-                                        queryText =
-                                            fuzzy[0],
-                                        toleranceText =
-                                            fuzzy[1],
-                                        cancellation =
-                                            AtomicCancellationSignal(),
-                                        maxScanBytes =
-                                            manualScanByteLimit(),
-
-                                    )
-                            }
-
-                            else ->
-                                RootRuntimeValueScanCoordinator
-                                    .scanExact(
-                                        packageName =
-                                            cfg.packageName,
-                                        valueType =
-                                            manualType,
-                                        query = query,
-                                        cancellation =
-                                            AtomicCancellationSignal(),
-                                        maxScanBytes =
-                                            manualScanByteLimit(),
-                                        expectedPid =
-                                            cfg.pid,
-                                    )
-                        }
+                        manualType to
+                            expertInitialScan(
+                                cfg = cfg,
+                                query = query,
+                            )
                     }
                 }
+
             main.post {
                 result.onSuccess {
-                    scan ->
+                    (resolvedType, scan) ->
+                    manualType =
+                        resolvedType
+                    manualScan =
+                        scan
                     manualBaseline?.let {
                         RootRuntimeUnknownValueCoordinator
                             .deleteBaseline(
@@ -1976,12 +2827,33 @@ class LiveProcessOverlayService : Service() {
                             )
                     }
                     manualBaseline = null
-                    manualScan = scan
-                    renderManualScan()
+                    manualUnknownAuto =
+                        false
+                    setStatus(
+                        "Найдено: " +
+                            scan.snapshot
+                                .hits
+                                .size +
+                            " · " +
+                            resolvedType.title +
+                            " · просмотрено " +
+                            humanBytes(
+                                scan.snapshot
+                                    .scannedBytes,
+                            ),
+                    )
+                    if (
+                        currentPage ==
+                        OverlayPage.MANUAL ||
+                        currentPage ==
+                        OverlayPage.EXPERT
+                    ) {
+                        renderCurrentPage()
+                    }
                 }.onFailure {
                     failure ->
                     setStatus(
-                        "Ручной поиск: " +
+                        "Поиск не выполнен: " +
                             (
                                 failure.message
                                     ?: failure
@@ -1994,6 +2866,295 @@ class LiveProcessOverlayService : Service() {
         }
     }
 
+    private fun fastAutoExactScan(
+        cfg: ProcessOverlayConfig,
+        query: String,
+    ): Pair<
+        RuntimeValueType,
+        RootRuntimeValueScanResult
+    > {
+        val types =
+            autoManualTypes(
+                query,
+            )
+        var last:
+            RootRuntimeValueScanResult? =
+            null
+        var lastType =
+            types.first()
+
+        for (type in types) {
+            val scan =
+                runCatching {
+                    RootFastValueScanCoordinator
+                        .scanExact(
+                            context =
+                                applicationContext,
+                            packageName =
+                                cfg.packageName,
+                            pid = cfg.pid,
+                            valueType =
+                                type,
+                            query = query,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                            maxScanBytes =
+                                RootFastValueScanCoordinator
+                                    .QUICK_MAX_BYTES,
+                        )
+                }.getOrElse {
+                    RootRuntimeValueScanCoordinator
+                        .scanExact(
+                            packageName =
+                                cfg.packageName,
+                            valueType =
+                                type,
+                            query = query,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                            maxScanBytes =
+                                32L *
+                                    1024L *
+                                    1024L,
+                            expectedPid =
+                                cfg.pid,
+                        )
+                }
+            last =
+                scan
+            lastType =
+                type
+            if (
+                scan.snapshot
+                    .hits
+                    .isNotEmpty()
+            ) {
+                return type to
+                    scan
+            }
+        }
+        return lastType to
+            requireNotNull(last)
+    }
+
+    private fun autoManualTypes(
+        query: String,
+    ): List<RuntimeValueType> {
+        val normalized =
+            query.trim()
+        val integer =
+            normalized.toLongOrNull()
+        if (integer != null) {
+            return if (
+                integer in
+                Int.MIN_VALUE
+                    .toLong()..
+                    Int.MAX_VALUE
+                        .toLong()
+            ) {
+                listOf(
+                    RuntimeValueType
+                        .INT32,
+                    RuntimeValueType
+                        .INT64,
+                )
+            } else {
+                listOf(
+                    RuntimeValueType
+                        .INT64,
+                )
+            }
+        }
+        val decimal =
+            normalized
+                .toDoubleOrNull()
+                ?: error(
+                    "Не удалось распознать число.",
+                )
+        require(
+            decimal.isFinite()
+        ) {
+            "NaN/Infinity не поддерживаются."
+        }
+        return listOf(
+            RuntimeValueType.FLOAT32,
+            RuntimeValueType.FLOAT64,
+        )
+    }
+
+    private fun expertInitialScan(
+        cfg: ProcessOverlayConfig,
+        query: String,
+    ): RootRuntimeValueScanResult =
+        when {
+            "," in query -> {
+                val values =
+                    query
+                        .split(",")
+                        .map {
+                            it.trim()
+                        }
+                        .filter {
+                            it.isNotBlank()
+                        }
+                RootRuntimeAdvancedValueScanCoordinator
+                    .scanGroup(
+                        packageName =
+                            cfg.packageName,
+                        expectedPid =
+                            cfg.pid,
+                        valueType =
+                            manualType,
+                        queryTexts =
+                            values,
+                        cancellation =
+                            AtomicCancellationSignal(),
+                        maxScanBytes =
+                            manualScanByteLimit(),
+                    )
+            }
+
+            ".." in query -> {
+                val bounds =
+                    query.split(
+                        "..",
+                        limit = 2,
+                    )
+                require(
+                    bounds.size == 2 &&
+                        bounds.all {
+                            it.trim()
+                                .isNotBlank()
+                        },
+                ) {
+                    "Диапазон: минимум..максимум, например 90..110."
+                }
+                RootRuntimeAdvancedValueScanCoordinator
+                    .scanRange(
+                        packageName =
+                            cfg.packageName,
+                        expectedPid =
+                            cfg.pid,
+                        valueType =
+                            manualType,
+                        minText =
+                            bounds[0],
+                        maxText =
+                            bounds[1],
+                        cancellation =
+                            AtomicCancellationSignal(),
+                        maxScanBytes =
+                            manualScanByteLimit(),
+                    )
+            }
+
+            "~" in query -> {
+                val fuzzy =
+                    query.split(
+                        "~",
+                        limit = 2,
+                    )
+                require(
+                    fuzzy.size == 2 &&
+                        fuzzy.all {
+                            it.trim()
+                                .isNotBlank()
+                        },
+                ) {
+                    "Fuzzy: значение~допуск, например 1.0~0.05."
+                }
+                RootRuntimeAdvancedValueScanCoordinator
+                    .scanFuzzy(
+                        packageName =
+                            cfg.packageName,
+                        expectedPid =
+                            cfg.pid,
+                        valueType =
+                            manualType,
+                        queryText =
+                            fuzzy[0],
+                        toleranceText =
+                            fuzzy[1],
+                        cancellation =
+                            AtomicCancellationSignal(),
+                        maxScanBytes =
+                            manualScanByteLimit(),
+                    )
+            }
+
+            else ->
+                runCatching {
+                    RootFastValueScanCoordinator
+                        .scanExact(
+                            context =
+                                applicationContext,
+                            packageName =
+                                cfg.packageName,
+                            pid = cfg.pid,
+                            valueType =
+                                manualType,
+                            query = query,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                            maxScanBytes =
+                                manualScanByteLimit(),
+                        )
+                }.getOrElse {
+                    RootRuntimeValueScanCoordinator
+                        .scanExact(
+                            packageName =
+                                cfg.packageName,
+                            valueType =
+                                manualType,
+                            query = query,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                            maxScanBytes =
+                                manualScanByteLimit(),
+                            expectedPid =
+                                cfg.pid,
+                        )
+                }
+        }
+
+    private fun humanBytes(
+        bytes: Long,
+    ): String =
+        when {
+            bytes >=
+                1024L *
+                    1024L *
+                    1024L ->
+                String.format(
+                    java.util.Locale.US,
+                    "%.1f GiB",
+                    bytes.toDouble() /
+                        (
+                            1024.0 *
+                                1024.0 *
+                                1024.0
+                            ),
+                )
+            bytes >=
+                1024L *
+                    1024L ->
+                String.format(
+                    java.util.Locale.US,
+                    "%.1f MiB",
+                    bytes.toDouble() /
+                        (
+                            1024.0 *
+                                1024.0
+                            ),
+                )
+            else ->
+                (
+                    bytes /
+                        1024L
+                    ).toString() +
+                    " KiB"
+        }
+
     private fun manualUnknownBaseline() {
         val cfg =
             config ?: return
@@ -2004,9 +3165,13 @@ class LiveProcessOverlayService : Service() {
         }
         clearManualSearch()
         setStatus(
-            "Сохраняем baseline неизвестного " +
-                manualType.title +
-                "…",
+            if (manualUnknownAuto) {
+                "Запоминаем текущее состояние. После этого измени интересующий параметр в игре."
+            } else {
+                "Сохраняем baseline неизвестного " +
+                    manualType.title +
+                    "…"
+            },
         )
         executor.execute {
             val result =
@@ -2060,7 +3225,11 @@ class LiveProcessOverlayService : Service() {
                     manualBaseline =
                         baseline
                     setStatus(
-                        "Baseline готов. Измени значение в игре, затем нажми Изм./Не изм./↑/↓.",
+                        if (manualUnknownAuto) {
+                            "Снимок готов. Измени параметр в игре и снова открой MK."
+                        } else {
+                            "Baseline готов. Измени значение в игре, затем выбери фильтр."
+                        },
                     )
                     setPanelVisible(
                         false,
@@ -2080,6 +3249,194 @@ class LiveProcessOverlayService : Service() {
             }
         }
     }
+
+    private fun advanceManualUnknownAuto() {
+        if (!manualUnknownAuto) {
+            return
+        }
+        val baseline =
+            manualBaseline
+        val previous =
+            manualScan
+        if (
+            baseline == null &&
+            previous == null
+        ) {
+            return
+        }
+        setStatus(
+            "Сравниваем изменения с предыдущим состоянием…",
+        )
+        executor.execute {
+            val result =
+                runCatching {
+                    if (baseline != null) {
+                        RootRuntimeUnknownValueCoordinator
+                            .compareBaseline(
+                                baseline =
+                                    baseline,
+                                refinement =
+                                    RuntimeValueRefinement
+                                        .CHANGED,
+                                cancellation =
+                                    AtomicCancellationSignal(),
+                            )
+                    } else {
+                        RootRuntimeValueScanCoordinator
+                            .refine(
+                                previous =
+                                    requireNotNull(
+                                        previous,
+                                    ),
+                                refinement =
+                                    RuntimeValueRefinement
+                                        .CHANGED,
+                                cancellation =
+                                    AtomicCancellationSignal(),
+                            )
+                    }
+                }
+            main.post {
+                result.onSuccess {
+                    updated ->
+                    val filtered =
+                        updated.copy(
+                            snapshot =
+                                updated.snapshot
+                                    .copy(
+                                        hits =
+                                            updated.snapshot
+                                                .hits
+                                                .filter {
+                                                    unknownAutoUseful(
+                                                        updated.snapshot
+                                                            .valueType,
+                                                        it.bits,
+                                                    )
+                                                }
+                                                .take(
+                                                    5_000,
+                                                ),
+                                    ),
+                        )
+                    manualScan =
+                        filtered
+                    manualBaseline?.let {
+                        RootRuntimeUnknownValueCoordinator
+                            .deleteBaseline(
+                                it,
+                            )
+                    }
+                    manualBaseline = null
+                    currentPage =
+                        OverlayPage.MANUAL
+                    setStatus(
+                        "Неизвестный параметр: осталось " +
+                            filtered.snapshot
+                                .hits
+                                .size +
+                            ". Повтори изменение ещё раз, если результатов много.",
+                    )
+                    renderCurrentPage()
+                }.onFailure {
+                    failure ->
+                    setStatus(
+                        "Автоматическое сравнение не выполнено: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun unknownAutoUseful(
+        type: RuntimeValueType,
+        bits: Long,
+    ): Boolean =
+        when (type) {
+            RuntimeValueType.INT32 -> {
+                val integer =
+                    bits.toInt()
+                        .toLong()
+                val float =
+                    Float.fromBits(
+                        bits.toInt(),
+                    )
+                val usefulInteger =
+                    kotlin.math.abs(
+                        integer,
+                    ) <=
+                        100_000_000L &&
+                        !(
+                            integer < 0L &&
+                                kotlin.math.abs(
+                                    integer,
+                                ) >
+                                1_000_000L
+                            )
+                val usefulFloat =
+                    float.isFinite() &&
+                        (
+                            float == 0f ||
+                                kotlin.math.abs(
+                                    float,
+                                ) in
+                                1.0e-6f..1.0e6f
+                            )
+                usefulInteger ||
+                    usefulFloat
+            }
+
+            RuntimeValueType.INT64 -> {
+                val integer =
+                    bits
+                val double =
+                    Double.fromBits(
+                        bits,
+                    )
+                kotlin.math.abs(
+                    integer.toDouble(),
+                ) <=
+                    1.0e11 ||
+                    (
+                        double.isFinite() &&
+                            (
+                                double == 0.0 ||
+                                    kotlin.math.abs(
+                                        double,
+                                    ) in
+                                    1.0e-9..1.0e9
+                                )
+                        )
+            }
+
+            RuntimeValueType.FLOAT32 ->
+                Float.fromBits(
+                    bits.toInt(),
+                ).let {
+                    it.isFinite() &&
+                        kotlin.math.abs(
+                            it,
+                        ) <=
+                        1.0e6f
+                }
+
+            RuntimeValueType.FLOAT64 ->
+                Double.fromBits(
+                    bits,
+                ).let {
+                    it.isFinite() &&
+                        kotlin.math.abs(
+                            it,
+                        ) <=
+                        1.0e9
+                }
+        }
 
     private fun refineManual(
         refinement:
@@ -2146,7 +3503,14 @@ class LiveProcessOverlayService : Service() {
                             )
                     }
                     manualBaseline = null
-                    renderManualScan()
+                    if (
+                        currentPage ==
+                        OverlayPage.MANUAL ||
+                        currentPage ==
+                        OverlayPage.EXPERT
+                    ) {
+                        renderCurrentPage()
+                    }
                 }.onFailure {
                     failure ->
                     setStatus(
@@ -2170,8 +3534,12 @@ class LiveProcessOverlayService : Service() {
         val hits =
             scan.snapshot.hits
         manualCount?.text =
-            "Результатов: " +
+            "Найдено: " +
                 hits.size +
+                " · " +
+                scan.snapshot
+                    .valueType
+                    .title +
                 (
                     if (
                         scan.snapshot
@@ -2179,65 +3547,174 @@ class LiveProcessOverlayService : Service() {
                         scan.snapshot
                             .truncatedByByteLimit
                     ) {
-                        " (поиск ограничен)"
+                        " · быстрый проход"
                     } else {
                         ""
                     }
                     )
+
         val list =
             manualList
                 ?: return
         list.removeAllViews()
-        hits.take(12)
-            .forEach {
-                hit ->
-                list.addView(
-                    candidateRow(
-                        EditableRuntimeCandidate(
-                            id =
-                                "manual:" +
-                                    scan.snapshot
-                                        .valueType
-                                        .name +
-                                    ":" +
-                                    hit.address
-                                        .toString(
-                                            16,
-                                        ),
-                            title =
-                                "Ручной результат",
-                            address =
-                                hit.address,
-                            valueType =
-                                scan.snapshot
-                                    .valueType,
-                            value =
-                                hit.displayValue(
-                                    scan.snapshot
-                                        .valueType,
-                                ),
-                            subtitle =
+        hits.take(
+            if (
+                currentPage ==
+                OverlayPage.EXPERT
+            ) {
+                20
+            } else {
+                8
+            },
+        ).forEach {
+            hit ->
+            val interpreted =
+                interpretManualHit(
+                    scan.snapshot
+                        .valueType,
+                    hit,
+                )
+            list.addView(
+                candidateRow(
+                    EditableRuntimeCandidate(
+                        id =
+                            "manual:" +
+                                interpreted.first
+                                    .name +
+                                ":" +
+                                hit.address
+                                    .toString(
+                                        16,
+                                    ),
+                        title =
+                            if (
+                                manualUnknownAuto
+                            ) {
+                                "Возможный параметр"
+                            } else {
+                                "Найденное значение"
+                            },
+                        address =
+                            hit.address,
+                        valueType =
+                            interpreted.first,
+                        value =
+                            interpreted.second,
+                        subtitle =
+                            if (
+                                currentPage ==
+                                OverlayPage.EXPERT
+                            ) {
                                 "0x" +
                                     hit.address
                                         .toString(
                                             16,
                                         ) +
                                     " · " +
-                                    scan.snapshot
-                                        .valueType
-                                        .title,
-                            source =
-                                LearnedCandidateSource
-                                    .MANUAL,
-                        ),
+                                    interpreted.first
+                                        .title
+                            } else {
+                                interpreted.first
+                                    .title +
+                                    " · нажми, чтобы проверить"
+                            },
+                        source =
+                            LearnedCandidateSource
+                                .MANUAL,
                     ),
+                ),
+            )
+        }
+    }
+
+    private fun interpretManualHit(
+        scanType: RuntimeValueType,
+        hit: RuntimeValueHit,
+    ): Pair<
+        RuntimeValueType,
+        String
+    > {
+        if (
+            !manualUnknownAuto
+        ) {
+            return scanType to
+                hit.displayValue(
+                    scanType,
                 )
+        }
+
+        if (
+            scanType ==
+            RuntimeValueType.INT32
+        ) {
+            val integer =
+                hit.bits.toInt()
+            val float =
+                Float.fromBits(
+                    hit.bits.toInt(),
+                )
+            val integerLooksUseful =
+                kotlin.math.abs(
+                    integer.toLong(),
+                ) <=
+                    1_000_000L
+            val floatLooksUseful =
+                float.isFinite() &&
+                    (
+                        float == 0f ||
+                            kotlin.math.abs(
+                                float,
+                            ) in
+                            1.0e-5f..100_000f
+                        )
+            if (
+                !integerLooksUseful &&
+                floatLooksUseful
+            ) {
+                return RuntimeValueType
+                    .FLOAT32 to
+                    float.toString()
             }
-        setStatus(
-            "Ручной поиск: найдено " +
-                hits.size +
-                ". Измени состояние игры и уточняй поиск.",
-        )
+        }
+
+        if (
+            scanType ==
+            RuntimeValueType.INT64
+        ) {
+            val integer =
+                hit.bits
+            val double =
+                Double.fromBits(
+                    hit.bits,
+                )
+            val integerLooksUseful =
+                kotlin.math.abs(
+                    integer.toDouble(),
+                ) <=
+                    1.0e9
+            val doubleLooksUseful =
+                double.isFinite() &&
+                    (
+                        double == 0.0 ||
+                            kotlin.math.abs(
+                                double,
+                            ) in
+                            1.0e-8..1.0e8
+                        )
+            if (
+                !integerLooksUseful &&
+                doubleLooksUseful
+            ) {
+                return RuntimeValueType
+                    .FLOAT64 to
+                    double.toString()
+            }
+        }
+
+        return scanType to
+            hit.displayValue(
+                scanType,
+            )
     }
 
     private fun selectCandidate(
@@ -2287,6 +3764,12 @@ class LiveProcessOverlayService : Service() {
         editorValue?.setText(
             candidate.value,
         )
+        currentPage =
+            OverlayPage.CANDIDATE
+        renderCurrentPage()
+        refreshSelectedCandidateValue(
+            candidate,
+        )
         if (
             candidate.learnedCodeSites
                 .isNotEmpty() &&
@@ -2296,6 +3779,56 @@ class LiveProcessOverlayService : Service() {
             resolvePersistedCodeSites(
                 candidate,
             )
+        }
+    }
+
+    private fun refreshSelectedCandidateValue(
+        candidate:
+            EditableRuntimeCandidate,
+    ) {
+        val cfg =
+            config ?: return
+        executor.execute {
+            val refreshed =
+                runCatching {
+                    val address =
+                        resolveCandidateAddress(
+                            candidate =
+                                candidate,
+                            cfg = cfg,
+                        )
+                    candidate.copy(
+                        address = address,
+                        value =
+                            readRuntimeValue(
+                                cfg = cfg,
+                                address =
+                                    address,
+                                type =
+                                    candidate
+                                        .valueType,
+                            ),
+                    )
+                }
+            main.post {
+                refreshed.onSuccess {
+                    updated ->
+                    if (
+                        selectedCandidate
+                            ?.id ==
+                        candidate.id
+                    ) {
+                        selectedCandidate =
+                            updated
+                        if (
+                            currentPage ==
+                            OverlayPage.CANDIDATE
+                        ) {
+                            renderCurrentPage()
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2692,76 +4225,81 @@ class LiveProcessOverlayService : Service() {
         ) {
             list.addView(
                 hintText(
-                    "Выбери значение и запусти 5-секундный trace. На ARM64 ModKit использует hardware watchpoint и покажет native reader/writer.",
+                    "После trace здесь появится код, который читает или изменяет выбранное значение.",
                 ),
             )
             return
         }
 
         codeAccessSites
-            .take(10)
+            .take(8)
             .forEach {
                 site ->
-                val kind =
+                val readableKind =
                     when (
                         site.accessKind
                     ) {
-                        RuntimeCodeAccessKind
-                            .WRITE ->
-                            "WRITE"
-                        RuntimeCodeAccessKind
-                            .READ ->
-                            "READ"
-                        RuntimeCodeAccessKind
-                            .UNKNOWN ->
-                            "ACCESS"
+                        RuntimeCodeAccessKind.WRITE ->
+                            "Изменяет значение"
+                        RuntimeCodeAccessKind.READ ->
+                            "Читает значение"
+                        RuntimeCodeAccessKind.UNKNOWN ->
+                            "Обращается к значению"
                     }
-                val offset =
-                    site.moduleFileOffset
-                        ?.let {
-                            " +0x" +
-                                it.toString(
-                                    16,
-                                )
-                        }
-                        .orEmpty()
-                val instruction =
-                    site.instructionText
-                        ?.substringAfter(
-                            ": ",
-                        )
+                val method =
+                    site.managedMethodCandidate
                         ?.takeIf {
                             it.isNotBlank()
                         }
-                        ?.let {
-                            " · " +
-                                it
-                        }
-                        .orEmpty()
-                val method =
-                    site.managedMethodCandidate
-                        ?.let {
-                            "\n" +
-                                it
-                        }
-                        .orEmpty()
+                val technical =
+                    if (
+                        currentPage ==
+                        OverlayPage.EXPERT
+                    ) {
+                        "\n" +
+                            site.moduleName +
+                            (
+                                site.moduleFileOffset
+                                    ?.let {
+                                        " +0x" +
+                                            it.toString(
+                                                16,
+                                            )
+                                    }
+                                    ?: ""
+                                ) +
+                            (
+                                site.instructionText
+                                    ?.let {
+                                        " · " +
+                                            it
+                                    }
+                                    ?: ""
+                                )
+                    } else {
+                        ""
+                    }
                 list.addView(
                     TextView(this).apply {
                         text =
-                            kind +
-                                " · " +
-                                site.moduleName +
-                                offset +
-                                " · x" +
+                            readableKind +
+                                (
+                                    method
+                                        ?.let {
+                                            "\n" +
+                                                it
+                                        }
+                                        ?: ""
+                                    ) +
+                                " · срабатываний " +
                                 site.count +
-                                instruction +
-                                method +
+                                technical +
                                 (
                                     if (
                                         selectedCodeSite ==
                                         site
                                     ) {
-                                        "\nВыбран для Writer block"
+                                        "\n✓ Выбран"
                                     } else {
                                         ""
                                     }
@@ -2769,21 +4307,19 @@ class LiveProcessOverlayService : Service() {
                         setTextColor(
                             if (
                                 site.accessKind ==
-                                RuntimeCodeAccessKind
-                                    .WRITE
+                                RuntimeCodeAccessKind.WRITE
                             ) {
                                 Color.WHITE
                             } else {
                                 Color.LTGRAY
                             },
                         )
-                        textSize =
-                            10f
+                        textSize = 11f
                         setPadding(
-                            dp(4),
-                            dp(4),
-                            dp(4),
-                            dp(4),
+                            dp(6),
+                            dp(6),
+                            dp(6),
+                            dp(6),
                         )
                         if (
                             eligibleWriterSite(
@@ -2799,17 +4335,22 @@ class LiveProcessOverlayService : Service() {
                                         site
                                     rebuildCodeAccessList()
                                     setStatus(
-                                        "Выбран writer: " +
-                                            site.moduleName +
-                                            " +0x" +
-                                            (
-                                                site.moduleFileOffset
-                                                    ?: 0L
-                                                ).toString(
-                                                16,
-                                            ) +
-                                            ". Writer block временно заменит только подтверждённую STR-инструкцию на NOP.",
+                                        "Выбран код, который изменяет значение. Теперь можно временно заблокировать это изменение.",
                                     )
+                                    if (
+                                        currentPage ==
+                                        OverlayPage.CANDIDATE
+                                    ) {
+                                        codePatchButton
+                                            ?.text =
+                                            selectedCandidate
+                                                ?.let {
+                                                    writerActionTitle(
+                                                        it,
+                                                    )
+                                                }
+                                                ?: "Блокировать изменение"
+                                    }
                                 }
                             }
                         }
@@ -3091,12 +4632,15 @@ class LiveProcessOverlayService : Service() {
                     result.onSuccess {
                         activeCodePatch =
                             null
-                        codePatchButton
-                            ?.text =
-                            "Writer block: OFF"
                         setStatus(
-                            "Writer block отключён; исходная ARM64-инструкция восстановлена и проверена.",
+                            "Блокировка изменения отключена; исходная инструкция восстановлена.",
                         )
+                        if (
+                            currentPage ==
+                            OverlayPage.CANDIDATE
+                        ) {
+                            renderCurrentPage()
+                        }
                     }.onFailure {
                         failure ->
                         setStatus(
@@ -3186,11 +4730,15 @@ class LiveProcessOverlayService : Service() {
                             target =
                                 target,
                         )
-                    codePatchButton?.text =
-                        "Writer block: ON"
                     setStatus(
-                        "Writer block включён. Только подтверждённая STR-инструкция временно заменена на NOP; нажми ещё раз для точного отката.",
+                        "Блокировка изменения включена. Подтверждённый writer временно отключён; нажми ещё раз для восстановления.",
                     )
+                    if (
+                        currentPage ==
+                        OverlayPage.CANDIDATE
+                    ) {
+                        renderCurrentPage()
+                    }
                 }.onFailure {
                     failure ->
                     setStatus(
@@ -3318,25 +4866,19 @@ class LiveProcessOverlayService : Service() {
                             candidate.actionHint,
                         force = true,
                     )
-                    editorTitle?.text =
-                        candidate.title +
-                            "\n0x" +
-                            candidate.address
-                                .toString(
-                                    16,
-                                ) +
-                            " · " +
-                            candidate.valueType
-                                .title +
-                            " · сейчас " +
-                            written.newValue
                     setStatus(
-                        "Записано: " +
+                        "Значение изменено: " +
                             written.oldValue +
                             " → " +
                             written.newValue +
-                            ". Read-back подтверждён.",
+                            ".",
                     )
+                    if (
+                        currentPage ==
+                        OverlayPage.CANDIDATE
+                    ) {
+                        renderCurrentPage()
+                    }
                 }.onFailure {
                     failure ->
                     setStatus(
@@ -3399,7 +4941,7 @@ class LiveProcessOverlayService : Service() {
         freezeValue =
             value
         freezeButton?.text =
-            "Freeze: ON"
+            "Остановить заморозку"
         setStatus(
             "Freeze включён: " +
                 candidate.title +
@@ -3468,7 +5010,7 @@ class LiveProcessOverlayService : Service() {
         freezeTarget = null
         freezeValue = null
         freezeButton?.text =
-            "Freeze: OFF"
+            "Заморозить значение"
     }
 
     private fun clearManualSearch() {
@@ -3505,7 +5047,11 @@ class LiveProcessOverlayService : Service() {
         }
         manualBaseline = null
         manualScan = null
+        manualAutoType = true
+        manualUnknownAuto = false
         manualFullScan = false
+        currentPage =
+            OverlayPage.HOME
         learnedCandidates =
             emptyList()
         behavioralCandidates =
@@ -3722,7 +5268,16 @@ class LiveProcessOverlayService : Service() {
                     (_, resolved) ->
                     learnedCandidates =
                         resolved
-                    rebuildLearnedList()
+                    if (
+                        currentPage ==
+                        OverlayPage.HOME ||
+                        currentPage ==
+                        OverlayPage.MODS
+                    ) {
+                        renderCurrentPage()
+                    } else {
+                        rebuildLearnedList()
+                    }
                     setStatus(
                         if (
                             resolved.isEmpty()
@@ -3822,6 +5377,140 @@ class LiveProcessOverlayService : Service() {
         )
     }
 
+    private fun renameSelectedPersistentCandidate() {
+        val cfg =
+            config ?: return
+        val candidate =
+            selectedCandidate
+                ?: return
+        val anchor =
+            candidate.anchor
+                ?: run {
+                    setStatus(
+                        "У выбранного мода нет сохранённой привязки.",
+                    )
+                    return
+                }
+        val newTitle =
+            renameValue
+                ?.text
+                ?.toString()
+                .orEmpty()
+                .trim()
+        if (
+            newTitle.length !in
+            2..60
+        ) {
+            setStatus(
+                "Имя мода должно быть от 2 до 60 символов.",
+            )
+            return
+        }
+
+        executor.execute {
+            val result =
+                runCatching {
+                    val identity =
+                        synchronized(
+                            profileLock,
+                        ) {
+                            artifactIdentity
+                                ?: profileStore
+                                    .computeIdentity(
+                                        packageName =
+                                            cfg.packageName,
+                                        cancellation =
+                                            AtomicCancellationSignal(),
+                                    )
+                                    .also {
+                                        artifactIdentity =
+                                            it
+                                    }
+                        }
+                    val profile =
+                        synchronized(
+                            profileLock,
+                        ) {
+                            profileStore
+                                .loadExact(
+                                    packageName =
+                                        cfg.packageName,
+                                    artifactSha256 =
+                                        identity
+                                            .artifactSha256,
+                                )
+                        } ?: error(
+                            "Профиль этой версии не найден.",
+                        )
+                    val saved =
+                        profile.candidates
+                            .singleOrNull {
+                                it.anchor ==
+                                    anchor
+                            } ?: error(
+                            "Сохранённая привязка не найдена.",
+                        )
+                    synchronized(
+                        profileLock,
+                    ) {
+                        profileStore
+                            .saveCandidate(
+                                identity =
+                                    identity,
+                                candidate =
+                                    saved.copy(
+                                        title =
+                                            newTitle,
+                                        updatedAtEpochMs =
+                                            System
+                                                .currentTimeMillis(),
+                                    ),
+                            )
+                    }
+                    newTitle
+                }
+            main.post {
+                result.onSuccess {
+                    title ->
+                    learnedCandidates =
+                        learnedCandidates
+                            .map {
+                                item ->
+                                if (
+                                    item.anchor ==
+                                    anchor
+                                ) {
+                                    item.copy(
+                                        title = title,
+                                    )
+                                } else {
+                                    item
+                                }
+                            }
+                    selectedCandidate =
+                        candidate.copy(
+                            title = title,
+                        )
+                    setStatus(
+                        "Мод переименован.",
+                    )
+                    renderCurrentPage()
+                }.onFailure {
+                    failure ->
+                    setStatus(
+                        "Не удалось переименовать мод: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
+    }
+
     private fun removeSelectedPersistentCandidate() {
         val cfg =
             config ?: return
@@ -3900,10 +5589,12 @@ class LiveProcessOverlayService : Service() {
                         editorValue?.setText(
                             "",
                         )
-                        rebuildLearnedList()
+                        currentPage =
+                            OverlayPage.MODS
                         setStatus(
-                            "Сохранённый параметр удалён из профиля этой версии.",
+                            "Сохранённая привязка удалена.",
                         )
+                        renderCurrentPage()
                     } else {
                         setStatus(
                             "Сохранённый параметр уже отсутствует.",
@@ -4158,15 +5849,25 @@ class LiveProcessOverlayService : Service() {
                         "ModKit: мод закреплён и будет восстановлен при следующем запуске.",
                         Toast.LENGTH_LONG,
                     ).show()
+                    if (
+                        selectedCandidate
+                            ?.id ==
+                        saved.id
+                    ) {
+                        selectedCandidate =
+                            saved
+                    }
                     setStatus(
-                        "Pointer-chain сохранён: " +
-                            (
-                                saved.anchor
-                                    ?.moduleIdentity
-                                    ?: "module"
-                                ) +
-                            ".",
+                        "Мод сохранён и будет восстановлен при следующем запуске.",
                     )
+                    if (
+                        currentPage ==
+                        OverlayPage.CANDIDATE ||
+                        currentPage ==
+                        OverlayPage.MODS
+                    ) {
+                        renderCurrentPage()
+                    }
                 }.onFailure {
                     failure ->
                     if (force) {
@@ -4308,8 +6009,10 @@ class LiveProcessOverlayService : Service() {
         row.addView(
             TextView(this).apply {
                 text =
-                    candidate.title +
-                        " · " +
+                    candidateDisplayTitle(
+                        candidate,
+                    ) +
+                        "\nСейчас: " +
                         candidate.value
                 setTextColor(
                     Color.WHITE,
@@ -4320,7 +6023,8 @@ class LiveProcessOverlayService : Service() {
         row.addView(
             TextView(this).apply {
                 text =
-                    candidate.subtitle
+                    candidate.subtitle +
+                        "\nНажми, чтобы открыть"
                 setTextColor(
                     Color.LTGRAY,
                 )
