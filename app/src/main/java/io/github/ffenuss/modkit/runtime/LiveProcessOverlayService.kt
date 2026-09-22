@@ -2572,8 +2572,8 @@ class LiveProcessOverlayService : Service() {
 
         if (round > 1) {
             val minimumSeen =
-                if (round == 2) {
-                    2
+                if (round <= 3) {
+                    round
                 } else {
                     round - 1
                 }
