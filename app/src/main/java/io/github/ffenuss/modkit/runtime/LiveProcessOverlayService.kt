@@ -1372,7 +1372,8 @@ class LiveProcessOverlayService : Service() {
                                         queryTexts =
                                             values,
                                         cancellation =
-                                            AtomicCancellationSignal(),                                        maxScanBytes =
+                                            AtomicCancellationSignal(),
+                                        maxScanBytes =
                                             manualScanByteLimit(),
 
                                     )
@@ -1406,7 +1407,8 @@ class LiveProcessOverlayService : Service() {
                                         maxText =
                                             bounds[1],
                                         cancellation =
-                                            AtomicCancellationSignal(),                                        maxScanBytes =
+                                            AtomicCancellationSignal(),
+                                        maxScanBytes =
                                             manualScanByteLimit(),
 
                                     )
@@ -1440,7 +1442,8 @@ class LiveProcessOverlayService : Service() {
                                         toleranceText =
                                             fuzzy[1],
                                         cancellation =
-                                            AtomicCancellationSignal(),                                        maxScanBytes =
+                                            AtomicCancellationSignal(),
+                                        maxScanBytes =
                                             manualScanByteLimit(),
 
                                     )
