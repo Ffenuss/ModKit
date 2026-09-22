@@ -7,6 +7,7 @@ data class ProcessOverlayConfig(
     val packageName: String,
     val pid: Int,
     val label: String,
+    val androidUserId: Int? = null,
 )
 
 object ProcessOverlayConfigCodec {
@@ -45,6 +46,10 @@ object ProcessOverlayConfigCodec {
                 .put(
                     "label",
                     config.label,
+                )
+                .put(
+                    "androidUserId",
+                    config.androidUserId,
                 )
                 .toString()
                 .toByteArray(
@@ -124,6 +129,23 @@ object ProcessOverlayConfigCodec {
                     "label",
                 ).ifBlank {
                     packageName
+                },
+            androidUserId =
+                if (
+                    json.has(
+                        "androidUserId",
+                    ) &&
+                    !json.isNull(
+                        "androidUserId",
+                    )
+                ) {
+                    json.getInt(
+                        "androidUserId",
+                    ).takeIf {
+                        it >= 0
+                    }
+                } else {
+                    null
                 },
         )
     }
