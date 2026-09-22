@@ -81,6 +81,10 @@ class LiveProcessOverlayService : Service() {
         WindowManager.LayoutParams? = null
     private var panel:
         View? = null
+    private var pageContainer:
+        LinearLayout? = null
+    private var currentPage =
+        OverlayPage.HOME
     private var floating:
         Button? = null
 
@@ -105,6 +109,8 @@ class LiveProcessOverlayService : Service() {
     private var editorTitle:
         TextView? = null
     private var editorValue:
+        EditText? = null
+    private var renameValue:
         EditText? = null
     private var freezeButton:
         Button? = null
@@ -157,6 +163,10 @@ class LiveProcessOverlayService : Service() {
 
     private var manualType =
         RuntimeValueType.INT32
+    private var manualAutoType =
+        true
+    private var manualUnknownAuto =
+        false
     private var manualFullScan =
         false
     private var manualScan:
@@ -178,6 +188,16 @@ class LiveProcessOverlayService : Service() {
         EditableRuntimeCandidate? = null
     private var freezeValue:
         String? = null
+
+    private enum class OverlayPage {
+        HOME,
+        AUTO,
+        TRAINING,
+        MANUAL,
+        MODS,
+        CANDIDATE,
+        EXPERT,
+    }
 
     override fun onCreate() {
         super.onCreate()
