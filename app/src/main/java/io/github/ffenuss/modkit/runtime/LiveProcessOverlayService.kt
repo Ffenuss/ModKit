@@ -1282,6 +1282,34 @@ class LiveProcessOverlayService : Service() {
             ),
         )
 
+        container.addView(
+            hintText(
+                when (
+                    candidate.evidence
+                ) {
+                    CandidateEvidence.PRELIMINARY ->
+                        "Это предварительное совпадение памяти. ModKit ещё не считает его модом."
+
+                    CandidateEvidence.STABLE ->
+                        if (
+                            candidate.actionHint !=
+                            null
+                        ) {
+                            "Значение повторялось в нескольких раундах «" +
+                                candidate.actionHint.title +
+                                "». Это ещё не означает, что само значение является " +
+                                candidate.actionHint.confirmedTitle +
+                                "; проверь изменение/Freeze или найди код, который его меняет."
+                        } else {
+                            "Паттерн повторяется устойчиво, но ModKit пока не знает его смысл. Можно уточнить действие и проверить эффект."
+                        }
+
+                    CandidateEvidence.CONFIRMED ->
+                        "Связь усилена live code trace: найден код, который записывает это значение. Привязку всё равно можно удалить из «Мои моды», если эффект оказался не тем."
+                },
+            ),
+        )
+
         editorTitle =
             TextView(this).apply {
                 text =
