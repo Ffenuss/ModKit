@@ -18,8 +18,17 @@ object RootRuntimeAdvancedValueScanCoordinator {
         runner: RootCommandRunner =
             AndroidRootCommandRunner(),
         maxScanBytes: Long? = null,
-    ): RootRuntimeValueScanResult =
-        scan(
+    ): RootRuntimeValueScanResult {
+        val predicate =
+            rangePredicate(
+                valueType =
+                    valueType,
+                minText =
+                    minText,
+                maxText =
+                    maxText,
+            )
+        return scan(
             packageName =
                 packageName,
             expectedPid =
@@ -33,18 +42,10 @@ object RootRuntimeAdvancedValueScanCoordinator {
             runner = runner,
             maxScanBytes =
                 maxScanBytes,
-        ) {
-            bits ->
-            inRange(
-                valueType =
-                    valueType,
-                bits = bits,
-                minText =
-                    minText,
-                maxText =
-                    maxText,
-            )
-        }
+            predicate =
+                predicate,
+        )
+    }
 
     fun scanFuzzy(
         packageName: String,
@@ -435,6 +436,17 @@ object RootRuntimeAdvancedValueScanCoordinator {
                     } else {
                         0
                     }
+                val budgetWithOverlap =
+                    if (
+                        budget >
+                        Long.MAX_VALUE -
+                            overlap.toLong()
+                    ) {
+                        Long.MAX_VALUE
+                    } else {
+                        budget +
+                            overlap
+                    }
                 val request =
                     min(
                         min(
@@ -444,8 +456,7 @@ object RootRuntimeAdvancedValueScanCoordinator {
                                 .DEFAULT_CHUNK_BYTES
                                 .toLong(),
                         ),
-                        budget +
-                            overlap,
+                        budgetWithOverlap,
                     ).toInt()
                 if (
                     request <
@@ -572,12 +583,11 @@ object RootRuntimeAdvancedValueScanCoordinator {
         )
     }
 
-    private fun inRange(
+    private fun rangePredicate(
         valueType: RuntimeValueType,
-        bits: Long,
         minText: String,
         maxText: String,
-    ): Boolean =
+    ): (Long) -> Boolean =
         when (valueType) {
             RuntimeValueType.INT32 -> {
                 val low =
@@ -595,8 +605,11 @@ object RootRuntimeAdvancedValueScanCoordinator {
                 require(low <= high) {
                     "Нижняя граница больше верхней."
                 }
-                bits.toInt() in
-                    low..high
+                {
+                    bits ->
+                    bits.toInt() in
+                        low..high
+                }
             }
 
             RuntimeValueType.INT64 -> {
@@ -615,7 +628,11 @@ object RootRuntimeAdvancedValueScanCoordinator {
                 require(low <= high) {
                     "Нижняя граница больше верхней."
                 }
-                bits in low..high
+                {
+                    bits ->
+                    bits in
+                        low..high
+                }
             }
 
             RuntimeValueType.FLOAT32 -> {
@@ -638,13 +655,16 @@ object RootRuntimeAdvancedValueScanCoordinator {
                 ) {
                     "Некорректный Float-диапазон."
                 }
-                val value =
-                    Float.fromBits(
-                        bits.toInt(),
-                    )
-                value.isFinite() &&
-                    value >= low &&
-                    value <= high
+                {
+                    bits ->
+                    val value =
+                        Float.fromBits(
+                            bits.toInt(),
+                        )
+                    value.isFinite() &&
+                        value >= low &&
+                        value <= high
+                }
             }
 
             RuntimeValueType.FLOAT64 -> {
@@ -667,13 +687,16 @@ object RootRuntimeAdvancedValueScanCoordinator {
                 ) {
                     "Некорректный Double-диапазон."
                 }
-                val value =
-                    Double.fromBits(
-                        bits,
-                    )
-                value.isFinite() &&
-                    value >= low &&
-                    value <= high
+                {
+                    bits ->
+                    val value =
+                        Double.fromBits(
+                            bits,
+                        )
+                    value.isFinite() &&
+                        value >= low &&
+                        value <= high
+                }
             }
         }
 

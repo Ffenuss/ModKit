@@ -93,4 +93,14 @@ Billing, authentication and anti-cheat-related methods remain visible as discove
 
 ### Root live behavioral scanner
 
-Root process attach now targets the selected PID directly and launches the game back to the foreground with a separate `MK` live overlay. The overlay contains three complementary workflows: automatic behavioral scanning, action training, and a manual GameGuardian-style value scanner. Automatic scanning uses bounded rolling memory baselines, rotates Int32/Float/Int64/Double sweeps, refreshes candidates with batched reads, scores repeatability/direction/stability, and suppresses noisy stack/JIT/GPU-like regions. Action training captures a baseline for an explicit action such as movement, attack, taking damage, or resource change, then ranks values that correlate with that action. Manual scanning supports exact-value search, unknown initial value, changed/unchanged/increased/decreased refinement, verified writes, and Freeze directly from the overlay. Every write revalidates the exact PID and writable mapping and requires read-back confirmation.
+The primary root flow is now **Root → choose a running process or installed game → attach/launch → play with the `MK` overlay**. If the selected app is not running, ModKit launches it, waits for its exact main-process PID and attaches automatically.
+
+The overlay contains three complementary workflows:
+
+- **Auto scan** continuously compares bounded rolling live-memory baselines, rotates Int32/Float/Int64/Double sweeps, refreshes candidates with batched reads, scores repeatability/direction/stability and suppresses noisy stack/JIT/GPU-like mappings.
+- **Train action** captures an explicit context such as movement, attack, taking damage, resource change, item change or another action; the user hides the overlay, performs that action, then reopens `MK` to rank correlated candidates.
+- **Manual scan** supports exact values, unknown initial values, changed/unchanged/increased/decreased refinement, ranges (`10..20`), fuzzy values (`1.0~0.05`), grouped values (`10,20,30`), verified writes and Freeze.
+
+High-confidence or explicitly confirmed values can be stabilized through a module-root pointer chain. Learned candidates are stored per package and artifact SHA, then their live addresses are re-resolved after restart/ASLR. After an app update, old pointer chains may be tested as migration candidates, but they remain read-only until explicitly reconfirmed on the new artifact. Every write revalidates the exact PID and writable mapping and requires read-back confirmation.
+
+Static IL2CPP gameplay-method discovery remains available as an expert tool, but it is no longer the primary root workflow. Billing/authentication/anti-cheat surfaces stay analysis-only and are not turned into automatic bypass actions.

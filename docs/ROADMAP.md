@@ -176,11 +176,14 @@ Status: **ACTIVE**
 - [x] Explicit runtime value write with writable-map proof and read-back verification
 - [x] Explicit runtime value freeze loop with process revalidation on every write
 - [x] Root live behavioral scanner foundation: bounded rolling baseline, rotating Int32/Float/Int64/Double sweeps, batched candidate refresh, confidence scoring and noise-region suppression
-- [x] Root attach launches the selected game back to foreground with an MK live overlay bound to the exact PID
-- [x] Overlay action-training mode for movement, attack, taking damage and resource changes
-- [x] Overlay manual value scanner: exact/unknown value, changed/unchanged/increased/decreased refinement, verified write and Freeze
-- [ ] Correlate high-confidence behavioral candidates with pointer chains and writing code/methods for restart-stable semantic profiles
-- [ ] Persist learned candidates per game/version and automatically re-resolve them after restart/update
+- [x] Root attach launches an already-running process back to foreground with an MK live overlay bound to the exact PID
+- [x] Root picker can also launch a non-running installed app/game, wait for its exact main PID and attach the same MK overlay automatically
+- [x] Overlay action-training mode for movement, attack, taking damage, resource changes, item changes and arbitrary user-labeled actions
+- [x] Overlay manual value scanner: exact/unknown value, changed/unchanged/increased/decreased refinement, range/fuzzy/group search, verified write and Freeze
+- [x] Correlate high-confidence or explicitly confirmed behavioral candidates with restart-stable module-root pointer chains
+- [x] Persist learned candidates per package/artifact SHA and automatically re-resolve pointer chains after restart/ASLR
+- [x] Try old pointer chains after an app update as read-only migration candidates and require explicit reconfirmation before writes
+- [ ] Correlate confirmed live values with the code/methods that read or write them for richer semantic controls (for example damage handlers rather than only HP values)
 - [ ] Root runtime only for evidence that remains unresolved after non-root stages
   - [x] Root decision engine requires recorded lower-privilege attempts
   - [x] Executor/implementation gaps explicitly cannot justify root escalation
