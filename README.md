@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.12**
+Current application version: **0.0.13**
 
 ## Product flow
 
@@ -55,7 +55,7 @@ See [docs/PORTING_MATRIX.md](docs/PORTING_MATRIX.md) and [docs/ROADMAP.md](docs/
 - full-screen IL2CPP method inspector with reconstructed C#-like metadata view, ARM64 disassembly, CFG, direct callees and bounded reverse-caller scan;
 - proven ARM64 scalar-return presets plus arbitrary Int64/Float/Double return-body generation with in-place boundary checks;
 - root live-memory scanner for exact and unknown initial values, natural/byte alignment, changed/increased/decreased refinement, pointer scan, explicit verified writes and freeze;
-- dedicated main-menu Root Process Lab: root probe, running app/game process picker, direct attach, automatic gameplay-modification discovery, optional runtime snapshots and memory tools;
+- dedicated main-menu Root Process Lab that opens directly into installed/running app discovery, launches or attaches the selected target, and hands control to the MK live overlay; static gameplay-method discovery remains an optional expert tool;
 - root gameplay discovery reuses the installed APK plus SHA-bound engine cache and targeted confirmation, so full process dumps are not required for ordinary mod discovery;
 - root modification profiles can be saved directly to user-selected device storage as `.modkit.json` files or added directly to ModKit Sandbox; dump export also uses Android document storage instead of the share sheet;
 - ModKit Sandbox has a root managed-profile backend: it provisions a separate Android profile, installs the already-present package for that profile without replacing user-0, and launches it with separate app-data/saves; profiles are version/SHA validated before launch;
@@ -104,3 +104,6 @@ The overlay contains three complementary workflows:
 High-confidence or explicitly confirmed values can be stabilized through a module-root pointer chain. Learned candidates are stored per package and artifact SHA, then their live addresses are re-resolved after restart/ASLR. After an app update, old pointer chains may be tested as migration candidates, but they remain read-only until explicitly reconfirmed on the new artifact. Every write revalidates the exact PID and writable mapping and requires read-back confirmation.
 
 Static IL2CPP gameplay-method discovery remains available as an expert tool, but it is no longer the primary root workflow. Billing/authentication/anti-cheat surfaces stay analysis-only and are not turned into automatic bypass actions.
+
+
+Root-mode audit and remaining architectural gaps are tracked in [docs/ROOT_MODE_AUDIT.md](docs/ROOT_MODE_AUDIT.md).
