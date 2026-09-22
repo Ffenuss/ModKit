@@ -2069,6 +2069,71 @@ class LiveProcessOverlayService : Service() {
         editorValue?.setText(
             candidate.value,
         )
+        if (
+            candidate.learnedCodeSites
+                .isNotEmpty() &&
+            !candidate
+                .requiresConfirmation
+        ) {
+            resolvePersistedCodeSites(
+                candidate,
+            )
+        }
+    }
+
+    private fun resolvePersistedCodeSites(
+        candidate:
+            EditableRuntimeCandidate,
+    ) {
+        val cfg =
+            config ?: return
+        executor.execute {
+            val resolved =
+                candidate
+                    .learnedCodeSites
+                    .mapNotNull {
+                        site ->
+                        runCatching {
+                            RootRuntimeCodeToggleCoordinator
+                                .resolveLearnedSite(
+                                    packageName =
+                                        cfg.packageName,
+                                    pid = cfg.pid,
+                                    site = site,
+                                    cancellation =
+                                        AtomicCancellationSignal(),
+                                )
+                        }.getOrNull()
+                    }
+            main.post {
+                if (
+                    selectedCandidate
+                        ?.id !=
+                    candidate.id
+                ) {
+                    return@post
+                }
+                codeAccessSites =
+                    resolved
+                selectedCodeSite =
+                    resolved
+                        .firstOrNull {
+                            eligibleWriterSite(
+                                it,
+                            )
+                        }
+                rebuildCodeAccessList()
+                if (
+                    candidate.learnedCodeSites
+                        .isNotEmpty() &&
+                    resolved.isEmpty()
+                ) {
+                    setStatus(
+                        "Сохранённые code-sites больше не подтверждаются; выполни новый code trace.",
+                    )
+                }
+            }
+        }
     }
 
     private fun traceSelectedCodeAccess() {
@@ -2159,7 +2224,71 @@ class LiveProcessOverlayService : Service() {
                                     it,
                                 )
                             }
+                    val learnedSites =
+                        trace.sites
+                            .asSequence()
+                            .mapNotNull {
+                                site ->
+                                val offset =
+                                    site.moduleFileOffset
+                                        ?: return@mapNotNull null
+                                if (
+                                    site.moduleName
+                                        .startsWith(
+                                            "<",
+                                        )
+                                ) {
+                                    return@mapNotNull null
+                                }
+                                LearnedCodeAccessSite(
+                                    moduleIdentity =
+                                        site.moduleName,
+                                    moduleFileOffset =
+                                        offset,
+                                    accessKind =
+                                        site.accessKind,
+                                    instructionWord =
+                                        site.instructionWord,
+                                    instructionText =
+                                        site.instructionText,
+                                    managedMethodCandidate =
+                                        site.managedMethodCandidate,
+                                    observedCount =
+                                        site.count,
+                                )
+                            }
+                            .distinctBy {
+                                it.moduleIdentity +
+                                    ":" +
+                                    it.moduleFileOffset
+                            }
+                            .take(16)
+                            .toList()
+                    val updatedCandidate =
+                        candidate.copy(
+                            learnedCodeSites =
+                                learnedSites,
+                            requiresConfirmation =
+                                false,
+                        )
+                    selectedCandidate =
+                        updatedCandidate
                     rebuildCodeAccessList()
+                    if (
+                        learnedSites.isNotEmpty()
+                    ) {
+                        stabilizeEditableCandidate(
+                            candidate =
+                                updatedCandidate,
+                            source =
+                                candidate.source
+                                    ?: LearnedCandidateSource
+                                        .MANUAL,
+                            actionHint =
+                                candidate.actionHint,
+                            force = true,
+                        )
+                    }
                     val writers =
                         trace.sites
                             .count {
@@ -3029,6 +3158,14 @@ class LiveProcessOverlayService : Service() {
                                             !migrated,
                                         requiresConfirmation =
                                             migrated,
+                                        learnedCodeSites =
+                                            if (
+                                                migrated
+                                            ) {
+                                                emptyList()
+                                            } else {
+                                                saved.codeAccessSites
+                                            },
                                     )
                                 }.getOrNull()
                             }
@@ -3313,29 +3450,29 @@ class LiveProcessOverlayService : Service() {
                                 candidate,
                             cfg = cfg,
                         )
-                    val chain =
-                        RootRuntimePointerChainCoordinator
-                            .discover(
-                                packageName =
-                                    cfg.packageName,
-                                pid = cfg.pid,
-                                targetAddress =
-                                    originalTarget,
-                                cancellation =
-                                    AtomicCancellationSignal(),
-                                maxScanBytesPerDepth =
-                                    if (force) {
-                                        96L *
-                                            1024L *
-                                            1024L
-                                    } else {
-                                        40L *
-                                            1024L *
-                                            1024L
-                                    },
-                            )
                     val anchor =
-                        chain.stableAnchor
+                        candidate.anchor
+                            ?: RootRuntimePointerChainCoordinator
+                                .discover(
+                                    packageName =
+                                        cfg.packageName,
+                                    pid = cfg.pid,
+                                    targetAddress =
+                                        originalTarget,
+                                    cancellation =
+                                        AtomicCancellationSignal(),
+                                    maxScanBytesPerDepth =
+                                        if (force) {
+                                            96L *
+                                                1024L *
+                                                1024L
+                                        } else {
+                                            40L *
+                                                1024L *
+                                                1024L
+                                        },
+                                )
+                                .stableAnchor
                             ?: error(
                                 "Стабильный module-root pointer-chain пока не найден.",
                             )
@@ -3387,6 +3524,9 @@ class LiveProcessOverlayService : Service() {
                                 candidate.value,
                             anchor =
                                 anchor,
+                            codeAccessSites =
+                                candidate
+                                    .learnedCodeSites,
                             updatedAtEpochMs =
                                 System
                                     .currentTimeMillis(),
@@ -3925,6 +4065,9 @@ class LiveProcessOverlayService : Service() {
         val anchor: StableRuntimePointerAnchor? = null,
         val persistent: Boolean = false,
         val requiresConfirmation: Boolean = false,
+        val learnedCodeSites:
+            List<LearnedCodeAccessSite> =
+            emptyList(),
     )
 
     companion object {
