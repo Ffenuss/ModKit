@@ -72,6 +72,12 @@ class RootProcessDiscoveryTest {
                     .contains(":")
             },
         )
+        assertEquals(
+            listOf(0, 0),
+            processes.map {
+                it.androidUserId
+            },
+        )
     }
 
     @Test
