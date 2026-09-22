@@ -5482,8 +5482,10 @@ class LiveProcessOverlayService : Service() {
         row.addView(
             TextView(this).apply {
                 text =
-                    candidate.title +
-                        " · " +
+                    candidateDisplayTitle(
+                        candidate,
+                    ) +
+                        "\nСейчас: " +
                         candidate.value
                 setTextColor(
                     Color.WHITE,
