@@ -14,6 +14,10 @@ val runtimeProbeNativeAssetRoot =
     runtimeProbeAssetDir.map {
         it.dir("modkit-runtime-probe-native")
     }
+val rootMemoryWatchAssetRoot =
+    runtimeProbeAssetDir.map {
+        it.dir("modkit-root-memory-watch")
+    }
 
 android {
     namespace = "io.github.ffenuss.modkit"
@@ -206,6 +210,81 @@ val generateRuntimeProbeDexAsset =
             check(extractedAbis == expectedAbis.toSet()) {
                 "Runtime probe native payload ABI set mismatch: " +
                     extractedAbis.sorted().joinToString()
+            }
+
+            val rootWatchRoot =
+                rootMemoryWatchAssetRoot.get().asFile
+            rootWatchRoot.deleteRecursively()
+            rootWatchRoot.mkdirs()
+            val runtimeProbeBuild =
+                project(":runtimeprobe")
+                    .layout
+                    .buildDirectory
+                    .get()
+                    .asFile
+            val watchCandidates =
+                runtimeProbeBuild
+                    .walkTopDown()
+                    .filter {
+                        it.isFile &&
+                            it.name ==
+                            "modkit_root_memory_watch" &&
+                            it.invariantSeparatorsPath
+                                .contains(
+                                    "/obj/arm64-v8a/",
+                                )
+                    }
+                    .toList()
+            check(watchCandidates.isNotEmpty()) {
+                "ARM64 root memory watch helper was not produced by ndk-build."
+            }
+            val newestWatch =
+                watchCandidates.maxBy {
+                    it.lastModified()
+                }
+            val watchOutput =
+                File(
+                    rootWatchRoot,
+                    "arm64-v8a/modkit_root_memory_watch",
+                )
+            watchOutput.parentFile.mkdirs()
+            newestWatch.copyTo(
+                watchOutput,
+                overwrite = true,
+            )
+            val watchMagic =
+                ByteArray(4)
+            val watchRead =
+                watchOutput.inputStream()
+                    .use {
+                        it.read(
+                            watchMagic,
+                        )
+                    }
+            check(
+                watchRead == 4 &&
+                    watchMagic.contentEquals(
+                        byteArrayOf(
+                            0x7f,
+                            0x45,
+                            0x4c,
+                            0x46,
+                        ),
+                    ),
+            ) {
+                "Root memory watch helper is not ELF."
+            }
+            check(
+                watchOutput
+                    .readBytes()
+                    .toString(
+                        Charsets.ISO_8859_1,
+                    )
+                    .contains(
+                        "MODKIT_ROOT_WATCH_V1",
+                    ),
+            ) {
+                "Root memory watch helper marker is missing."
             }
         }
     }
