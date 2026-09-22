@@ -1118,15 +1118,15 @@ object RootBehavioralScanCoordinator {
                     )
                 val limit =
                     if (strict) {
-                        1.0e9
+                        20_000_000.0
                     } else {
-                        1.0e10
+                        50_000_000.0
                     }
                 val negativeLimit =
                     if (strict) {
-                        5.0e5
+                        250_000.0
                     } else {
-                        2.0e6
+                        1_000_000.0
                     }
                 magnitude <=
                     limit &&
