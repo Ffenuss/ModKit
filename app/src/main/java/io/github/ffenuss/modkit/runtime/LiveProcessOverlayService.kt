@@ -637,6 +637,59 @@ class LiveProcessOverlayService : Service() {
                     container,
                 )
         }
+        styleOverlayButtons(
+            container,
+        )
+    }
+
+    private fun styleOverlayButtons(
+        root:
+            android.view.ViewGroup,
+    ) {
+        for (
+            index in
+            0 until root.childCount
+        ) {
+            when (
+                val child =
+                    root.getChildAt(
+                        index,
+                    )
+            ) {
+                is Button -> {
+                    child.isAllCaps =
+                        false
+                    child.textSize =
+                        12f
+                    child.minHeight = 0
+                    child.minimumHeight =
+                        dp(42)
+                    child.setTextColor(
+                        Color.WHITE,
+                    )
+                    child.background =
+                        GradientDrawable()
+                            .apply {
+                                setColor(
+                                    Color.argb(
+                                        245,
+                                        52,
+                                        52,
+                                        60,
+                                    ),
+                                )
+                                cornerRadius =
+                                    dp(10)
+                                        .toFloat()
+                            }
+                }
+
+                is android.view.ViewGroup ->
+                    styleOverlayButtons(
+                        child,
+                    )
+            }
+        }
     }
 
     private fun renderHomePage(
