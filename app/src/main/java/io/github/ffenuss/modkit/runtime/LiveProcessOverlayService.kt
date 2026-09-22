@@ -2361,7 +2361,7 @@ class LiveProcessOverlayService : Service() {
         )
 
         val fresh =
-            sample.visibleCandidates
+            behavioralCandidates
                 .firstOrNull {
                     it.confidence >=
                         70 &&
@@ -2387,7 +2387,7 @@ class LiveProcessOverlayService : Service() {
             panel?.visibility !=
                 View.VISIBLE
         ) {
-            sample.visibleCandidates
+            behavioralCandidates
                 .firstOrNull {
                     candidate ->
                     candidate.confidence >=
