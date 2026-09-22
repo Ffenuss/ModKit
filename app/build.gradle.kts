@@ -81,6 +81,7 @@ val generateRuntimeProbeDexAsset =
         dependsOn(":runtimeprobe:assembleDebug")
         outputs.file(runtimeProbeDexAsset)
         outputs.dir(runtimeProbeNativeAssetRoot)
+        outputs.dir(rootMemoryWatchAssetRoot)
 
         doLast {
             val payloadApk = project(":runtimeprobe")
