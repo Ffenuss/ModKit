@@ -2,7 +2,6 @@ package io.github.ffenuss.modkit.runtime
 
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -49,9 +48,9 @@ class RootRuntimePointerChainCoordinatorTest {
                 )
 
         val anchor =
-            assertNotNull(
+            requireNotNull(
                 result.stableAnchor,
-            ) as StableRuntimePointerAnchor
+            )
         assertEquals(
             "libgame.so",
             anchor.moduleIdentity,
