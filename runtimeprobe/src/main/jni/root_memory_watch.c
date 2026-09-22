@@ -334,7 +334,11 @@ static int seize_thread(pid_t tid, uint64_t address, int width) {
 
     g_threads[g_thread_count++] = thread;
     if (ptrace(PTRACE_CONT, tid, NULL, NULL) != 0) {
-        g_threads[g_thread_count - 1].active = 0;
+        watched_thread* stored =
+                &g_threads[g_thread_count - 1];
+        (void)restore_watchpoint(stored);
+        (void)ptrace(PTRACE_DETACH, tid, NULL, NULL);
+        stored->active = 0;
         return -1;
     }
     return 1;
@@ -417,12 +421,39 @@ static void cleanup_threads(void) {
         watched_thread* thread = &g_threads[index];
         if (!thread->active) continue;
 
-        if (ptrace(PTRACE_INTERRUPT, thread->tid, NULL, NULL) == 0) {
-            if (wait_for_stop(thread->tid, 500)) {
-                (void)restore_watchpoint(thread);
-                (void)ptrace(PTRACE_DETACH, thread->tid, NULL, NULL);
+        int status = 0;
+        pid_t waited =
+                waitpid(
+                        thread->tid,
+                        &status,
+                        __WALL | WNOHANG);
+        int stopped =
+                waited == thread->tid &&
+                WIFSTOPPED(status);
+
+        if (!stopped) {
+            if (ptrace(
+                    PTRACE_INTERRUPT,
+                    thread->tid,
+                    NULL,
+                    NULL) == 0) {
+                stopped =
+                        wait_for_stop(
+                                thread->tid,
+                                750);
+            } else if (errno == ESRCH) {
+                thread->active = 0;
+                continue;
             }
-        } else if (errno == ESRCH) {
+        }
+
+        if (stopped) {
+            (void)restore_watchpoint(thread);
+            (void)ptrace(
+                    PTRACE_DETACH,
+                    thread->tid,
+                    NULL,
+                    NULL);
             thread->active = 0;
         }
     }
