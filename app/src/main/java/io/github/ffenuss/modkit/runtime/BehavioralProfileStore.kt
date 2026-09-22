@@ -286,8 +286,15 @@ class BehavioralProfileStore(
                     identity.artifactSha256,
             )
         if (remaining.isEmpty()) {
-            return !output.exists() ||
-                output.delete()
+            if (!output.exists()) {
+                return true
+            }
+            check(
+                output.delete(),
+            ) {
+                "Could not remove the learned ModKit runtime profile."
+            }
+            return true
         }
 
         write(
