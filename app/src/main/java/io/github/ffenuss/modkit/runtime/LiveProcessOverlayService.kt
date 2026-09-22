@@ -2361,16 +2361,29 @@ class LiveProcessOverlayService : Service() {
         val cfg =
             config ?: return
         if (
-            !autoCodeTraceAttempted
-                .add(
-                    candidate.id,
-                ) ||
+            candidate.id in
+            autoCodeTraceAttempted
+        ) {
+            return
+        }
+        if (
             !codeTraceBusy
                 .compareAndSet(
                     false,
                     true,
                 )
         ) {
+            return
+        }
+        if (
+            !autoCodeTraceAttempted
+                .add(
+                    candidate.id,
+                )
+        ) {
+            codeTraceBusy.set(
+                false,
+            )
             return
         }
 
@@ -3037,6 +3050,12 @@ class LiveProcessOverlayService : Service() {
     private fun toggleSelectedWriterBlock() {
         val cfg =
             config ?: return
+        if (autoSession != null) {
+            stopAutoScan(
+                userRequested =
+                    false,
+            )
+        }
         if (
             !codePatchBusy
                 .compareAndSet(
