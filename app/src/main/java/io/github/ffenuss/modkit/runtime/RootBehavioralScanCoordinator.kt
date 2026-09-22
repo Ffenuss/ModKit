@@ -1074,8 +1074,8 @@ object RootBehavioralScanCoordinator {
         candidate:
             BehavioralRuntimeCandidate,
         strict: Boolean,
-    ): Boolean =
-        when (
+    ): Boolean {
+        return when (
             candidate.valueType
         ) {
             RuntimeValueType.INT32 -> {
@@ -1163,6 +1163,7 @@ object RootBehavioralScanCoordinator {
                     }
             }
         }
+    }
 
     private fun plausible(
         type: RuntimeValueType,
