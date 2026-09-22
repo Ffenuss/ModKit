@@ -260,7 +260,7 @@ class LiveProcessOverlayService : Service() {
                     display.widthPixels -
                         dp(20)
                     ).coerceAtLeast(
-                    dp(240),
+                    dp(96),
                 ),
             )
         val panelHeight =
@@ -270,7 +270,7 @@ class LiveProcessOverlayService : Service() {
                     display.heightPixels -
                         dp(170)
                     ).coerceAtLeast(
-                    dp(180),
+                    dp(64),
                 ),
             )
         root.addView(
