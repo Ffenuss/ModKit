@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.13**
+Current application version: **0.0.14**
 
 ## Product flow
 
@@ -107,3 +107,10 @@ Static IL2CPP gameplay-method discovery remains available as an expert tool, but
 
 
 Root-mode audit and remaining architectural gaps are tracked in [docs/ROOT_MODE_AUDIT.md](docs/ROOT_MODE_AUDIT.md).
+
+
+### Root live code-access tracing
+
+On rooted ARM64 targets, a confirmed live value can now be traced with a bounded hardware watchpoint window. ModKit records native PCs that read/write the selected address, validates those PCs against executable mappings, decodes the ARM64 instruction, correlates the site with cached IL2CPP method evidence when possible, and exposes confirmed writer sites in the MK overlay. A selected writer can be temporarily blocked with a verified NOP toggle; the original instruction is restored on disable, overlay shutdown, process loss, or reattach. Saved code-sites are resolved by module + file offset and revalidated before reuse. The overlay also watches for target-process restarts and reattaches to a replacement main PID when the package/user identity remains unambiguous.
+
+This code-access layer is currently implemented for ARM64 hardware watchpoints. Other ABIs keep the live value scanner, training, writes/Freeze, pointer-chain persistence and static analysis, but do not claim hardware watch tracing.
