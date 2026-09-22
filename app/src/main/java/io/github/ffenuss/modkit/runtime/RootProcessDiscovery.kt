@@ -18,6 +18,17 @@ data class RootRunningAppProcess(
     val isMainProcess: Boolean
         get() =
             processName == packageName
+
+    val androidUserId: Int?
+        get() =
+            Regex(
+                "^u(\\d+)_",
+            ).find(
+                user,
+            )
+                ?.groupValues
+                ?.getOrNull(1)
+                ?.toIntOrNull()
 }
 
 /**
