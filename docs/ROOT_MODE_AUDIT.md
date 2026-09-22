@@ -26,10 +26,13 @@ The following paths are concrete in code and are covered by compile/lint/unit CI
 
 - Root mode opens directly into root/process discovery instead of requiring a redundant separate probe click.
 - Overlay host Android user is derived from the actual ModKit UID rather than assuming user 0.
-- The live overlay sizes itself to the real portrait/landscape viewport.
+- The live overlay sizes itself to the real portrait/landscape viewport, including short landscape/split-screen layouts.
 - Auto scanning is paused while manual scans or Freeze are running so multiple heavy root-memory jobs do not compete.
 - Free-running Auto mode no longer launches expensive pointer-chain scans behind the game; persistence is automatic after explicit action training or explicit pinning.
 - Manual scans have explicit quick/full scope. Quick mode bounds the initial memory pass; Full remains available when coverage matters more than latency.
+- Root opens directly into process/app discovery; the redundant separate root-probe click was removed.
+- Process discovery tracks Android user IDs, so a sandbox instance of a package no longer hides the original-user app from the launch list.
+- Saved learned candidates can be explicitly removed, and the overlay has a real shutdown action that stops scanners and removes its foreground notification.
 - Artifact identity hashing is cached against package version + installed APK path/size/mtime metadata so reopening the overlay does not repeatedly hash large APK/split sets.
 - Pointer-chain discovery/re-resolution has dedicated regression tests, including ASLR movement and ambiguous-module fail-closed behavior.
 
