@@ -1831,6 +1831,148 @@ class LiveProcessOverlayService : Service() {
         }
     }
 
+    private fun scheduleProcessWatch() {
+        stopProcessWatch()
+        processWatchTask =
+            executor.scheduleWithFixedDelay(
+                {
+                    val cfg =
+                        config
+                            ?: return@scheduleWithFixedDelay
+                    val cancellation =
+                        AtomicCancellationSignal()
+                    val alive =
+                        RootProcessReattachCoordinator
+                            .isSameProcess(
+                                packageName =
+                                    cfg.packageName,
+                                pid = cfg.pid,
+                                cancellation =
+                                    cancellation,
+                            )
+                    if (alive) {
+                        if (awaitingReattach) {
+                            awaitingReattach =
+                                false
+                            main.post {
+                                setStatus(
+                                    "Процесс снова доступен · PID " +
+                                        cfg.pid +
+                                        ".",
+                                )
+                            }
+                        }
+                        return@scheduleWithFixedDelay
+                    }
+
+                    val replacement =
+                        runCatching {
+                            RootProcessReattachCoordinator
+                                .findReplacementMainPid(
+                                    packageName =
+                                        cfg.packageName,
+                                    androidUserId =
+                                        cfg.androidUserId,
+                                    cancellation =
+                                        cancellation,
+                                )
+                        }.getOrNull()
+
+                    if (
+                        replacement ==
+                        null
+                    ) {
+                        if (!awaitingReattach) {
+                            awaitingReattach =
+                                true
+                            main.post {
+                                setStatus(
+                                    "Игра закрыта. MK ждёт новый процесс " +
+                                        cfg.packageName +
+                                        " и подключится автоматически после следующего запуска.",
+                                )
+                            }
+                        }
+                        return@scheduleWithFixedDelay
+                    }
+                    if (
+                        replacement ==
+                        cfg.pid
+                    ) {
+                        return@scheduleWithFixedDelay
+                    }
+
+                    main.post {
+                        reattachToProcess(
+                            old =
+                                cfg,
+                            newPid =
+                                replacement,
+                        )
+                    }
+                },
+                3_000L,
+                3_000L,
+                TimeUnit.MILLISECONDS,
+            )
+    }
+
+    private fun stopProcessWatch() {
+        processWatchTask?.cancel(
+            false,
+        )
+        processWatchTask = null
+        awaitingReattach =
+            false
+    }
+
+    private fun reattachToProcess(
+        old: ProcessOverlayConfig,
+        newPid: Int,
+    ) {
+        val current =
+            config
+                ?: return
+        if (
+            current.packageName !=
+                old.packageName ||
+            current.pid !=
+                old.pid
+        ) {
+            return
+        }
+
+        stopProcessWatch()
+        rollbackActiveCodePatchBestEffort()
+        resetRuntimeState()
+        val replacement =
+            old.copy(
+                pid = newPid,
+            )
+        config =
+            replacement
+        awaitingReattach =
+            false
+        startForeground(
+            NOTIFICATION_ID,
+            buildNotification(
+                replacement.label +
+                    " · PID " +
+                    replacement.pid,
+            ),
+        )
+        showOverlay(
+            replacement,
+        )
+        setStatus(
+            "Игра перезапущена. MK подключился к новому процессу и восстанавливает сохранённые моды.",
+        )
+        loadLearnedProfile(
+            replacement,
+        )
+        scheduleProcessWatch()
+    }
+
     private fun startAutoScan() {
         val cfg =
             config ?: return
