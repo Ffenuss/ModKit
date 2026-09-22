@@ -3228,8 +3228,12 @@ class LiveProcessOverlayService : Service() {
         val hits =
             scan.snapshot.hits
         manualCount?.text =
-            "Результатов: " +
+            "Найдено: " +
                 hits.size +
+                " · " +
+                scan.snapshot
+                    .valueType
+                    .title +
                 (
                     if (
                         scan.snapshot
@@ -3237,65 +3241,174 @@ class LiveProcessOverlayService : Service() {
                         scan.snapshot
                             .truncatedByByteLimit
                     ) {
-                        " (поиск ограничен)"
+                        " · быстрый проход"
                     } else {
                         ""
                     }
                     )
+
         val list =
             manualList
                 ?: return
         list.removeAllViews()
-        hits.take(12)
-            .forEach {
-                hit ->
-                list.addView(
-                    candidateRow(
-                        EditableRuntimeCandidate(
-                            id =
-                                "manual:" +
-                                    scan.snapshot
-                                        .valueType
-                                        .name +
-                                    ":" +
-                                    hit.address
-                                        .toString(
-                                            16,
-                                        ),
-                            title =
-                                "Ручной результат",
-                            address =
-                                hit.address,
-                            valueType =
-                                scan.snapshot
-                                    .valueType,
-                            value =
-                                hit.displayValue(
-                                    scan.snapshot
-                                        .valueType,
-                                ),
-                            subtitle =
+        hits.take(
+            if (
+                currentPage ==
+                OverlayPage.EXPERT
+            ) {
+                20
+            } else {
+                8
+            },
+        ).forEach {
+            hit ->
+            val interpreted =
+                interpretManualHit(
+                    scan.snapshot
+                        .valueType,
+                    hit,
+                )
+            list.addView(
+                candidateRow(
+                    EditableRuntimeCandidate(
+                        id =
+                            "manual:" +
+                                interpreted.first
+                                    .name +
+                                ":" +
+                                hit.address
+                                    .toString(
+                                        16,
+                                    ),
+                        title =
+                            if (
+                                manualUnknownAuto
+                            ) {
+                                "Возможный параметр"
+                            } else {
+                                "Найденное значение"
+                            },
+                        address =
+                            hit.address,
+                        valueType =
+                            interpreted.first,
+                        value =
+                            interpreted.second,
+                        subtitle =
+                            if (
+                                currentPage ==
+                                OverlayPage.EXPERT
+                            ) {
                                 "0x" +
                                     hit.address
                                         .toString(
                                             16,
                                         ) +
                                     " · " +
-                                    scan.snapshot
-                                        .valueType
-                                        .title,
-                            source =
-                                LearnedCandidateSource
-                                    .MANUAL,
-                        ),
+                                    interpreted.first
+                                        .title
+                            } else {
+                                interpreted.first
+                                    .title +
+                                    " · нажми, чтобы проверить"
+                            },
+                        source =
+                            LearnedCandidateSource
+                                .MANUAL,
                     ),
+                ),
+            )
+        }
+    }
+
+    private fun interpretManualHit(
+        scanType: RuntimeValueType,
+        hit: RuntimeValueHit,
+    ): Pair<
+        RuntimeValueType,
+        String
+    > {
+        if (
+            !manualUnknownAuto
+        ) {
+            return scanType to
+                hit.displayValue(
+                    scanType,
                 )
+        }
+
+        if (
+            scanType ==
+            RuntimeValueType.INT32
+        ) {
+            val integer =
+                hit.bits.toInt()
+            val float =
+                Float.fromBits(
+                    hit.bits.toInt(),
+                )
+            val integerLooksUseful =
+                kotlin.math.abs(
+                    integer.toLong(),
+                ) <=
+                    1_000_000L
+            val floatLooksUseful =
+                float.isFinite() &&
+                    (
+                        float == 0f ||
+                            kotlin.math.abs(
+                                float,
+                            ) in
+                            1.0e-5f..100_000f
+                        )
+            if (
+                !integerLooksUseful &&
+                floatLooksUseful
+            ) {
+                return RuntimeValueType
+                    .FLOAT32 to
+                    float.toString()
             }
-        setStatus(
-            "Ручной поиск: найдено " +
-                hits.size +
-                ". Измени состояние игры и уточняй поиск.",
-        )
+        }
+
+        if (
+            scanType ==
+            RuntimeValueType.INT64
+        ) {
+            val integer =
+                hit.bits
+            val double =
+                Double.fromBits(
+                    hit.bits,
+                )
+            val integerLooksUseful =
+                kotlin.math.abs(
+                    integer.toDouble(),
+                ) <=
+                    1.0e9
+            val doubleLooksUseful =
+                double.isFinite() &&
+                    (
+                        double == 0.0 ||
+                            kotlin.math.abs(
+                                double,
+                            ) in
+                            1.0e-8..1.0e8
+                        )
+            if (
+                !integerLooksUseful &&
+                doubleLooksUseful
+            ) {
+                return RuntimeValueType
+                    .FLOAT64 to
+                    double.toString()
+            }
+        }
+
+        return scanType to
+            hit.displayValue(
+                scanType,
+            )
     }
 
     private fun selectCandidate(
@@ -3345,6 +3458,9 @@ class LiveProcessOverlayService : Service() {
         editorValue?.setText(
             candidate.value,
         )
+        currentPage =
+            OverlayPage.CANDIDATE
+        renderCurrentPage()
         if (
             candidate.learnedCodeSites
                 .isNotEmpty() &&
