@@ -14,8 +14,8 @@ data class RootSandboxOverlayLaunchResult(
 object RootSandboxOverlayLauncher {
     const val CONFIG_EXTRA =
         "modkit_overlay_b64"
-    private const val OVERLAY_USER_ID =
-        0
+    private const val PER_USER_RANGE =
+        100_000
 
     fun start(
         userId: Int,
@@ -33,11 +33,14 @@ object RootSandboxOverlayLauncher {
 
         val packageName =
             BuildConfig.APPLICATION_ID
+        val overlayUserId =
+            android.os.Process.myUid() /
+                PER_USER_RANGE
         val appOps =
             runner.run(
                 command =
                     "appops set --user " +
-                        OVERLAY_USER_ID +
+                        overlayUserId +
                         " " +
                         packageName +
                         " SYSTEM_ALERT_WINDOW allow",
@@ -68,7 +71,7 @@ object RootSandboxOverlayLauncher {
         runner.run(
             command =
                 "am stopservice --user " +
-                    OVERLAY_USER_ID +
+                    overlayUserId +
                     " -n " +
                     component,
             maxOutputBytes =
@@ -81,7 +84,7 @@ object RootSandboxOverlayLauncher {
             runner.run(
                 command =
                     "am start-foreground-service --user " +
-                        OVERLAY_USER_ID +
+                        overlayUserId +
                         " -n " +
                         component +
                         " --es " +
@@ -117,7 +120,7 @@ object RootSandboxOverlayLauncher {
         return RootSandboxOverlayLaunchResult(
             sandboxUserId = userId,
             overlayUserId =
-                OVERLAY_USER_ID,
+                overlayUserId,
             itemCount =
                 session.records.size,
         )
@@ -130,10 +133,13 @@ object RootSandboxOverlayLauncher {
             AndroidRootCommandRunner(),
     ) {
         if (userId <= 0) return
+        val overlayUserId =
+            android.os.Process.myUid() /
+                PER_USER_RANGE
         runner.run(
             command =
                 "am stopservice --user " +
-                    OVERLAY_USER_ID +
+                    overlayUserId +
                     " -n " +
                     BuildConfig.APPLICATION_ID +
                     "/.sandbox.ModMenuOverlayService",
