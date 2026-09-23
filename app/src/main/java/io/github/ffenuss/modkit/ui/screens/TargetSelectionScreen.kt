@@ -15,109 +15,120 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.BuildConfig
-import io.github.ffenuss.modkit.runtime.RootAccessProbeResult
 
 @Composable
 fun TargetSelectionScreen(
-    onSelectInstalled: () -> Unit,
+    onSelectGames: () -> Unit,
+    onSelectApps: () -> Unit,
     onSelectFile: () -> Unit,
-    onOpenExpertLab: () -> Unit,
-    rootProbe: RootAccessProbeResult?,
-    rootChecking: Boolean,
-    onCheckRoot: () -> Unit,
-    onOpenRootProcessLab: () -> Unit,
-    onOpenSandbox: () -> Unit,
 ) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(20.dp),
+        verticalArrangement =
+            Arrangement.spacedBy(14.dp),
     ) {
-        Text("ModKit", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-        Text("v${BuildConfig.VERSION_NAME}")
         Text(
-            "Два основных режима: без root — анализ APK и сборка модифицированного APK; с root — подключение к запущенному процессу, автоматический поиск локальных модификаций и runtime-профили без обязательного полного дампа.",
+            "ModKit",
+            style =
+                MaterialTheme.typography.headlineLarge,
+            fontWeight = FontWeight.Bold,
+        )
+        Text("v" + BuildConfig.VERSION_NAME)
+        Text(
+            "Выберите, что нужно открыть. ModKit работает без root: " +
+                "можно анализировать установленную игру, обычное приложение " +
+                "или APK-файл.",
             style = MaterialTheme.typography.bodyMedium,
         )
 
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Без root — APK / приложение", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Анализ кода → автоматический поиск доступных модификаций → выбор → патчинг → сборка и проверка APK.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Button(onClick = onSelectInstalled, modifier = Modifier.fillMaxWidth()) {
-                    Text("Анализировать установленное приложение")
-                }
-                Button(onClick = onSelectFile, modifier = Modifier.fillMaxWidth()) {
-                    Text("Анализировать APK / APK-set / файл")
-                }
-            }
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
             Column(
-                Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement =
+                    Arrangement.spacedBy(10.dp),
             ) {
                 Text(
-                    "С root — запущенный процесс",
-                    style = MaterialTheme.typography.titleLarge,
+                    "Установленные пакеты",
+                    style =
+                        MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    rootProbe?.message
-                        ?: "Root ещё не проверен.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    "Игры и обычные приложения показываются отдельно. " +
+                        "Для любого выбранного пакета доступен анализ и " +
+                        "дамп установочного набора APK на устройство.",
+                    style =
+                        MaterialTheme.typography.bodySmall,
                 )
                 Button(
-                    onClick = onCheckRoot,
-                    enabled = !rootChecking,
+                    onClick = onSelectGames,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(
-                        if (rootChecking) {
-                            "Проверяется root…"
-                        } else {
-                            "Проверить root"
-                        },
-                    )
+                    Text("Выбрать игру")
                 }
                 Button(
-                    onClick = onOpenRootProcessLab,
-                    enabled =
-                        rootProbe?.available == true &&
-                            !rootChecking,
+                    onClick = onSelectApps,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(
-                        "Подключиться к процессу"
-                    )
+                    Text("Выбрать приложение")
                 }
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement =
+                    Arrangement.spacedBy(8.dp),
+            ) {
                 Text(
-                    "После подключения ModKit автоматически запускает поиск доступных локальных модификаций по установленной версии. Полный runtime dump — только дополнительный технический инструмент; ручной поиск значений остаётся в Expert-части, а не является основным сценарием.",
-                    style = MaterialTheme.typography.bodySmall,
+                    "APK / файл",
+                    style =
+                        MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Открывает APK, APK-set, ZIP или бинарный файл " +
+                        "для статического анализа.",
+                    style =
+                        MaterialTheme.typography.bodySmall,
+                )
+                OutlinedButton(
+                    onClick = onSelectFile,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Выбрать APK / файл")
+                }
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement =
+                    Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    "Дампер приложений",
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Дамп сохраняет base APK и все split APK, SHA-256 " +
+                        "каждого файла и индекс содержимого APK. " +
+                        "На Android 10+ архив появляется в Downloads/ModKit.",
+                    style =
+                        MaterialTheme.typography.bodySmall,
                 )
             }
-        }
-
-        Card(modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text("Целевой поток ModKit", fontWeight = FontWeight.SemiBold)
-                Text("1  Сам определяет runtime и возможные категории модов")
-                Text("2  Показывает список модификаций, а не заставляет искать адреса вручную")
-                Text("3  Без root: применяет подтверждённые изменения и собирает APK")
-                Text("4  С root: формирует runtime-профиль выбранных модов для запуска без изменения исходного APK")
-                Text("5  Полный dump, raw memory и Expert Lab остаются дополнительными инструментами")
-            }
-        }
-
-        Button(onClick = onOpenSandbox, modifier = Modifier.fillMaxWidth()) {
-            Text("ModKit Sandbox / ParallelSpace")
-        }
-
-        OutlinedButton(onClick = onOpenExpertLab, modifier = Modifier.fillMaxWidth()) {
-            Text("Expert Lab — запуск отдельных инструментов")
         }
     }
 }
