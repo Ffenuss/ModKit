@@ -13,53 +13,44 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import io.github.ffenuss.modkit.analysis.AnalysisManager
-import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.AnalysisRunState
 import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
-import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.EngineResultCache
+import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.data.InstalledAppTarget
+import io.github.ffenuss.modkit.dump.InstalledPackageDumper
 import io.github.ffenuss.modkit.ui.screens.AnalysisScreen
 import io.github.ffenuss.modkit.ui.screens.AutoModScreen
-import io.github.ffenuss.modkit.ui.screens.ExpertLabScreen
 import io.github.ffenuss.modkit.ui.screens.InstalledAppsScreen
-import io.github.ffenuss.modkit.runtime.RootAccessProbeResult
-import io.github.ffenuss.modkit.runtime.RootProcessDiscovery
+import io.github.ffenuss.modkit.ui.screens.InstalledTargetKind
 import io.github.ffenuss.modkit.ui.screens.RecoveryScreen
-import io.github.ffenuss.modkit.ui.screens.RootProcessLabScreen
-import io.github.ffenuss.modkit.ui.screens.SandboxScreen
 import io.github.ffenuss.modkit.ui.screens.RestoringPartialScreen
 import io.github.ffenuss.modkit.ui.screens.TargetSelectionScreen
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 private enum class Screen {
     TARGET,
     INSTALLED_APPS,
-    ROOT_PROCESS,
-    SANDBOX,
-    EXPERT_LAB,
     AUTOMOD,
 }
 
 @Composable
 fun ModKitApp() {
     val context = LocalContext.current
+    val appContext = context.applicationContext
     val scope = rememberCoroutineScope()
+
     val installedRepository =
         remember {
-            InstalledAppRepository(
-                context.applicationContext,
-            )
+            InstalledAppRepository(appContext)
         }
     val autoModSessionStore =
         remember {
-            AutoModSessionStore(
-                context.applicationContext,
-            )
+            AutoModSessionStore(appContext)
         }
     val analysisCache =
         remember {
@@ -70,40 +61,67 @@ fun ModKitApp() {
                 ),
             )
         }
-    remember(context.applicationContext) {
-        AnalysisManager.initialize(context.applicationContext)
+
+    remember(appContext) {
+        AnalysisManager.initialize(appContext)
         true
     }
-    val analysisState by AnalysisManager.state.collectAsState()
 
-    var screen by remember { mutableStateOf(Screen.TARGET) }
-    var installedApps by remember { mutableStateOf<List<InstalledAppTarget>>(emptyList()) }
-    var installedLoading by remember { mutableStateOf(false) }
-    var installedError by remember { mutableStateOf<String?>(null) }
+    val analysisState by
+        AnalysisManager.state.collectAsState()
 
-    var rootProbe by remember {
-        mutableStateOf<RootAccessProbeResult?>(null)
+    var screen by remember {
+        mutableStateOf(Screen.TARGET)
     }
-    var rootChecking by remember {
+    var installedApps by remember {
+        mutableStateOf<List<InstalledAppTarget>>(
+            emptyList(),
+        )
+    }
+    var installedLoading by remember {
         mutableStateOf(false)
     }
-    var rootInitialPackage by remember {
+    var installedError by remember {
         mutableStateOf<String?>(null)
     }
-    var rootReturnScreen by remember {
-        mutableStateOf(Screen.TARGET)
+    var installedKind by remember {
+        mutableStateOf(InstalledTargetKind.GAMES)
+    }
+    var dumpingPackageName by remember {
+        mutableStateOf<String?>(null)
+    }
+    var dumpNotice by remember {
+        mutableStateOf<String?>(null)
     }
 
-    var autoModTarget by remember { mutableStateOf<AnalysisTargetDescriptor?>(null) }
-    var autoModResult by remember { mutableStateOf<FastAnalysisResult?>(null) }
-    var expertInitialTarget by remember {
+    var autoModTarget by remember {
         mutableStateOf<AnalysisTargetDescriptor?>(null)
     }
-    var expertInitialResult by remember {
+    var autoModResult by remember {
         mutableStateOf<FastAnalysisResult?>(null)
     }
-    var expertReturnScreen by remember {
-        mutableStateOf(Screen.TARGET)
+
+    fun openInstalled(
+        kind: InstalledTargetKind,
+    ) {
+        installedKind = kind
+        screen = Screen.INSTALLED_APPS
+        installedLoading = true
+        installedError = null
+        dumpNotice = null
+        scope.launch {
+            val loaded =
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        installedRepository.load()
+                    }
+                }
+            installedApps =
+                loaded.getOrDefault(emptyList())
+            installedError =
+                loaded.exceptionOrNull()?.message
+            installedLoading = false
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -136,325 +154,371 @@ fun ModKitApp() {
         }
     }
 
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    val filePicker =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenDocument(),
+        ) { uri ->
+            if (uri != null) {
+                runCatching {
+                    context.contentResolver
+                        .takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                        )
+                }
+                autoModSessionStore.clear()
+                AnalysisManager.startFile(
+                    uri,
+                    uri.lastPathSegment
+                        ?: "Выбранный файл",
+                )
             }
-            autoModSessionStore.clear()
-            AnalysisManager.startFile(
-                uri,
-                uri.lastPathSegment ?: "Выбранный файл",
-            )
         }
-    }
 
     when (val state = analysisState) {
-        is AnalysisRunState.Interrupted -> RecoveryScreen(
-            state = state,
-            onResume = { AnalysisManager.resumeInterrupted() },
-            onOpenPartial = { AnalysisManager.openInterruptedPartial() },
-            onDelete = { AnalysisManager.dismissInterrupted() },
-        )
-
-        is AnalysisRunState.RestoringPartial -> RestoringPartialScreen(state = state)
-
-        is AnalysisRunState.RecoveredPartial -> AnalysisScreen(
-            title = state.target.label,
-            progress = null,
-            result = state.result,
-            active = false,
-            error = null,
-            cancelled = false,
-            cancelling = false,
-            stalledAgeMs = null,
-            canSkipStalled = false,
-            partialNotice = state.message,
-            onCancel = AnalysisManager::cancel,
-            onRetry = AnalysisManager::retryStalled,
-            onSkip = AnalysisManager::skipStalled,
-            onBack = { AnalysisManager.closeRecoveredPartial() },
-        )
-
-        is AnalysisRunState.Running -> AnalysisScreen(
-            title = state.target.label,
-            progress = state.progress,
-            result = state.partialResult,
-            active = true,
-            error = null,
-            cancelled = false,
-            cancelling = false,
-            stalledAgeMs = null,
-            canSkipStalled = false,
-            onCancel = AnalysisManager::cancel,
-            onRetry = AnalysisManager::retryStalled,
-            onSkip = AnalysisManager::skipStalled,
-            onBack = { AnalysisManager.cancel() },
-        )
-
-        is AnalysisRunState.Cancelling -> AnalysisScreen(
-            title = state.target.label,
-            progress = state.progress,
-            result = state.partialResult,
-            active = true,
-            error = null,
-            cancelled = false,
-            cancelling = true,
-            stalledAgeMs = null,
-            canSkipStalled = false,
-            onCancel = AnalysisManager::cancel,
-            onRetry = AnalysisManager::retryStalled,
-            onSkip = AnalysisManager::skipStalled,
-            onBack = { },
-        )
-
-        is AnalysisRunState.Stalled -> AnalysisScreen(
-            title = state.target.label,
-            progress = state.progress,
-            result = state.partialResult,
-            active = true,
-            error = null,
-            cancelled = false,
-            cancelling = false,
-            stalledAgeMs = state.heartbeatAgeMs,
-            canSkipStalled = state.progress?.scheduleClass != io.github.ffenuss.modkit.domain.EngineScheduleClass.FAST,
-            onCancel = AnalysisManager::cancel,
-            onRetry = AnalysisManager::retryStalled,
-            onSkip = AnalysisManager::skipStalled,
-            onBack = { AnalysisManager.cancel() },
-        )
-
-        is AnalysisRunState.Completed -> AnalysisScreen(
-            title = state.target.label,
-            progress = null,
-            result = state.result,
-            active = false,
-            error = null,
-            cancelled = false,
-            cancelling = false,
-            stalledAgeMs = null,
-            canSkipStalled = false,
-            onOpenAutoMod = {
-                runCatching {
-                    autoModSessionStore.save(
-                        target = state.target,
-                        artifactSha256 =
-                            state.result.index
-                                .artifactSha256,
-                    )
-                }
-                autoModTarget = state.target
-                autoModResult = state.result
-                AnalysisManager.clearTerminalState()
-                screen = Screen.AUTOMOD
-            },
-            onCancel = AnalysisManager::cancel,
-            onRetry = AnalysisManager::retryStalled,
-            onSkip = AnalysisManager::skipStalled,
-            onBack = {
-                AnalysisManager.clearTerminalState()
-                screen = Screen.TARGET
-            },
-        )
-
-        is AnalysisRunState.Cancelled -> AnalysisScreen(
-            title = state.target.label,
-            progress = null,
-            result = state.partialResult,
-            active = false,
-            error = null,
-            cancelled = true,
-            cancelling = false,
-            stalledAgeMs = null,
-            canSkipStalled = false,
-            onCancel = AnalysisManager::cancel,
-            onRetry = AnalysisManager::retryStalled,
-            onSkip = AnalysisManager::skipStalled,
-            onBack = {
-                AnalysisManager.clearTerminalState()
-                screen = Screen.TARGET
-            },
-        )
-
-        is AnalysisRunState.Failed -> AnalysisScreen(
-            title = state.target.label,
-            progress = null,
-            result = null,
-            active = false,
-            error = state.message,
-            cancelled = false,
-            cancelling = false,
-            stalledAgeMs = null,
-            canSkipStalled = false,
-            onCancel = AnalysisManager::cancel,
-            onRetry = AnalysisManager::retryStalled,
-            onSkip = AnalysisManager::skipStalled,
-            onBack = {
-                AnalysisManager.clearTerminalState()
-                screen = Screen.TARGET
-            },
-        )
-
-        AnalysisRunState.Idle -> when (screen) {
-            Screen.TARGET -> TargetSelectionScreen(
-                onSelectInstalled = {
-                    screen = Screen.INSTALLED_APPS
-                    installedLoading = true
-                    installedError = null
-                    scope.launch {
-                        val loaded = runCatching {
-                            withContext(Dispatchers.IO) { installedRepository.load() }
-                        }
-                        installedApps = loaded.getOrDefault(emptyList())
-                        installedError = loaded.exceptionOrNull()?.message
-                        installedLoading = false
-                    }
+        is AnalysisRunState.Interrupted ->
+            RecoveryScreen(
+                state = state,
+                onResume = {
+                    AnalysisManager.resumeInterrupted()
                 },
-                onSelectFile = {
-                    filePicker.launch(
-                        arrayOf(
-                            "application/vnd.android.package-archive",
-                            "application/zip",
-                            "application/octet-stream",
-                        ),
-                    )
+                onOpenPartial = {
+                    AnalysisManager
+                        .openInterruptedPartial()
                 },
-                onOpenExpertLab = {
-                    expertInitialTarget = null
-                    expertInitialResult = null
-                    expertReturnScreen =
-                        Screen.TARGET
-                    screen =
-                        Screen.EXPERT_LAB
-                },
-                rootProbe = rootProbe,
-                rootChecking =
-                    rootChecking,
-                onCheckRoot = {
-                    if (!rootChecking) {
-                        rootChecking = true
-                        scope.launch {
-                            rootProbe =
-                                withContext(
-                                    Dispatchers.IO,
-                                ) {
-                                    RootProcessDiscovery
-                                        .probe(
-                                            cancellation =
-                                                AtomicCancellationSignal(),
-                                        )
-                                }
-                            rootChecking =
-                                false
-                        }
-                    }
-                },
-                onOpenRootProcessLab = {
-                    rootInitialPackage =
-                        null
-                    rootReturnScreen =
-                        Screen.TARGET
-                    screen =
-                        Screen.ROOT_PROCESS
-                },
-                onOpenSandbox = {
-                    screen =
-                        Screen.SANDBOX
+                onDelete = {
+                    AnalysisManager
+                        .dismissInterrupted()
                 },
             )
 
-            Screen.INSTALLED_APPS -> InstalledAppsScreen(
-                apps = installedApps,
-                loading = installedLoading,
-                error = installedError,
-                onBack = { screen = Screen.TARGET },
-                onSelect = { app ->
-                    autoModSessionStore.clear()
-                    AnalysisManager.startInstalled(app)
+        is AnalysisRunState.RestoringPartial ->
+            RestoringPartialScreen(
+                state = state,
+            )
+
+        is AnalysisRunState.RecoveredPartial ->
+            AnalysisScreen(
+                title = state.target.label,
+                progress = null,
+                result = state.result,
+                active = false,
+                error = null,
+                cancelled = false,
+                cancelling = false,
+                stalledAgeMs = null,
+                canSkipStalled = false,
+                partialNotice = state.message,
+                onCancel = AnalysisManager::cancel,
+                onRetry =
+                    AnalysisManager::retryStalled,
+                onSkip =
+                    AnalysisManager::skipStalled,
+                onBack = {
+                    AnalysisManager
+                        .closeRecoveredPartial()
                 },
             )
 
-            Screen.ROOT_PROCESS ->
-                RootProcessLabScreen(
-                    onBack = {
-                        rootInitialPackage =
-                            null
-                        screen =
-                            rootReturnScreen
-                    },
-                    initialRootProbe =
-                        rootProbe,
-                    initialPackageName =
-                        rootInitialPackage,
-                )
+        is AnalysisRunState.Running ->
+            AnalysisScreen(
+                title = state.target.label,
+                progress = state.progress,
+                result = state.partialResult,
+                active = true,
+                error = null,
+                cancelled = false,
+                cancelling = false,
+                stalledAgeMs = null,
+                canSkipStalled = false,
+                onCancel = AnalysisManager::cancel,
+                onRetry =
+                    AnalysisManager::retryStalled,
+                onSkip =
+                    AnalysisManager::skipStalled,
+                onBack = {
+                    AnalysisManager.cancel()
+                },
+            )
 
-            Screen.SANDBOX ->
-                SandboxScreen(
-                    onBack = {
-                        screen =
-                            Screen.TARGET
-                    },
-                    initialRootProbe =
-                        rootProbe,
-                    onOpenRootRuntime = {
-                        packageName ->
-                        rootInitialPackage =
-                            packageName
-                        rootReturnScreen =
-                            Screen.SANDBOX
-                        screen =
-                            Screen.ROOT_PROCESS
-                    },
-                )
+        is AnalysisRunState.Cancelling ->
+            AnalysisScreen(
+                title = state.target.label,
+                progress = state.progress,
+                result = state.partialResult,
+                active = true,
+                error = null,
+                cancelled = false,
+                cancelling = true,
+                stalledAgeMs = null,
+                canSkipStalled = false,
+                onCancel = AnalysisManager::cancel,
+                onRetry =
+                    AnalysisManager::retryStalled,
+                onSkip =
+                    AnalysisManager::skipStalled,
+                onBack = { },
+            )
 
-            Screen.EXPERT_LAB ->
-                ExpertLabScreen(
-                    onBack = {
-                        expertInitialTarget =
-                            null
-                        expertInitialResult =
-                            null
-                        screen =
-                            expertReturnScreen
-                    },
-                    initialTarget =
-                        expertInitialTarget,
-                    initialResult =
-                        expertInitialResult,
-                )
+        is AnalysisRunState.Stalled ->
+            AnalysisScreen(
+                title = state.target.label,
+                progress = state.progress,
+                result = state.partialResult,
+                active = true,
+                error = null,
+                cancelled = false,
+                cancelling = false,
+                stalledAgeMs =
+                    state.heartbeatAgeMs,
+                canSkipStalled =
+                    state.progress?.scheduleClass !=
+                        io.github.ffenuss.modkit.domain
+                            .EngineScheduleClass.FAST,
+                onCancel = AnalysisManager::cancel,
+                onRetry =
+                    AnalysisManager::retryStalled,
+                onSkip =
+                    AnalysisManager::skipStalled,
+                onBack = {
+                    AnalysisManager.cancel()
+                },
+            )
 
-            Screen.AUTOMOD -> {
-                val target = autoModTarget
-                val result = autoModResult
-                if (target != null && result != null) {
-                    AutoModScreen(
-                        target = target,
-                        result = result,
+        is AnalysisRunState.Completed ->
+            AnalysisScreen(
+                title = state.target.label,
+                progress = null,
+                result = state.result,
+                active = false,
+                error = null,
+                cancelled = false,
+                cancelling = false,
+                stalledAgeMs = null,
+                canSkipStalled = false,
+                onOpenAutoMod = {
+                    runCatching {
+                        autoModSessionStore.save(
+                            target = state.target,
+                            artifactSha256 =
+                                state.result.index
+                                    .artifactSha256,
+                        )
+                    }
+                    autoModTarget =
+                        state.target
+                    autoModResult =
+                        state.result
+                    AnalysisManager
+                        .clearTerminalState()
+                    screen = Screen.AUTOMOD
+                },
+                onCancel = AnalysisManager::cancel,
+                onRetry =
+                    AnalysisManager::retryStalled,
+                onSkip =
+                    AnalysisManager::skipStalled,
+                onBack = {
+                    AnalysisManager
+                        .clearTerminalState()
+                    screen = Screen.TARGET
+                },
+            )
+
+        is AnalysisRunState.Cancelled ->
+            AnalysisScreen(
+                title = state.target.label,
+                progress = null,
+                result = state.partialResult,
+                active = false,
+                error = null,
+                cancelled = true,
+                cancelling = false,
+                stalledAgeMs = null,
+                canSkipStalled = false,
+                onCancel = AnalysisManager::cancel,
+                onRetry =
+                    AnalysisManager::retryStalled,
+                onSkip =
+                    AnalysisManager::skipStalled,
+                onBack = {
+                    AnalysisManager
+                        .clearTerminalState()
+                    screen = Screen.TARGET
+                },
+            )
+
+        is AnalysisRunState.Failed ->
+            AnalysisScreen(
+                title = state.target.label,
+                progress = null,
+                result = null,
+                active = false,
+                error = state.message,
+                cancelled = false,
+                cancelling = false,
+                stalledAgeMs = null,
+                canSkipStalled = false,
+                onCancel = AnalysisManager::cancel,
+                onRetry =
+                    AnalysisManager::retryStalled,
+                onSkip =
+                    AnalysisManager::skipStalled,
+                onBack = {
+                    AnalysisManager
+                        .clearTerminalState()
+                    screen = Screen.TARGET
+                },
+            )
+
+        AnalysisRunState.Idle ->
+            when (screen) {
+                Screen.TARGET ->
+                    TargetSelectionScreen(
+                        onSelectGames = {
+                            openInstalled(
+                                InstalledTargetKind.GAMES,
+                            )
+                        },
+                        onSelectApps = {
+                            openInstalled(
+                                InstalledTargetKind
+                                    .APPLICATIONS,
+                            )
+                        },
+                        onSelectFile = {
+                            filePicker.launch(
+                                arrayOf(
+                                    "application/vnd.android.package-archive",
+                                    "application/zip",
+                                    "application/octet-stream",
+                                ),
+                            )
+                        },
+                    )
+
+                Screen.INSTALLED_APPS ->
+                    InstalledAppsScreen(
+                        apps = installedApps,
+                        loading = installedLoading,
+                        error = installedError,
+                        kind = installedKind,
+                        dumpingPackageName =
+                            dumpingPackageName,
+                        dumpNotice = dumpNotice,
                         onBack = {
-                            autoModSessionStore.clear()
-                            autoModTarget = null
-                            autoModResult = null
+                            dumpNotice = null
                             screen = Screen.TARGET
                         },
-                        onOpenRootRuntime = {
-                                _,
-                            ->
-                            rootInitialPackage =
-                                (
-                                    target as?
-                                        AnalysisTargetDescriptor
-                                            .InstalledPackage
-                                    )?.packageName
-                            rootReturnScreen =
-                                Screen.AUTOMOD
-                            screen =
-                                Screen.ROOT_PROCESS
+                        onKindChanged = {
+                            installedKind = it
+                            dumpNotice = null
+                        },
+                        onSelect = { app ->
+                            autoModSessionStore.clear()
+                            AnalysisManager
+                                .startInstalled(app)
+                        },
+                        onDump = { app ->
+                            if (
+                                dumpingPackageName == null
+                            ) {
+                                dumpingPackageName =
+                                    app.packageName
+                                dumpNotice =
+                                    "Создаётся дамп «" +
+                                        app.label +
+                                        "»…"
+                                scope.launch {
+                                    val dumped =
+                                        runCatching {
+                                            InstalledPackageDumper
+                                                .dump(
+                                                    appContext,
+                                                    app,
+                                                )
+                                        }
+                                    dumpNotice =
+                                        dumped.fold(
+                                            onSuccess = {
+                                                result ->
+                                                "Дамп готов: " +
+                                                    result.location +
+                                                    " · APK: " +
+                                                    result.apkCount +
+                                                    " · исходный размер: " +
+                                                    formatBytes(
+                                                        result.totalBytes,
+                                                    )
+                                            },
+                                            onFailure = {
+                                                failure ->
+                                                "Ошибка дампа: " +
+                                                    (
+                                                        failure.message
+                                                            ?: failure
+                                                                .javaClass
+                                                                .simpleName
+                                                    )
+                                            },
+                                        )
+                                    dumpingPackageName =
+                                        null
+                                }
+                            }
                         },
                     )
-                } else {
-                    screen = Screen.TARGET
+
+                Screen.AUTOMOD -> {
+                    val target = autoModTarget
+                    val result = autoModResult
+                    if (
+                        target != null &&
+                        result != null
+                    ) {
+                        AutoModScreen(
+                            target = target,
+                            result = result,
+                            onBack = {
+                                autoModSessionStore.clear()
+                                autoModTarget = null
+                                autoModResult = null
+                                screen = Screen.TARGET
+                            },
+                        )
+                    } else {
+                        screen = Screen.TARGET
+                    }
                 }
             }
-        }
     }
+}
+
+private fun formatBytes(
+    bytes: Long,
+): String {
+    if (bytes < 1024L) {
+        return bytes.toString() + " B"
+    }
+    val kb = bytes / 1024.0
+    if (kb < 1024.0) {
+        return String.format(
+            java.util.Locale.US,
+            "%.1f KB",
+            kb,
+        )
+    }
+    val mb = kb / 1024.0
+    if (mb < 1024.0) {
+        return String.format(
+            java.util.Locale.US,
+            "%.1f MB",
+            mb,
+        )
+    }
+    return String.format(
+        java.util.Locale.US,
+        "%.2f GB",
+        mb / 1024.0,
+    )
 }
