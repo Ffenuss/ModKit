@@ -45,6 +45,22 @@ android {
     }
 
     sourceSets.getByName("main").assets.directories.add(runtimeProbeAssetDir.get().asFile.absolutePath)
+    sourceSets.getByName("main").java.exclude(
+        "**/runtime/Root*.kt",
+        "**/runtime/LiveProcessOverlayService.kt",
+        "**/patch/Root*.kt",
+        "**/sandbox/*.kt",
+        "**/ui/screens/RootProcessLabScreen.kt",
+        "**/ui/screens/SandboxScreen.kt",
+        "**/ui/screens/ExpertLabScreen.kt",
+        "**/analysis/ExpertLab*.kt",
+    )
+    sourceSets.getByName("test").java.exclude(
+        "**/runtime/Root*.kt",
+        "**/sandbox/*.kt",
+        "**/analysis/RootRuntimeReportTest.kt",
+        "**/analysis/ExpertLab*.kt",
+    )
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
