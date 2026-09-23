@@ -14,15 +14,6 @@ val runtimeProbeNativeAssetRoot =
     runtimeProbeAssetDir.map {
         it.dir("modkit-runtime-probe-native")
     }
-val rootMemoryWatchAssetRoot =
-    runtimeProbeAssetDir.map {
-        it.dir("modkit-root-memory-watch")
-    }
-val rootFastScanAssetRoot =
-    runtimeProbeAssetDir.map {
-        it.dir("modkit-root-fast-scan")
-    }
-
 android {
     namespace = "io.github.ffenuss.modkit"
     compileSdk {
@@ -35,8 +26,8 @@ android {
         applicationId = "io.github.ffenuss.modkit"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.0.15"
+        versionCode = 16
+        versionName = "0.0.16"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -85,8 +76,6 @@ val generateRuntimeProbeDexAsset =
         dependsOn(":runtimeprobe:assembleDebug")
         outputs.file(runtimeProbeDexAsset)
         outputs.dir(runtimeProbeNativeAssetRoot)
-        outputs.dir(rootMemoryWatchAssetRoot)
-        outputs.dir(rootFastScanAssetRoot)
 
         doLast {
             val payloadApk = project(":runtimeprobe")
@@ -218,171 +207,6 @@ val generateRuntimeProbeDexAsset =
                     extractedAbis.sorted().joinToString()
             }
 
-            val rootWatchRoot =
-                rootMemoryWatchAssetRoot.get().asFile
-            rootWatchRoot.deleteRecursively()
-            rootWatchRoot.mkdirs()
-            val runtimeProbeProject =
-                project(":runtimeprobe")
-            val watchSearchRoots =
-                listOf(
-                    runtimeProbeProject
-                        .layout
-                        .buildDirectory
-                        .get()
-                        .asFile,
-                    File(
-                        runtimeProbeProject.projectDir,
-                        ".cxx",
-                    ),
-                )
-            val watchCandidates =
-                watchSearchRoots
-                    .asSequence()
-                    .filter {
-                        it.exists()
-                    }
-                    .flatMap {
-                        it.walkTopDown()
-                            .asSequence()
-                    }
-                    .filter {
-                        it.isFile &&
-                            it.name ==
-                            "modkit_root_memory_watch" &&
-                            it.invariantSeparatorsPath
-                                .contains(
-                                    "/arm64-v8a/",
-                                )
-                    }
-                    .toList()
-            check(watchCandidates.isNotEmpty()) {
-                "ARM64 root memory watch helper was not produced by ndk-build."
-            }
-            val newestWatch =
-                watchCandidates.maxBy {
-                    it.lastModified()
-                }
-            val watchOutput =
-                File(
-                    rootWatchRoot,
-                    "arm64-v8a/modkit_root_memory_watch",
-                )
-            watchOutput.parentFile.mkdirs()
-            newestWatch.copyTo(
-                watchOutput,
-                overwrite = true,
-            )
-            val watchMagic =
-                ByteArray(4)
-            val watchRead =
-                watchOutput.inputStream()
-                    .use {
-                        it.read(
-                            watchMagic,
-                        )
-                    }
-            check(
-                watchRead == 4 &&
-                    watchMagic.contentEquals(
-                        byteArrayOf(
-                            0x7f,
-                            0x45,
-                            0x4c,
-                            0x46,
-                        ),
-                    ),
-            ) {
-                "Root memory watch helper is not ELF."
-            }
-            check(
-                watchOutput
-                    .readBytes()
-                    .toString(
-                        Charsets.ISO_8859_1,
-                    )
-                    .contains(
-                        "MODKIT_ROOT_WATCH_V1",
-                    ),
-            ) {
-                "Root memory watch helper marker is missing."
-            }
-
-            val fastScanRoot =
-                rootFastScanAssetRoot.get().asFile
-            fastScanRoot.deleteRecursively()
-            fastScanRoot.mkdirs()
-            val fastScanCandidates =
-                watchSearchRoots
-                    .asSequence()
-                    .filter {
-                        it.exists()
-                    }
-                    .flatMap {
-                        it.walkTopDown()
-                            .asSequence()
-                    }
-                    .filter {
-                        it.isFile &&
-                            it.name ==
-                            "modkit_root_fast_value_scan"
-                    }
-                    .toList()
-            val fastScanByAbi =
-                expectedAbis.associateWith {
-                    abi ->
-                    fastScanCandidates
-                        .filter {
-                            it.invariantSeparatorsPath
-                                .contains(
-                                    "/$abi/",
-                                )
-                        }
-                        .maxByOrNull {
-                            it.lastModified()
-                        }
-                        ?: error(
-                            "Root fast scanner was not produced for $abi.",
-                        )
-                }
-            fastScanByAbi.forEach {
-                    (abi, source),
-                ->
-                val target =
-                    File(
-                        fastScanRoot,
-                        "$abi/modkit_root_fast_value_scan",
-                    )
-                target.parentFile.mkdirs()
-                source.copyTo(
-                    target,
-                    overwrite = true,
-                )
-                val bytes =
-                    target.readBytes()
-                check(
-                    bytes.size >= 4 &&
-                        bytes[0] ==
-                        0x7f.toByte() &&
-                        bytes[1] ==
-                        0x45.toByte() &&
-                        bytes[2] ==
-                        0x4c.toByte() &&
-                        bytes[3] ==
-                        0x46.toByte()
-                ) {
-                    "Root fast scanner for $abi is not ELF."
-                }
-                check(
-                    bytes.toString(
-                        Charsets.ISO_8859_1,
-                    ).contains(
-                        "MODKIT_ROOT_FAST_SCAN_V1",
-                    ),
-                ) {
-                    "Root fast scanner marker is missing for $abi."
-                }
-            }
         }
     }
 
