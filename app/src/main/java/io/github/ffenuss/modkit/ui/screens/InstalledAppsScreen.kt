@@ -2,7 +2,6 @@ package io.github.ffenuss.modkit.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,9 +10,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -37,10 +38,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import io.github.ffenuss.modkit.data.InstalledAppTarget
 
-private enum class InstalledKindFilter {
-    ALL,
+enum class InstalledTargetKind {
     GAMES,
-    APPS,
+    APPLICATIONS,
 }
 
 @Composable
@@ -48,68 +48,119 @@ fun InstalledAppsScreen(
     apps: List<InstalledAppTarget>,
     loading: Boolean,
     error: String?,
+    kind: InstalledTargetKind,
+    dumpingPackageName: String?,
+    dumpNotice: String?,
     onBack: () -> Unit,
+    onKindChanged: (InstalledTargetKind) -> Unit,
     onSelect: (InstalledAppTarget) -> Unit,
+    onDump: (InstalledAppTarget) -> Unit,
 ) {
-    var query by remember(apps) { mutableStateOf("") }
-    var kindFilter by remember(apps) {
-        mutableStateOf(InstalledKindFilter.ALL)
+    var query by remember(apps) {
+        mutableStateOf("")
     }
     var showSystem by remember(apps) {
         mutableStateOf(false)
     }
 
     val normalizedQuery = query.trim().lowercase()
-    val filtered = remember(
-        apps,
-        normalizedQuery,
-        kindFilter,
-        showSystem,
-    ) {
-        apps.filter { app ->
-            val queryMatches =
-                normalizedQuery.isBlank() ||
-                    app.label.lowercase()
-                        .contains(normalizedQuery) ||
-                    app.packageName.lowercase()
-                        .contains(normalizedQuery)
-            val kindMatches =
-                when (kindFilter) {
-                    InstalledKindFilter.ALL -> true
-                    InstalledKindFilter.GAMES ->
-                        app.isGame
-                    InstalledKindFilter.APPS ->
-                        !app.isGame
-                }
-            val systemMatches =
-                showSystem || !app.isSystemApp
-            queryMatches && kindMatches && systemMatches
+    val filtered =
+        remember(
+            apps,
+            normalizedQuery,
+            kind,
+            showSystem,
+        ) {
+            apps.filter { app ->
+                val queryMatches =
+                    normalizedQuery.isBlank() ||
+                        app.label.lowercase()
+                            .contains(normalizedQuery) ||
+                        app.packageName.lowercase()
+                            .contains(normalizedQuery)
+                val kindMatches =
+                    when (kind) {
+                        InstalledTargetKind.GAMES ->
+                            app.isGame
+                        InstalledTargetKind.APPLICATIONS ->
+                            !app.isGame
+                    }
+                val systemMatches =
+                    showSystem || !app.isSystemApp
+                queryMatches &&
+                    kindMatches &&
+                    systemMatches
+            }
         }
-    }
 
     Column(
-        Modifier
-            .fillMaxSize()
-            .padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .padding(20.dp),
+        verticalArrangement =
+            Arrangement.spacedBy(12.dp),
     ) {
         OutlinedButton(onClick = onBack) {
             Text("← Назад")
         }
+
         Text(
-            "Установленные приложения",
-            style = MaterialTheme.typography.headlineSmall,
+            if (kind == InstalledTargetKind.GAMES) {
+                "Выбор игры"
+            } else {
+                "Выбор приложения"
+            },
+            style =
+                MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold,
         )
 
         when {
-            loading -> CircularProgressIndicator()
+            loading ->
+                CircularProgressIndicator()
+
             error != null ->
                 Text(
                     "Ошибка: " + error,
-                    color = MaterialTheme.colorScheme.error,
+                    color =
+                        MaterialTheme.colorScheme.error,
                 )
+
             else -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement =
+                        Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected =
+                            kind ==
+                                InstalledTargetKind.GAMES,
+                        onClick = {
+                            onKindChanged(
+                                InstalledTargetKind.GAMES,
+                            )
+                        },
+                        label = { Text("Игры") },
+                    )
+                    FilterChip(
+                        selected =
+                            kind ==
+                                InstalledTargetKind
+                                    .APPLICATIONS,
+                        onClick = {
+                            onKindChanged(
+                                InstalledTargetKind
+                                    .APPLICATIONS,
+                            )
+                        },
+                        label = {
+                            Text("Приложения")
+                        },
+                    )
+                }
+
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -121,43 +172,6 @@ fun InstalledAppsScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement =
-                        Arrangement.spacedBy(8.dp),
-                ) {
-                    FilterChip(
-                        selected =
-                            kindFilter ==
-                                InstalledKindFilter.ALL,
-                        onClick = {
-                            kindFilter =
-                                InstalledKindFilter.ALL
-                        },
-                        label = { Text("Все") },
-                    )
-                    FilterChip(
-                        selected =
-                            kindFilter ==
-                                InstalledKindFilter.GAMES,
-                        onClick = {
-                            kindFilter =
-                                InstalledKindFilter.GAMES
-                        },
-                        label = { Text("Игры") },
-                    )
-                    FilterChip(
-                        selected =
-                            kindFilter ==
-                                InstalledKindFilter.APPS,
-                        onClick = {
-                            kindFilter =
-                                InstalledKindFilter.APPS
-                        },
-                        label = { Text("Приложения") },
-                    )
-                }
 
                 FilterChip(
                     selected = showSystem,
@@ -176,12 +190,29 @@ fun InstalledAppsScreen(
                 )
 
                 Text(
-                    "Найдено: " + filtered.size +
-                        " из " + apps.size +
-                        ". Системные пакеты по умолчанию скрыты.",
+                    "Найдено: " +
+                        filtered.size +
+                        ". Нажмите «Анализ» или " +
+                        "«Дамп APK».",
                     style =
                         MaterialTheme.typography.bodySmall,
                 )
+
+                dumpNotice?.let { notice ->
+                    Card(
+                        modifier =
+                            Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            notice,
+                            modifier =
+                                Modifier.padding(12.dp),
+                            style =
+                                MaterialTheme.typography
+                                    .bodySmall,
+                        )
+                    }
+                }
 
                 LazyColumn(
                     verticalArrangement =
@@ -193,80 +224,125 @@ fun InstalledAppsScreen(
                     ) { app ->
                         Card(
                             modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        onSelect(app)
-                                    },
+                                Modifier.fillMaxWidth(),
                         ) {
-                            Row(
+                            Column(
                                 modifier =
-                                    Modifier.padding(
-                                        14.dp,
-                                    ),
-                                verticalAlignment =
-                                    Alignment.CenterVertically,
-                                horizontalArrangement =
+                                    Modifier.padding(14.dp),
+                                verticalArrangement =
                                     Arrangement.spacedBy(
-                                        12.dp,
+                                        10.dp,
                                     ),
                             ) {
-                                InstalledAppIcon(
-                                    packageName =
-                                        app.packageName,
-                                    label = app.label,
-                                )
-                                Column(
-                                    modifier =
-                                        Modifier.weight(
-                                            1f,
-                                        ),
-                                    verticalArrangement =
+                                Row(
+                                    verticalAlignment =
+                                        Alignment
+                                            .CenterVertically,
+                                    horizontalArrangement =
                                         Arrangement.spacedBy(
-                                            3.dp,
+                                            12.dp,
                                         ),
                                 ) {
-                                    Text(
-                                        app.label,
-                                        fontWeight =
-                                            FontWeight
-                                                .SemiBold,
+                                    InstalledAppIcon(
+                                        packageName =
+                                            app.packageName,
+                                        label = app.label,
                                     )
-                                    Text(
-                                        if (app.isGame) {
-                                            "Игра"
-                                        } else {
-                                            "Приложение"
-                                        },
-                                        style =
-                                            MaterialTheme
-                                                .typography
-                                                .labelMedium,
-                                    )
-                                    Text(
-                                        app.packageName,
-                                        style =
-                                            MaterialTheme
-                                                .typography
-                                                .bodySmall,
-                                    )
-                                    Text(
-                                        "v" +
-                                            (app.versionName ?: "?") +
-                                            " · APK: " +
-                                            app.apkFiles.size +
-                                            if (
-                                                app.isSystemApp
-                                            ) {
-                                                " · system"
+                                    Column(
+                                        modifier =
+                                            Modifier.weight(1f),
+                                        verticalArrangement =
+                                            Arrangement
+                                                .spacedBy(3.dp),
+                                    ) {
+                                        Text(
+                                            app.label,
+                                            fontWeight =
+                                                FontWeight
+                                                    .SemiBold,
+                                        )
+                                        Text(
+                                            if (app.isGame) {
+                                                "Игра"
                                             } else {
-                                                ""
+                                                "Приложение"
                                             },
-                                        style =
-                                            MaterialTheme
-                                                .typography
-                                                .bodySmall,
-                                    )
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .labelMedium,
+                                        )
+                                        Text(
+                                            app.packageName,
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .bodySmall,
+                                        )
+                                        Text(
+                                            "v" +
+                                                (
+                                                    app.versionName
+                                                        ?: "?"
+                                                ) +
+                                                " · APK: " +
+                                                app.apkFiles.size +
+                                                if (
+                                                    app.isSystemApp
+                                                ) {
+                                                    " · system"
+                                                } else {
+                                                    ""
+                                                },
+                                            style =
+                                                MaterialTheme
+                                                    .typography
+                                                    .bodySmall,
+                                        )
+                                    }
+                                }
+
+                                Row(
+                                    modifier =
+                                        Modifier.fillMaxWidth(),
+                                    horizontalArrangement =
+                                        Arrangement.spacedBy(
+                                            8.dp,
+                                        ),
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            onSelect(app)
+                                        },
+                                        enabled =
+                                            dumpingPackageName ==
+                                                null,
+                                        modifier =
+                                            Modifier.weight(1f),
+                                    ) {
+                                        Text("Анализ")
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            onDump(app)
+                                        },
+                                        enabled =
+                                            dumpingPackageName ==
+                                                null,
+                                        modifier =
+                                            Modifier.weight(1f),
+                                    ) {
+                                        Text(
+                                            if (
+                                                dumpingPackageName ==
+                                                    app.packageName
+                                            ) {
+                                                "Дамп…"
+                                            } else {
+                                                "Дамп APK"
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -275,11 +351,22 @@ fun InstalledAppsScreen(
                     if (filtered.isEmpty()) {
                         item {
                             Text(
-                                "Ничего не найдено. " +
-                                    "Измените поиск или фильтры.",
+                                if (
+                                    kind ==
+                                    InstalledTargetKind.GAMES
+                                ) {
+                                    "Игры не найдены. " +
+                                        "Попробуйте включить " +
+                                        "системные пакеты или " +
+                                        "изменить поиск."
+                                } else {
+                                    "Приложения не найдены. " +
+                                        "Попробуйте включить " +
+                                        "системные пакеты или " +
+                                        "изменить поиск."
+                                },
                                 style =
-                                    MaterialTheme
-                                        .typography
+                                    MaterialTheme.typography
                                         .bodyMedium,
                             )
                         }
@@ -296,17 +383,18 @@ private fun InstalledAppIcon(
     label: String,
 ) {
     val context = LocalContext.current
-    val bitmap = remember(packageName) {
-        runCatching {
-            context.packageManager
-                .getApplicationIcon(packageName)
-                .toBitmap(
-                    width = 96,
-                    height = 96,
-                )
-                .asImageBitmap()
-        }.getOrNull()
-    }
+    val bitmap =
+        remember(packageName) {
+            runCatching {
+                context.packageManager
+                    .getApplicationIcon(packageName)
+                    .toBitmap(
+                        width = 96,
+                        height = 96,
+                    )
+                    .asImageBitmap()
+            }.getOrNull()
+        }
 
     if (bitmap != null) {
         Image(
