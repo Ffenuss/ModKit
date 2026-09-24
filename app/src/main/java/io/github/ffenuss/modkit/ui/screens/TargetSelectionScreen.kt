@@ -1,15 +1,8 @@
 package io.github.ffenuss.modkit.ui.screens
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -17,117 +10,45 @@ import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.BuildConfig
 
 @Composable
-fun TargetSelectionScreen(
-    onSelectGames: () -> Unit,
-    onSelectApps: () -> Unit,
-    onSelectFile: () -> Unit,
-) {
-    Column(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .padding(20.dp),
-        verticalArrangement =
-            Arrangement.spacedBy(14.dp),
-    ) {
-        Text(
-            "ModKit",
-            style =
-                MaterialTheme.typography.headlineLarge,
-            fontWeight = FontWeight.Bold,
-        )
-        Text("v" + BuildConfig.VERSION_NAME)
-        Text(
-            "Выберите, что нужно открыть. ModKit работает без root: " +
-                "можно анализировать установленную игру, обычное приложение " +
-                "или APK-файл.",
-            style = MaterialTheme.typography.bodyMedium,
-        )
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement =
-                    Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    "Установленные пакеты",
-                    style =
-                        MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    "Игры и обычные приложения показываются отдельно. " +
-                        "Для любого выбранного пакета доступен анализ и " +
-                        "дамп установочного набора APK на устройство.",
-                    style =
-                        MaterialTheme.typography.bodySmall,
-                )
-                Button(
-                    onClick = onSelectGames,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Выбрать игру")
-                }
-                Button(
-                    onClick = onSelectApps,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Выбрать приложение")
+fun TargetSelectionScreen(onSelectGames: () -> Unit, onSelectApps: () -> Unit, onSelectFile: () -> Unit) {
+    Scaffold { insets ->
+        LazyColumn(Modifier.fillMaxSize().padding(insets), contentPadding = PaddingValues(24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp)) {
+            item {
+                Spacer(Modifier.height(24.dp))
+                Text("MODKIT", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(14.dp))
+                Text("Ваше приложение.\nВаши изменения.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(12.dp))
+                Text("Выберите приложение. Мы найдём доступные рецепты и подготовим APK прямо на телефоне.",
+                    style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            item {
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                    Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("01  •  На этом телефоне", style = MaterialTheme.typography.labelMedium)
+                        Text("Выберите игру\nили приложение", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Button(onClick = onSelectGames, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Выбрать игру") }
+                        OutlinedButton(onClick = onSelectApps, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Выбрать приложение") }
+                    }
                 }
             }
-        }
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement =
-                    Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    "APK / файл",
-                    style =
-                        MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    "Открывает APK, APK-set, ZIP или бинарный файл " +
-                        "для статического анализа.",
-                    style =
-                        MaterialTheme.typography.bodySmall,
-                )
-                OutlinedButton(
-                    onClick = onSelectFile,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Выбрать APK / файл")
+            item {
+                OutlinedCard(onClick = onSelectFile, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("02  •  Из файла", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        Text("Открыть APK", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Text("Выберите установочный файл на устройстве.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                 }
             }
-        }
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement =
-                    Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    "Дампер приложений",
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    "Дамп сохраняет base APK и все split APK, SHA-256 " +
-                        "каждого файла и индекс содержимого APK. " +
-                        "На Android 10+ архив появляется в Downloads/ModKit.",
-                    style =
-                        MaterialTheme.typography.bodySmall,
-                )
+            item {
+                Text("Анализ → выбор изменений → сборка", style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.height(6.dp))
+                Text("Без root и облачных сервисов. Доступность изменений зависит от кода приложения.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(14.dp))
+                Text("v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall)
             }
         }
     }

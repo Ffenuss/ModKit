@@ -115,3 +115,9 @@ Source audit and CI-log inspection are complete at the subsystem level. Dynamic
 baseline reproduction, UI inspection, and real-game coverage are NOT complete at
 this point. A full ready-product claim would be false. Detailed validation must
 record each actual command/device/fixture, not infer success from this document.
+
+Baseline reproduced in [run 36055340587](https://github.com/Ffenuss/ModKit/actions/runs/36055340587):
+323 JVM tests, 2 failures. Both new `DexCoverageRegressionTest` cases fail on the
+unchanged engine (320 methods in one DEX; 640 across two DEX entries). The existing
+321 tests pass. After the first engine correction, the local run reports 326 tests,
+0 failures; this still says nothing about gameplay or installation.

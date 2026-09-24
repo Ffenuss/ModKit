@@ -69,6 +69,21 @@ dependencies {
     implementation("org.smali:dexlib2:2.5.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
+}
+
+val fixtureAssets = layout.buildDirectory.dir("generated/fixtureAssets")
+android.sourceSets.getByName("androidTest").assets.directories.add(fixtureAssets.get().asFile.absolutePath)
+val prepareFixtureAssets = tasks.register<Copy>("prepareFixtureAssets") {
+    dependsOn(":testgame:assembleDebug")
+    from(project(":testgame").layout.buildDirectory.file("outputs/apk/debug/testgame-debug.apk"))
+    into(fixtureAssets)
+    rename { "fixture.apk" }
+}
+tasks.configureEach {
+    if (name == "mergeDebugAndroidTestAssets" || name.contains("AndroidTestLint")) dependsOn(prepareFixtureAssets)
 }
 
 
