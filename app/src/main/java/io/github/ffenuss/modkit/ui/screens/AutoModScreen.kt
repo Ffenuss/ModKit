@@ -1,5 +1,9 @@
 package io.github.ffenuss.modkit.ui.screens
 
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,6 +15,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -22,13 +27,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
+import io.github.ffenuss.modkit.build.ApkSigningIdentity
 import io.github.ffenuss.modkit.build.BuildArtifactExporter
+import io.github.ffenuss.modkit.build.OwnerSigningIdentityLoader
+import io.github.ffenuss.modkit.build.OwnerTargetAuthorization
+import io.github.ffenuss.modkit.build.OwnerTargetAuthorizationVerifier
 import io.github.ffenuss.modkit.build.VerifiedBuildPipeline
 import io.github.ffenuss.modkit.build.VerifiedBuildResult
 import io.github.ffenuss.modkit.domain.EngineProgress
@@ -101,6 +111,117 @@ fun AutoModScreen(
     }
     var cancellation by remember(result.index.artifactSha256) {
         mutableStateOf<AtomicCancellationSignal?>(null)
+    }
+    var ownerKeyUri by remember(result.index.artifactSha256) {
+        mutableStateOf<Uri?>(null)
+    }
+    var ownerKeyDisplayName by remember(result.index.artifactSha256) {
+        mutableStateOf<String?>(null)
+    }
+    var ownerKeyAlias by remember(result.index.artifactSha256) {
+        mutableStateOf("")
+    }
+    var ownerKeyPassword by remember(result.index.artifactSha256) {
+        mutableStateOf("")
+    }
+    var ownerSigningIdentity by remember(result.index.artifactSha256) {
+        mutableStateOf<ApkSigningIdentity?>(null)
+    }
+    var ownerAuthorization by remember(result.index.artifactSha256) {
+        mutableStateOf<OwnerTargetAuthorization?>(null)
+    }
+    var ownerKeyBusy by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
+    }
+    var ownerKeyError by remember(result.index.artifactSha256) {
+        mutableStateOf<String?>(null)
+    }
+
+    val ownerKeyPicker =
+        rememberLauncherForActivityResult(
+            ActivityResultContracts.OpenDocument(),
+        ) { uri ->
+            ownerKeyUri = uri
+            ownerKeyDisplayName =
+                uri?.lastPathSegment
+                    ?.substringAfterLast('/')
+            ownerSigningIdentity = null
+            ownerAuthorization = null
+            ownerKeyError = null
+            if (uri != null) {
+                runCatching {
+                    context.contentResolver
+                        .takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                        )
+                }
+            }
+        }
+
+    fun verifyOwnerKey() {
+        val uri = ownerKeyUri
+        if (uri == null) {
+            ownerKeyError =
+                "Сначала выберите PKCS12/JKS ключ владельца."
+            return
+        }
+        if (ownerKeyBusy) return
+
+        ownerKeyBusy = true
+        ownerKeyError = null
+        ownerAuthorization = null
+        ownerSigningIdentity = null
+
+        scope.launch {
+            val password =
+                ownerKeyPassword.toCharArray()
+            try {
+                val imported =
+                    withContext(Dispatchers.IO) {
+                        OwnerSigningIdentityLoader.load(
+                            context = context,
+                            uri = uri,
+                            password = password,
+                            aliasHint =
+                                ownerKeyAlias
+                                    .trim()
+                                    .takeIf {
+                                        it.isNotEmpty()
+                                    },
+                        )
+                    }
+                val authorization =
+                    OwnerTargetAuthorizationVerifier
+                        .verify(
+                            context = context,
+                            target = target,
+                            imported = imported,
+                        )
+                ownerAuthorization =
+                    authorization
+                ownerKeyAlias =
+                    imported.identity.alias
+                ownerSigningIdentity =
+                    if (
+                        authorization.verified
+                    ) {
+                        imported.identity
+                    } else {
+                        null
+                    }
+            } catch (failure: Throwable) {
+                ownerKeyError =
+                    failure.message
+                        ?: failure
+                            .javaClass
+                            .simpleName
+            } finally {
+                password.fill('\u0000')
+                ownerKeyPassword = ""
+                ownerKeyBusy = false
+            }
+        }
     }
 
     fun prepareChanges() {
@@ -205,6 +326,13 @@ fun AutoModScreen(
                 buildResult = VerifiedBuildPipeline.build(
                     context = context,
                     stagingOutcome = staged,
+                    signingIdentity =
+                        ownerSigningIdentity
+                            ?.takeIf {
+                                ownerAuthorization
+                                    ?.verified ==
+                                    true
+                            },
                     cancellation = signal,
                     progress = ProgressSink { update ->
                         scope.launch { progress = update }
@@ -378,6 +506,7 @@ fun AutoModScreen(
     LaunchedEffect(
         analysisResult.index.artifactSha256,
         plan?.preparedAtEpochMs,
+        ownerAuthorization?.verified,
     ) {
         val prepared = plan
         if (prepared == null) {
@@ -394,6 +523,10 @@ fun AutoModScreen(
                             result = analysisResult,
                             preparation = prepared,
                             projectCodeOnly = true,
+                            ownerEntitlementAuthorized =
+                                ownerAuthorization
+                                    ?.verified ==
+                                    true,
                             limit = 256,
                             perCategoryLimit = 32,
                         )
@@ -737,6 +870,168 @@ fun AutoModScreen(
                     Column(
                         Modifier.padding(14.dp),
                         verticalArrangement =
+                            Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "Режим владельца — Full / Premium",
+                            fontWeight =
+                                FontWeight.SemiBold,
+                        )
+                        Text(
+                            "Для entitlement-патчей ModKit требует доказательство владения: " +
+                                "сертификат выбранного ключа должен совпасть с подписью исходного APK. " +
+                                "Ключ и пароль обрабатываются локально и не сохраняются.",
+                            style =
+                                MaterialTheme.typography
+                                    .bodySmall,
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                ownerKeyPicker.launch(
+                                    arrayOf(
+                                        "application/x-pkcs12",
+                                        "application/octet-stream",
+                                        "*/*",
+                                    ),
+                                )
+                            },
+                            enabled =
+                                !ownerKeyBusy &&
+                                    !building &&
+                                    !preparing,
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                ownerKeyDisplayName
+                                    ?.let {
+                                        "Ключ: " + it
+                                    }
+                                    ?: "Выбрать .p12 / .pfx / .jks",
+                            )
+                        }
+                        OutlinedTextField(
+                            value = ownerKeyAlias,
+                            onValueChange = {
+                                ownerKeyAlias = it
+                                ownerSigningIdentity = null
+                                ownerAuthorization = null
+                            },
+                            label = {
+                                Text(
+                                    "Alias (можно оставить пустым)",
+                                )
+                            },
+                            singleLine = true,
+                            enabled = !ownerKeyBusy,
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = ownerKeyPassword,
+                            onValueChange = {
+                                ownerKeyPassword = it
+                                ownerSigningIdentity = null
+                                ownerAuthorization = null
+                            },
+                            label = {
+                                Text("Пароль ключа")
+                            },
+                            singleLine = true,
+                            visualTransformation =
+                                PasswordVisualTransformation(),
+                            enabled = !ownerKeyBusy,
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                        )
+                        Button(
+                            onClick = ::verifyOwnerKey,
+                            enabled =
+                                ownerKeyUri != null &&
+                                    !ownerKeyBusy &&
+                                    !building &&
+                                    !preparing,
+                            modifier =
+                                Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (ownerKeyBusy) {
+                                    "Проверка ключа…"
+                                } else {
+                                    "Проверить ключ владельца"
+                                },
+                            )
+                        }
+                        ownerAuthorization?.let {
+                            authorization ->
+                            Text(
+                                authorization.message,
+                                color =
+                                    if (
+                                        authorization
+                                            .verified
+                                    ) {
+                                        MaterialTheme
+                                            .colorScheme
+                                            .primary
+                                    } else {
+                                        MaterialTheme
+                                            .colorScheme
+                                            .error
+                                    },
+                                style =
+                                    MaterialTheme.typography
+                                        .bodySmall,
+                            )
+                            authorization
+                                .sourceSignerSha256
+                                .firstOrNull()
+                                ?.let {
+                                    Text(
+                                        "APK signer: " +
+                                            it.take(20) +
+                                            "…",
+                                        style =
+                                            MaterialTheme
+                                                .typography
+                                                .bodySmall,
+                                    )
+                                }
+                            authorization
+                                .ownerSignerSha256
+                                ?.let {
+                                    Text(
+                                        "Owner signer: " +
+                                            it.take(20) +
+                                            "…",
+                                        style =
+                                            MaterialTheme
+                                                .typography
+                                                .bodySmall,
+                                    )
+                                }
+                        }
+                        ownerKeyError?.let {
+                            Text(
+                                it,
+                                color =
+                                    MaterialTheme
+                                        .colorScheme
+                                        .error,
+                                style =
+                                    MaterialTheme.typography
+                                        .bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(14.dp),
+                        verticalArrangement =
                             Arrangement.spacedBy(5.dp),
                     ) {
                         Text(
@@ -825,6 +1120,10 @@ fun AutoModScreen(
                         target = target,
                         analysis = analysisResult,
                         preparation = prepared,
+                        ownerEntitlementAuthorized =
+                            ownerAuthorization
+                                ?.verified ==
+                                true,
                         onStagingReady = { outcome ->
                             stagingOutcome = outcome
                             buildResult = null
@@ -1012,12 +1311,32 @@ fun AutoModScreen(
                     ) {
                         Text("Готовый APK", fontWeight = FontWeight.SemiBold)
                         Text(
-                            "Подпись: локальный тестовый ключ ModKit · " + built.signerAlias,
+                            "Подпись: " +
+                                if (
+                                    ownerAuthorization
+                                        ?.verified ==
+                                        true
+                                ) {
+                                    "ключ владельца · " +
+                                        built.signerAlias
+                                } else {
+                                    "локальный тестовый ключ ModKit · " +
+                                        built.signerAlias
+                                },
                             style = MaterialTheme.typography.bodySmall,
                         )
                         Text(
-                            "Для обновления уже установленного оригинального приложения " +
-                                "нужен совместимый ключ владельца; локальная подпись ModKit его не заменяет.",
+                            if (
+                                ownerAuthorization
+                                    ?.verified ==
+                                    true
+                            ) {
+                                "Сертификат ключа владельца совпал с исходным APK; " +
+                                    "сборка подписана этим ключом."
+                            } else {
+                                "Для обновления уже установленного оригинального приложения " +
+                                    "нужен совместимый ключ владельца; локальная подпись ModKit его не заменяет."
+                            },
                             style = MaterialTheme.typography.bodySmall,
                         )
                         built.signerCertificateSha256.firstOrNull()?.let { fingerprint ->
