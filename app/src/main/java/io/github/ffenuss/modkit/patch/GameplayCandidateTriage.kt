@@ -73,6 +73,55 @@ data class GameplayCategoryOverview(
     val displayOnlyCandidates: Int,
 )
 
+data class GameplayCandidateBlockerSummary(
+    val label: String,
+    val count: Int,
+)
+
+/**
+ * Explain the dominant reasons that exact-looking methods have no checkbox.
+ * This is diagnostic grouping, not an attempt to bypass missing evidence.
+ */
+fun summarizeGameplayBlockers(
+    opportunities: List<GameplayModificationOpportunity>,
+): List<GameplayCandidateBlockerSummary> {
+    val labels = opportunities
+        .filter { !it.selectable }
+        .map { opportunity ->
+            val reason = opportunity.blocker.orEmpty().lowercase()
+            when {
+                opportunity.category ==
+                    GameplayModificationCategory.SENSITIVE_SURFACE ->
+                    "Только диагностика"
+                opportunity.confidence ==
+                    GameplayModificationConfidence.SEMANTIC_MODEL_SIGNAL ->
+                    "Поле metadata: нет доказанного адреса"
+                "общ" in reason || "shared body" in reason ->
+                    "Общий native body: затрагивает другие методы"
+                "return type" in reason || "сигнатур" in reason ||
+                    "boolean" in reason ->
+                    "Не доказан возвращаемый тип"
+                "величин" in reason || "значени" in reason ->
+                    "Нужно выбрать и проверить числовое значение"
+                "preset" in reason || "шаблон" in reason ->
+                    "Нет подходящего проверенного шаблона"
+                "по имени" in reason || "по контексту" in reason ||
+                    "безопасного автопатча" in reason ->
+                    "Пока есть только семантическое совпадение"
+                else ->
+                    "Не хватает проверок для автоматического изменения"
+            }
+        }
+    return labels.groupingBy { it }
+        .eachCount()
+        .entries
+        .sortedWith(
+            compareByDescending<Map.Entry<String, Int>> { it.value }
+                .thenBy { it.key },
+        )
+        .map { GameplayCandidateBlockerSummary(it.key, it.value) }
+}
+
 object GameplayCandidateTriage {
     private val presentationHints = listOf(
         "hud", "ui", "display", "screen", "widget", "view",
