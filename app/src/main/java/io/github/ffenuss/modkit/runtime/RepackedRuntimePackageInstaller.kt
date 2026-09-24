@@ -245,6 +245,7 @@ object AndroidRepackedRuntimeInstaller {
         context: Context,
         plan: RepackedRuntimeInstallPlan,
         cancellation: CancellationSignal,
+        progress: ((copiedBytes: Long, totalBytes: Long, apkName: String) -> Unit)? = null,
     ): RepackedRuntimeInstallSubmission {
         val readiness = inspectReadiness(context, plan)
         require(readiness.canCreateSession) {
@@ -276,6 +277,8 @@ object AndroidRepackedRuntimeInstaller {
         }
 
         val sessionId = installer.createSession(params)
+        var copiedBytes = 0L
+        var lastReported = 0L
         var committed = false
         try {
             installer.openSession(sessionId).use { session ->
@@ -302,10 +305,28 @@ object AndroidRepackedRuntimeInstaller {
                                 checkCancelled(cancellation)
                                 val read = input.read(buffer)
                                 if (read < 0) break
-                                if (read > 0) output.write(buffer, 0, read)
+                                if (read > 0) {
+                                    output.write(buffer, 0, read)
+                                    copiedBytes += read
+                                    if (copiedBytes - lastReported >=
+                                        8L * 1024L * 1024L
+                                    ) {
+                                        lastReported = copiedBytes
+                                        progress?.invoke(
+                                            copiedBytes,
+                                            plan.totalBytes,
+                                            apk.sourceDisplayName,
+                                        )
+                                    }
+                                }
                             }
                         }
                         session.fsync(output)
+                        progress?.invoke(
+                            copiedBytes,
+                            plan.totalBytes,
+                            apk.sourceDisplayName,
+                        )
                     }
                 }
 
