@@ -125,7 +125,7 @@ object GameplayModificationFinder {
                     if (
                         projectCodeOnly &&
                         !Il2CppPatchTargetBrowser
-                            .isAssemblyCSharp(target) &&
+                            .isProjectCode(target) &&
                         sensitiveKind == null
                     ) {
                         return@mapNotNull null
@@ -665,7 +665,8 @@ object GameplayModificationFinder {
                     imageByTypeIndex[field.declaringTypeIndex]
                 if (
                     projectCodeOnly &&
-                    !isAssemblyCSharpImage(imageName)
+                    !Il2CppPatchTargetBrowser
+                        .isProjectImageName(imageName)
                 ) {
                     return@mapNotNull null
                 }
@@ -756,17 +757,6 @@ object GameplayModificationFinder {
             }
             ?.first
 
-    private fun isAssemblyCSharpImage(
-        imageName: String?,
-    ): Boolean {
-        val normalized =
-            imageName
-                ?.lowercase()
-                ?: return false
-        return normalized == "assembly-csharp" ||
-            normalized == "assembly-csharp.dll"
-    }
-
     private fun isInfrastructureOrGeneratedType(
         declaringType: String,
     ): Boolean {
@@ -797,7 +787,7 @@ object GameplayModificationFinder {
     ): String? {
         if (
             !Il2CppPatchTargetBrowser
-                .isAssemblyCSharp(target)
+                .isProjectCode(target)
         ) {
             return null
         }
