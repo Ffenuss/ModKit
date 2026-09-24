@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.20**
+Current application version: **0.0.21**
 
 ## Product flow
 
@@ -43,6 +43,12 @@ If a target yields zero selectable modifications, ModKit now reports how many DE
 Method matching now includes more explicit local names for health/HP, invulnerability, stamina, ammunition, movement, no-clip, cooldowns, XP, level, inventory capacity and debug flags in self-authored apps. Library namespace matching was corrected so game packages containing `/android/` are no longer discarded. This increases coverage for unobfuscated DEX apps; it cannot resolve heavily obfuscated or fully native game logic automatically.
 
 Build retries now use unique output directories and no longer overwrite earlier signed results. The finished-build screen supports saving an APK or split APK ZIP directly to Downloads/ModKit (Android 10+) or through Android's system document picker on older phones.
+
+## Dedicated Unity gameplay assemblies (0.0.21)
+
+Version 0.0.20 incorrectly treated Assembly-CSharp as the only gameplay code: dedicated game assemblies (for example FlickEngineAssembly.dll) were grouped with plugins, hidden by default and excluded from automatic gameplay and field suggestions. Version 0.0.21 recognizes project/game assemblies with the narrow GameAssembly/EngineAssembly naming pattern, prioritizes them during bounded IL2CPP binary binding and exposes their exact methods in Patch Lab and AutoMod. The analysis summary now distinguishes runtime evidence and exact method bindings from ready patches.
+
+The binding limit remains 30,000 on normal devices, with a 5,000-method retry on low-memory failure; this is a bounded partial scan, not full reconstruction of every method. Neither a binary binding nor an attractive method name guarantees that a mutation is safe or will affect gameplay. Review diagnostic reports and test the result on an authorized copy, preserving original save data.
 
 ## Automatic Android DEX modifications (0.0.19)
 
