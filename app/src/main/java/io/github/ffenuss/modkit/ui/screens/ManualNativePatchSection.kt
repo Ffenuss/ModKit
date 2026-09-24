@@ -58,6 +58,7 @@ import io.github.ffenuss.modkit.patch.MutationPreflightResult
 import io.github.ffenuss.modkit.patch.NativeCodeWindow
 import io.github.ffenuss.modkit.patch.NativeMutationDraft
 import io.github.ffenuss.modkit.patch.NativePatchPresetCatalog
+import io.github.ffenuss.modkit.patch.PatchBuildSelectionMerger
 import io.github.ffenuss.modkit.patch.PatchPreparationPlan
 import io.github.ffenuss.modkit.patch.PreparationTargetStatus
 import java.io.File
@@ -73,6 +74,7 @@ fun ManualNativePatchSection(
     onStagingReady: (MutationApplyOutcome) -> Unit = { },
     onStagingInvalidated: () -> Unit = { },
     onBuildRequested: (MutationApplyOutcome) -> Unit = { },
+    externalBusy: Boolean = false,
 ) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
@@ -140,6 +142,9 @@ fun ManualNativePatchSection(
         mutableStateOf(false)
     }
     var findingOpportunitiesError by remember(key) {
+        mutableStateOf<String?>(null)
+    }
+    var oneTapBuildStatus by remember(key) {
         mutableStateOf<String?>(null)
     }
 
@@ -343,6 +348,140 @@ fun ManualNativePatchSection(
         actionableOpportunities.filter {
             it.id in selectedOpportunityIds
         }
+    /**
+     * Checkboxes now form a complete operation, not merely a staging queue.
+     * Draft materialization is performed off the UI thread; the single
+     * combined preflight runs before any original APK is copied or changed.
+     */
+    fun applySelectionAndBuild() {
+        if (busy || externalBusy) {
+            error = "Дождитесь завершения текущей операции."
+            return
+        }
+        val chosen = selectedOpportunities.toList()
+        val existing = queuedDrafts.toList()
+        if (chosen.isEmpty() && existing.isEmpty()) {
+            error = "Сначала отметьте хотя бы один готовый мод."
+            return
+        }
+        if (chosen.any {
+                !it.selectable ||
+                    it.replacementHex.isNullOrBlank()
+            }
+        ) {
+            error = "Один из выбранных модов не имеет проверенного шаблона изменения."
+            return
+        }
+
+        val signal = AtomicCancellationSignal()
+        cancellation = signal
+        busy = true
+        error = null
+        progress = null
+        applyOutcome = null
+        oneTapBuildStatus = "1/4 · Подготовка выбранных методов…"
+        onStagingInvalidated()
+
+        scope.launch {
+            try {
+                val generated =
+                    withContext(Dispatchers.IO) {
+                        chosen.map { opportunity ->
+                            if (signal.isCancelled()) {
+                                throw AnalysisCancelledException()
+                            }
+                            Il2CppNativeMutationDraftBuilder.build(
+                                result = analysis,
+                                targetId = opportunity.targetId,
+                                replacementHex =
+                                    requireNotNull(
+                                        opportunity.replacementHex,
+                                    ),
+                                analysisResultsRoot =
+                                    File(
+                                        context.filesDir,
+                                        "analysis-results",
+                                    ),
+                                stagingRoot =
+                                    File(
+                                        context.filesDir,
+                                        "patch-staging",
+                                    ),
+                            )
+                        }
+                    }
+                val combined = PatchBuildSelectionMerger.merge(
+                    queued = existing,
+                    selected = generated,
+                    targetId = { it.request.targetId },
+                )
+                require(combined.isNotEmpty()) {
+                    "Набор изменений пуст."
+                }
+
+                oneTapBuildStatus = "2/4 · Проверка SHA, диапазонов и конфликтов…"
+                val checked = withContext(Dispatchers.Default) {
+                    MutationPreflightEngine.validate(
+                        preparation = preparation,
+                        requests = combined.map {
+                            it.request
+                        },
+                    )
+                }
+                require(checked.readyForApply) {
+                    (
+                        checked.globalBlockers +
+                            checked.blockedItems.flatMap {
+                                it.blockers
+                            }
+                    ).distinct().firstOrNull()
+                        ?: "Проверка набора изменений не пройдена."
+                }
+
+                oneTapBuildStatus = "3/4 · Применение к тестовому APK…"
+                val outcome = MutationApplyCoordinator.apply(
+                    context = context,
+                    target = target,
+                    analysis = analysis,
+                    preparation = preparation,
+                    requests = combined.map {
+                        it.request
+                    },
+                    cancellation = signal,
+                    progress = ProgressSink { update ->
+                        scope.launch { progress = update }
+                    },
+                )
+                require(outcome.applied) {
+                    outcome.blockers.firstOrNull()
+                        ?: "Изменения не прошли проверку промежуточной сборки."
+                }
+                queuedDrafts = combined
+                selectedOpportunityIds = emptySet()
+                automaticQueuedTargetIds =
+                    automaticQueuedTargetIds +
+                        generated.map {
+                            it.request.targetId
+                        }
+                applyOutcome = outcome
+                onStagingReady(outcome)
+                oneTapBuildStatus =
+                    "4/4 · Промежуточный APK проверен. Запущена подпись и проверка итоговой сборки…"
+                onBuildRequested(outcome)
+            } catch (_: AnalysisCancelledException) {
+                error = "Подготовка и сборка отменены. Оригинал не изменён."
+                oneTapBuildStatus = null
+            } catch (failure: Throwable) {
+                error = "Сборка остановлена: " +
+                    (failure.message ?: failure.javaClass.simpleName)
+                oneTapBuildStatus = null
+            } finally {
+                busy = false
+                cancellation = null
+            }
+        }
+    }
+
     val normalizedFilter = targetFilter.trim().lowercase()
     val visibleEligible = remember(
         key,
@@ -1658,6 +1797,58 @@ fun ManualNativePatchSection(
                             ")",
                     )
                 }
+            }
+
+            Button(
+                onClick = ::applySelectionAndBuild,
+                enabled =
+                    !busy &&
+                        !externalBusy &&
+                        !findingOpportunities &&
+                        (
+                            selectedOpportunities.isNotEmpty() ||
+                                queuedDrafts.isNotEmpty()
+                        ),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    if (busy && oneTapBuildStatus != null) {
+                        "Подготовка и сборка…"
+                    } else {
+                        "Применить и собрать APK (" +
+                            (
+                                selectedOpportunities
+                                    .map { it.targetId } +
+                                    queuedDrafts
+                                        .map { it.request.targetId }
+                            ).distinct().size +
+                            ")"
+                    },
+                )
+            }
+            Text(
+                "Одна кнопка выполнит подготовку, общую проверку, " +
+                    "применение к тестовому APK и подпись. " +
+                    "Добавлять изменения в отдельный список не требуется.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            oneTapBuildStatus?.let { status ->
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text(
+                    status,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            error?.takeIf {
+                oneTapBuildStatus == null &&
+                    (selectedOpportunities.isNotEmpty() ||
+                        queuedDrafts.isNotEmpty())
+            }?.let { message ->
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
             }
 
             findingOpportunitiesError?.let { message ->
