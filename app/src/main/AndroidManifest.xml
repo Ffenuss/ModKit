@@ -33,6 +33,12 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- Explicit PackageInstaller callback: preserves the current Patch Lab
+             screen and receives results without launching a second activity. -->
+        <receiver
+            android:name=".runtime.RepackedInstallStatusReceiver"
+            android:exported="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
