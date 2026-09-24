@@ -2,6 +2,7 @@ package io.github.ffenuss.modkit.runtime
 
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
+import io.github.ffenuss.modkit.build.VerifiedBuildResult
 import java.io.BufferedInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -140,6 +141,81 @@ object RepackedRuntimeInstallPlanner {
             signerCertificateSha256 = signers,
             apks = apks,
             totalBytes = totalBytes,
+            blockers = blockers.distinct(),
+        )
+    }
+
+    /**
+     * The same authenticated Android PackageInstaller flow also installs
+     * regular verified ModKit patch outputs, including base + split APKs.
+     */
+    fun plan(
+        build: VerifiedBuildResult,
+        cancellation: CancellationSignal,
+    ): RepackedRuntimeInstallPlan {
+        val blockers = mutableListOf<String>()
+        if (!build.installability.verified) {
+            blockers += build.installability.blockers.ifEmpty {
+                listOf("Собранный APK не прошёл проверку устанавливаемости.")
+            }
+        }
+        val packageName = build.installability.packageName.orEmpty()
+        if (packageName.isBlank()) blockers += "Package name is unavailable."
+        if (build.files.isEmpty()) blockers += "No signed APK files are available."
+        val signers = build.files
+            .flatMap { it.signature.signerCertificateSha256 }
+            .map(String::lowercase)
+            .toSet()
+        if (signers.isEmpty()) blockers += "Verified signer certificate is missing."
+        val duplicateNames = build.files.groupingBy { it.file.name }
+            .eachCount().filterValues { it > 1 }.keys
+        if (duplicateNames.isNotEmpty()) {
+            blockers += "The built APK-set contains duplicate file names."
+        }
+        val apks = mutableListOf<RepackedRuntimeInstallApk>()
+        build.files.forEach { built ->
+            checkCancelled(cancellation)
+            if (!built.signature.verified || !built.alignment.verified) {
+                blockers += built.file.name + ": build verification is incomplete."
+                return@forEach
+            }
+            if (built.signature.signerCertificateSha256
+                    .map(String::lowercase).toSet() != signers
+            ) {
+                blockers += built.file.name + ": signer mismatch within the set."
+                return@forEach
+            }
+            val file = built.file
+            if (!file.isFile || !file.canRead() || file.length() <= 0L) {
+                blockers += file.name + ": signed output is unavailable."
+                return@forEach
+            }
+            val currentSha = sha256(file, cancellation)
+            if (!currentSha.equals(built.sha256, ignoreCase = true)) {
+                blockers += file.name + ": signed APK changed since build."
+                return@forEach
+            }
+            apks += RepackedRuntimeInstallApk(
+                sourceDisplayName = file.name,
+                signedPath = file.absolutePath,
+                expectedSha256 = currentSha,
+                size = file.length(),
+            )
+        }
+        val total = runCatching {
+            apks.fold(0L) { sum, apk ->
+                Math.addExact(sum, apk.size)
+            }
+        }.getOrElse {
+            blockers += "APK-set total size overflow."
+            0L
+        }
+        return RepackedRuntimeInstallPlan(
+            artifactSha256 = build.artifactSha256,
+            packageName = packageName,
+            signerCertificateSha256 = signers,
+            apks = apks,
+            totalBytes = total,
             blockers = blockers.distinct(),
         )
     }
