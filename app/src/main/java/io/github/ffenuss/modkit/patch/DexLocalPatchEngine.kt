@@ -2,9 +2,7 @@ package io.github.ffenuss.modkit.patch
 
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
-import java.io.BufferedInputStream
 import java.io.File
-import java.io.FileInputStream
 import java.security.MessageDigest
 import java.util.zip.ZipFile
 import org.jf.dexlib2.Opcode
@@ -119,14 +117,6 @@ object DexLocalPatchEngine {
     private const val MAX_METHODS = 350_000
     private const val MAX_DISPLAYED_CANDIDATES = 256
     private val DEX_NAME = Regex("classes(?:[0-9]+)?[.]dex")
-
-    private val excludedClassMarkers = listOf(
-        "billing", "receipt", "purchaseclient", "payment",
-        "authentication", "anticheat", "integrity", "network",
-        "remoteservice", "server", "account", "licensing",
-        "google/android/gms", "android/", "kotlin/",
-        "androidx/", "java/", "unity3d/", "com/google/",
-    )
 
     fun scanApks(
         apkFiles: List<File>,
