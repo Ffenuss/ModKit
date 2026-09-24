@@ -1318,7 +1318,7 @@ fun AutoModScreen(
                         candidate.target.fileOffset != null &&
                         candidate.target.abi != null &&
                         Il2CppPatchTargetBrowser
-                            .isAssemblyCSharp(
+                            .isProjectCode(
                                 candidate.target,
                             )
                 }
@@ -1374,7 +1374,7 @@ fun AutoModScreen(
                         if (projectCodeCount > 0) {
                             Text(
                                 "Код самой игры/приложения " +
-                                    "(Assembly-CSharp): " +
+                                    "(игровые сборки): " +
                                     projectCodeCount +
                                     " подтверждённых методов.",
                                 style =
