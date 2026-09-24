@@ -2,7 +2,13 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.24**
+Current application version: **0.0.26**
+
+## Gameplay categories and direct split installation (0.0.26)
+
+Patch Lab groups native method candidates by gameplay mechanic and distinguishes statically patchable methods, research candidates, metadata-only signals and diagnostics. Game-state hints appear before UI-only methods; category navigation retains selections across categories. A static patch template is **not** a guarantee of gameplay impact.
+
+When an authorized test build consists of one APK, the standard export produces one `.apk` file. When the source game has split APKs, ModKit exports **every signed APK** to its own `Загрузки/ModKit/<package>-<build-time>/` directory instead of unexpectedly producing a ZIP. The primary **Установить игру** action in the finished-build panel and fixed bottom bar sends all splits together through Android PackageInstaller, without manually extracting a ZIP. A ZIP remains an optional explicit backup via the system save picker. Android refuses an in-place update if the original app has a different signing certificate; ModKit must not silently remove the original or its saved data.
 
 ## Product flow
 
