@@ -117,6 +117,9 @@ fun ManualNativePatchSection(
     var showAllDeferred by remember(key) {
         mutableStateOf(false)
     }
+    var showAllActionable by remember(key) {
+        mutableStateOf(false)
+    }
     var queuedDrafts by remember(key) {
         mutableStateOf<List<NativeMutationDraft>>(emptyList())
     }
@@ -307,7 +310,7 @@ fun ManualNativePatchSection(
         findingOpportunitiesError = null
         selectedOpportunityIds = emptySet()
         try {
-            opportunities =
+            val found =
                 withContext(Dispatchers.Default) {
                     GameplayModificationFinder.find(
                         result = analysis,
@@ -320,6 +323,17 @@ fun ManualNativePatchSection(
                             MAX_SUGGESTED_PER_CATEGORY,
                     )
                 }
+            opportunities = found
+            // The normal action path is now scan -> one-tap build. Do not
+            // silently opt users into local purchase-entitlement test patches.
+            selectedOpportunityIds = found
+                .filter {
+                    it.selectable &&
+                        it.category !=
+                            GameplayModificationCategory.OWNER_ENTITLEMENT
+                }
+                .map { it.id }
+                .toSet()
         } catch (failure: Throwable) {
             opportunities = emptyList()
             findingOpportunitiesError =
@@ -1622,10 +1636,34 @@ fun ManualNativePatchSection(
                 )
             } else {
                 Text(
-                    "Можно выбрать сейчас: " +
-                        actionableOpportunities.size,
+                    "Найдено кандидатов: " +
+                        displayedOpportunities.size +
+                        " · подготовлено автоматических изменений: " +
+                        actionableOpportunities.size +
+                        " · требует дополнительных доказательств: " +
+                        deferredOpportunities.size,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Text(
+                    "Проверяемые изменения уже отмечены автоматически, " +
+                        "кроме тестовых локальных entitlement-флагов. " +
+                        "Можно снять ненужные галочки перед сборкой.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Button(
+                    onClick = ::applySelectionAndBuild,
+                    enabled =
+                        selectedOpportunities.isNotEmpty() &&
+                            !busy &&
+                            !externalBusy &&
+                            !findingOpportunities,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "Автоматически собрать выбранные моды (" +
+                            selectedOpportunities.size + ")",
+                    )
+                }
                 OutlinedButton(
                     onClick = {
                         selectedOpportunityIds =
@@ -1658,7 +1696,13 @@ fun ManualNativePatchSection(
                         },
                     )
                 }
-                actionableOpportunities.forEach { opportunity ->
+                val visibleActionable =
+                    if (showAllActionable) {
+                        actionableOpportunities
+                    } else {
+                        actionableOpportunities.take(12)
+                    }
+                visibleActionable.forEach { opportunity ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -1708,6 +1752,23 @@ fun ManualNativePatchSection(
                                 Text("Открыть код")
                             }
                         }
+                    }
+                }
+
+                if (actionableOpportunities.size > 12) {
+                    OutlinedButton(
+                        onClick = { showAllActionable = !showAllActionable },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            if (showAllActionable) {
+                                "Свернуть список готовых модов"
+                            } else {
+                                "Показать остальные готовые (" +
+                                    (actionableOpportunities.size - 12) +
+                                    ")"
+                            },
+                        )
                     }
                 }
 
@@ -2714,4 +2775,4 @@ private fun isManualNativeEligible(
 private const val MAX_VISIBLE_TARGETS = 24
 private const val MAX_SUGGESTED_MODIFICATIONS = 256
 private const val MAX_SUGGESTED_PER_CATEGORY = 32
-private const val MAX_VISIBLE_DEFERRED_MODIFICATIONS = 64
+private const val MAX_VISIBLE_DEFERRED_MODIFICATIONS = 6
