@@ -126,6 +126,32 @@ class GameplayCandidateTriageTest {
     }
 
     @Test
+    fun blockerOverviewSeparatesSharedBodiesUnknownReturnsAndMissingValues() {
+        val shared = candidate("FlickEngine.Health.get_Health").copy(
+            blocker = "Native body общий для 3 metadata-методов",
+        )
+        val unknown = candidate("FlickEngine.Health.get_MaxHealth").copy(
+            blocker = "Не доказана сигнатура return type",
+        )
+        val needsValue = candidate("FlickEngine.CharacterHealth.get_Health").copy(
+            blocker = "Найден числовой параметр, но величина изменения не выбрана",
+        )
+        val overview = summarizeGameplayBlockers(
+            listOf(shared, unknown, needsValue),
+        )
+        assertEquals(3, overview.sumOf { it.count })
+        assertTrue(overview.any {
+            it.label.contains("native body") && it.count == 1
+        })
+        assertTrue(overview.any {
+            it.label.contains("возвращаемый тип") && it.count == 1
+        })
+        assertTrue(overview.any {
+            it.label.contains("числовое значение") && it.count == 1
+        })
+    }
+
+    @Test
     fun displayOnlyMethodIsNotMadeSelectableByTriage() {
         val ui = candidate("FlickEngine.DiskInfoBoxMain.get_MaxHealth")
         assertFalse(ui.selectable)
