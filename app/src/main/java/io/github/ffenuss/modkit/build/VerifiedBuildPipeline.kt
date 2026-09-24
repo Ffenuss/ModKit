@@ -46,6 +46,7 @@ object VerifiedBuildPipeline {
     suspend fun build(
         context: Context,
         stagingOutcome: MutationApplyOutcome,
+        signingIdentity: ApkSigningIdentity? = null,
         cancellation: CancellationSignal,
         progress: ProgressSink,
     ): VerifiedBuildResult {
@@ -55,9 +56,12 @@ object VerifiedBuildPipeline {
         val staging = requireNotNull(stagingOutcome.staging)
         val artifactSha = stagingOutcome.preflight.artifactSha256
 
-        val identity = withContext(Dispatchers.IO) {
-            ModKitSigningIdentityProvider.getOrCreateDevelopmentIdentity()
-        }
+        val identity =
+            signingIdentity
+                ?: withContext(Dispatchers.IO) {
+                    ModKitSigningIdentityProvider
+                        .getOrCreateDevelopmentIdentity()
+                }
         val root = File(
             context.filesDir,
             "patch-build/" + artifactSha,
