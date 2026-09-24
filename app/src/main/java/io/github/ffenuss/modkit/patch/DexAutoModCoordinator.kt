@@ -27,6 +27,14 @@ import kotlinx.coroutines.withContext
  * Bridge from pure DEX method rewriting to the existing verified
  * FILE_REPLACE preflight/staging/alignment/signing/export pipeline.
  */
+data class PreparedDexMutations(
+    val preparation: PatchPreparationPlan,
+    val requests: List<MutationRequest>,
+    val stagingDirectory: File,
+) : java.io.Closeable {
+    override fun close() { stagingDirectory.deleteRecursively() }
+}
+
 object DexAutoModCoordinator {
     private const val MAX_DEX_BYTES = 96L * 1024L * 1024L
 
@@ -70,13 +78,21 @@ object DexAutoModCoordinator {
                 apkFiles = files,
                 developerTestMode = true,
                 cancellation = cancellation,
+                progress = { count, entry ->
+                    progress.publish(EngineProgress(
+                        engineId = "dex.scan", scheduleClass = EngineScheduleClass.TARGETED,
+                        state = RunState.RUNNING, currentTask = "Проверка DEX-методов",
+                        currentArtifact = entry, processed = count.toLong(), total = null,
+                        lastHeartbeatEpochMs = System.currentTimeMillis(),
+                    ))
+                },
             )
         } finally {
             temporaryFiles.forEach(File::delete)
         }
     }
 
-    suspend fun prepareAndApply(
+    suspend fun prepare(
         context: Context,
         target: AnalysisTargetDescriptor,
         analysis: FastAnalysisResult,
@@ -84,7 +100,7 @@ object DexAutoModCoordinator {
         developerTestMode: Boolean,
         cancellation: CancellationSignal,
         progress: ProgressSink,
-    ): MutationApplyOutcome = withContext(Dispatchers.IO) {
+    ): PreparedDexMutations = withContext(Dispatchers.IO) {
         require(selected.isNotEmpty()) { "Выберите хотя бы одно изменение DEX." }
         require(selected.distinctBy { it.id }.size == selected.size) {
             "Выбранные DEX-методы повторяются."
@@ -239,19 +255,25 @@ object DexAutoModCoordinator {
                     .distinct().joinToString("; ")
             }
 
-            MutationApplyCoordinator.apply(
-                context = context,
-                target = target,
-                analysis = analysis,
-                preparation = preparation,
-                requests = requests,
-                cancellation = cancellation,
-                progress = progress,
-            )
+            PreparedDexMutations(preparation, requests, stageRoot)
         } catch (failure: Throwable) {
             stageRoot.deleteRecursively()
             throw failure
         }
+    }
+
+    suspend fun prepareAndApply(
+        context: Context,
+        target: AnalysisTargetDescriptor,
+        analysis: FastAnalysisResult,
+        selected: List<DexLocalOpportunity>,
+        developerTestMode: Boolean,
+        cancellation: CancellationSignal,
+        progress: ProgressSink,
+    ): MutationApplyOutcome = prepare(context, target, analysis, selected,
+        developerTestMode, cancellation, progress).use { dex ->
+        MutationApplyCoordinator.apply(context, target, analysis, dex.preparation,
+            dex.requests, cancellation, progress)
     }
 
     private fun readBounded(input: java.io.InputStream): ByteArray {

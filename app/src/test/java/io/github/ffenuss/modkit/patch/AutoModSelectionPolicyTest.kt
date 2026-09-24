@@ -24,7 +24,7 @@ class AutoModSelectionPolicyTest {
     )
 
     @Test
-    fun preselectsOnlyReadyLocalGameplayModifications() {
+    fun requiresExplicitSelectionEvenForReadyLocalModifications() {
         val found = listOf(
             opportunity("damage", GameplayModificationCategory.DAMAGE),
             opportunity("health", GameplayModificationCategory.SURVIVABILITY),
@@ -36,7 +36,7 @@ class AutoModSelectionPolicyTest {
             opportunity("receipt", GameplayModificationCategory.SENSITIVE_SURFACE),
         )
         assertEquals(
-            setOf("damage", "health", "numeric"),
+            emptySet<String>(),
             AutoModSelectionPolicy.defaultSelectedIds(found),
         )
     }

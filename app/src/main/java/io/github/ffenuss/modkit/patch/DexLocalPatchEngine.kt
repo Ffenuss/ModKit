@@ -60,6 +60,9 @@ data class DexLocalOpportunity(
     val action: DexLocalAction,
     val selectable: Boolean,
     val reason: String,
+    val bodyKind: DexMethodBodyKind = DexMethodBodyKind.UNSUPPORTED,
+    val fieldIdentity: String? = null,
+    val matchedByField: Boolean = false,
 ) {
     val displayName: String
         get() = className.removePrefix("L").removeSuffix(";")
@@ -114,19 +117,18 @@ data class DexLocalRewrite(
 )
 
 /**
- * Scan the base APK plus installed split APKs with explicit CPU/heap limits.
- * A limit produces a visible warning rather than silently claiming no mods.
+ * Scan every method in every supported DEX, independently of UI result counts.
+ * Oversized DEX inputs have an explicit heap-budget warning; cancellation is cooperative.
  */
 object DexLocalPatchEngine {
     private const val MAX_DEX_BYTES = 96L * 1024L * 1024L
-    private const val MAX_METHODS = 350_000
-    private const val MAX_DISPLAYED_CANDIDATES = 256
     private val DEX_NAME = Regex("classes(?:[0-9]+)?[.]dex")
 
     fun scanApks(
         apkFiles: List<File>,
         developerTestMode: Boolean,
         cancellation: CancellationSignal,
+        progress: (Int, String) -> Unit = { _, _ -> },
     ): DexLocalScan {
         val discovered = ArrayList<DexLocalOpportunity>()
         val warnings = ArrayList<String>()
@@ -161,7 +163,7 @@ object DexLocalPatchEngine {
                     }
                     try {
                         val bytes = zip.getInputStream(entry).use { input ->
-                            readBounded(input, MAX_DEX_BYTES)
+                            readBounded(input, MAX_DEX_BYTES, cancellation)
                         }
                         val scan = scanDex(
                             bytes = bytes,
@@ -169,6 +171,7 @@ object DexLocalPatchEngine {
                             dexEntry = entry.name,
                             developerTestMode = developerTestMode,
                             cancellation = cancellation,
+                            progress = { count, name -> progress(methodCount + count, name) },
                         )
                         methodCount += scan.methodsExamined
                         inspectedClasses += scan.classesInspected
@@ -187,14 +190,10 @@ object DexLocalPatchEngine {
                             apk.name + ":" + entry.name + ": " + it
                         }
                         discovered += scan.opportunities
-                    } catch (failure: Throwable) {
+                    } catch (failure: Exception) {
                         if (failure is AnalysisCancelledException) throw failure
                         warnings += apk.name + ":" + entry.name + ": " +
                             (failure.message ?: failure.javaClass.simpleName)
-                    }
-                    if (discovered.size >= MAX_DISPLAYED_CANDIDATES) {
-                        warnings += "Showing the first 256 DEX candidates; narrow the target if needed."
-                        break
                     }
                 }
             }
@@ -203,8 +202,7 @@ object DexLocalPatchEngine {
             opportunities = discovered
                 .distinctBy { it.id }
                 .sortedWith(compareBy<DexLocalOpportunity> { it.category.rank }
-                    .thenBy { it.displayName })
-                .take(MAX_DISPLAYED_CANDIDATES),
+                    .thenBy { it.displayName }),
             warnings = warnings.distinct(),
             dexFilesExamined = dexCount,
             methodsExamined = methodCount,
@@ -228,6 +226,7 @@ object DexLocalPatchEngine {
         dexEntry: String,
         developerTestMode: Boolean,
         cancellation: CancellationSignal,
+        progress: (Int, String) -> Unit = { _, _ -> },
     ): DexLocalScan {
         require(bytes.size.toLong() <= MAX_DEX_BYTES) {
             "DEX exceeds the bounded scanner limit."
@@ -254,11 +253,9 @@ object DexLocalPatchEngine {
                 continue
             }
             for (method in classDef.methods) {
+                checkCancelled(cancellation)
                 methods++
-                if (methods >= MAX_METHODS) {
-                    warnings += "Method scan limit reached; results may be incomplete."
-                    break
-                }
+                if (methods % 256 == 0) progress(methods, dexEntry)
                 val impl = method.implementation
                 if (impl != null) methodsWithCode++
                 val noArgs = method.parameters.isEmpty()
@@ -291,11 +288,13 @@ object DexLocalPatchEngine {
                     )
                 ) rejectedReturnTypes++
                 if (!noArgs || impl == null || impl.registerCount < 1) continue
-                val match = classify(
-                    method.name,
-                    method.returnType,
-                    method.definingClass,
-                ) ?: continue
+                if (sensitiveMethodName(normalizeName(method.name))) continue
+                val body = DexMethodBodyInspector.inspect(method)
+                val nameMatch = classify(method.name, method.returnType, method.definingClass)
+                val fieldMatch = body.field?.let { field ->
+                    classify("get" + field.name, field.type, method.definingClass)
+                }
+                val match = nameMatch ?: fieldMatch ?: continue
                 val id = stableId(apkIndex, dexEntry, method)
                 candidates += DexLocalOpportunity(
                     id = id,
@@ -307,24 +306,23 @@ object DexLocalPatchEngine {
                     originalDexSha256 = sha,
                     category = match.first,
                     action = match.second,
-                    selectable = match.first !in
-                        setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI) ||
-                        developerTestMode,
+                    selectable = body.supportsScalarReplacement &&
+                        (match.first !in setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI) ||
+                            developerTestMode),
                     reason = if (match.first in
                         setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI) &&
                         !developerTestMode) {
                         "Доступно только в тестовом режиме собственной игры или приложения."
                     } else {
-                        "Exact DEX method and return type verified; gameplay effect requires an on-device test."
+                        body.detail + " Эффект в игре ещё не проверен."
                     },
+                    bodyKind = body.kind,
+                    fieldIdentity = body.fieldIdentity,
+                    matchedByField = nameMatch == null && fieldMatch != null,
                 )
-                if (candidates.size >= MAX_DISPLAYED_CANDIDATES) {
-                    warnings += "DEX candidate display cap reached (256)."
-                    break
-                }
             }
-            if (methods >= MAX_METHODS || candidates.size >= MAX_DISPLAYED_CANDIDATES) break
         }
+        progress(methods, dexEntry)
         if (excludedAmbiguousProgressionNames > 0) {
             warnings +=
                 "Пропущено неоднозначных Level/Experience методов: " +
@@ -720,11 +718,12 @@ object DexLocalPatchEngine {
         return DexBackedDexFile(null, bytes)
     }
 
-    private fun readBounded(input: java.io.InputStream, limit: Long): ByteArray {
+    private fun readBounded(input: java.io.InputStream, limit: Long, cancellation: CancellationSignal): ByteArray {
         val out = java.io.ByteArrayOutputStream()
         val buffer = ByteArray(128 * 1024)
         var bytes = 0L
         while (true) {
+            checkCancelled(cancellation)
             val count = input.read(buffer)
             if (count < 0) break
             bytes += count

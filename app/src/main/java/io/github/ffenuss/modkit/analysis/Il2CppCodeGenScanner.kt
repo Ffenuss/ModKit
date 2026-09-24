@@ -56,6 +56,7 @@ data class Il2CppBinaryEvidence(
     val modules: List<Il2CppCodeGenModuleEvidence>,
     val bindings: List<Il2CppMethodBinaryBinding>,
     val blockers: List<String>,
+    val functionIndex: NativeFunctionIndex? = null,
 ) : java.io.Serializable {
     val exactBindingAvailable: Boolean
         get() = bindings.isNotEmpty()
@@ -180,6 +181,10 @@ object Il2CppCodeGenScanner {
             }
 
             val modules = candidate?.modules.orEmpty()
+            val functionIndex = if (modules.isNotEmpty()) {
+                indexFunctions(image, modules, file, cancellation, progress, libraryEntry)
+            } else null
+            if (functionIndex?.complete == false) blockers += "NATIVE_POINTER_CENSUS_INCOMPLETE"
             val bindings = if (modules.isNotEmpty() && metadata.images.isNotEmpty()) {
                 bindMethods(
                     image = image,
@@ -214,7 +219,50 @@ object Il2CppCodeGenScanner {
                 modules = modules,
                 bindings = bindings,
                 blockers = blockers.distinct(),
+                functionIndex = functionIndex,
             )
+        }
+    }
+
+    private fun indexFunctions(
+        image: ElfImage,
+        modules: List<Il2CppCodeGenModuleEvidence>,
+        library: File,
+        cancellation: CancellationSignal,
+        progress: ProgressSink,
+        libraryEntry: String,
+    ): NativeFunctionIndex {
+        val total = modules.sumOf { it.methodPointerCount.toLong() }
+        var examined = 0L
+        var complete = true
+        val output = File(library.parentFile, library.name + ".functions.idx")
+        NativeFunctionIndexWriter(output, cancellation).use { writer ->
+            for (module in modules) {
+                for (slot in 0 until module.methodPointerCount) {
+                    if (cancellation.isCancelled()) throw AnalysisCancelledException()
+                    val address = image.readPointerAtVa(module.methodPointersVirtualAddress +
+                        slot.toLong() * image.pointerSize)
+                    if (address == null) complete = false
+                    else if (address != 0L) {
+                        val offset = image.fileOffsetForVa(address)
+                        if (offset != null && image.isExecutableVa(address)) writer.add(offset)
+                        else complete = false
+                    }
+                    examined++
+                    if (examined % 16_384L == 0L || examined == total) {
+                        progress.publish(EngineProgress(
+                            engineId = "il2cpp.codegen-bind",
+                            scheduleClass = EngineScheduleClass.CONFIRMATION,
+                            state = RunState.RUNNING,
+                            currentTask = "Индекс адресов всех методов",
+                            currentArtifact = libraryEntry,
+                            processed = examined, total = total,
+                            lastHeartbeatEpochMs = System.currentTimeMillis(),
+                        ))
+                    }
+                }
+            }
+            return writer.finish(examined, complete)
         }
     }
 

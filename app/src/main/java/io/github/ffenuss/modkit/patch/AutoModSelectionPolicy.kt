@@ -1,22 +1,7 @@
 package io.github.ffenuss.modkit.patch
 
-/**
- * Ready means the binary method, return type and generated replacement are
- * suitable for preflight. It does not mean the change has been observed to
- * work at runtime. Local entitlement test switches remain opt-in.
- */
+/** A discovered recipe is never consent to select every change. */
 object AutoModSelectionPolicy {
-    fun defaultSelectedIds(
-        opportunities: List<GameplayModificationOpportunity>,
-    ): Set<String> =
-        opportunities
-            .asSequence()
-            .filter {
-                it.selectable &&
-                    !it.replacementHex.isNullOrBlank() &&
-                    it.category != GameplayModificationCategory.OWNER_ENTITLEMENT &&
-                    it.category != GameplayModificationCategory.SENSITIVE_SURFACE
-            }
-            .map { it.id }
-            .toSet()
+    @Suppress("UNUSED_PARAMETER")
+    fun defaultSelectedIds(opportunities: List<GameplayModificationOpportunity>): Set<String> = emptySet()
 }

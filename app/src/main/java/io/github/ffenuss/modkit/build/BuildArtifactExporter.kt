@@ -5,6 +5,12 @@ import android.content.ContentValues
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.provider.DocumentsContract
+import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallPlan
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallApk
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallPlanner
+import io.github.ffenuss.modkit.runtime.VerifiedApkTransfer
 import java.io.BufferedOutputStream
 import java.io.FileInputStream
 import java.io.OutputStream
@@ -60,27 +66,25 @@ object BuildArtifactExporter {
         context: Context,
         result: VerifiedBuildResult,
     ): SavedApkFiles {
-        require(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            "Android 8/9: сохраните комплект через системный выбор папки."
-        }
         validateBuild(result)
-        if (result.files.size == 1) {
-            return SavedApkFiles(
-                destinationDirectory = "Загрузки/ModKit",
-                files = listOf(saveToDownloads(context, result)),
-            )
-        }
+        return saveApkFilesToDownloads(context,
+            RepackedRuntimeInstallPlanner.plan(result, AtomicCancellationSignal()), result.builtAtEpochMs)
+    }
 
-        val plan = ApkSetExportPlanner.plan(
-            packageName = result.installability.packageName,
-            builtAtEpochMs = result.builtAtEpochMs,
-            signedFileNames = result.files.map { it.file.name },
-        )
+    @RequiresApi(Build.VERSION_CODES.Q)
+    fun saveApkFilesToDownloads(
+        context: Context,
+        installPlan: RepackedRuntimeInstallPlan,
+        builtAtEpochMs: Long,
+    ): SavedApkFiles {
+        require(installPlan.ready)
+        val plan = ApkSetExportPlanner.plan(installPlan.packageName, builtAtEpochMs,
+            installPlan.apks.map { it.sourceDisplayName })
         val resolver = context.contentResolver
         val created = mutableListOf<Uri>()
         val saved = mutableListOf<SavedBuildArtifact>()
         try {
-            result.files.zip(plan.fileNames).forEach { (built, filename) ->
+            installPlan.apks.zip(plan.fileNames).forEach { (built, filename) ->
                 val values = ContentValues().apply {
                     put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
                     put(
@@ -123,6 +127,39 @@ object BuildArtifactExporter {
             created.forEach { uri ->
                 runCatching { resolver.delete(uri, null, null) }
             }
+            throw failure
+        }
+    }
+
+    /** Android 8/9 and an explicit folder choice: each split remains a separate APK. */
+    fun writeApkFilesToTree(
+        context: Context,
+        installPlan: RepackedRuntimeInstallPlan,
+        builtAtEpochMs: Long,
+        tree: Uri,
+    ): SavedApkFiles {
+        require(installPlan.ready)
+        val plan = ApkSetExportPlanner.plan(installPlan.packageName, builtAtEpochMs,
+            installPlan.apks.map { it.sourceDisplayName })
+        val resolver = context.contentResolver
+        var parent = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+        val created = mutableListOf<Uri>()
+        try {
+            if (plan.isSplitSet) {
+                parent = requireNotNull(DocumentsContract.createDocument(resolver, parent,
+                    DocumentsContract.Document.MIME_TYPE_DIR, plan.relativeDirectory.substringAfterLast('/')))
+                created += parent
+            }
+            val files = installPlan.apks.zip(plan.fileNames).map { (apk, name) ->
+                val uri = requireNotNull(DocumentsContract.createDocument(resolver, parent,
+                    "application/vnd.android.package-archive", name))
+                created += uri
+                resolver.openOutputStream(uri, "w")!!.use { copyVerified(apk, it) }
+                SavedBuildArtifact(name, uri, apk.size)
+            }
+            return SavedApkFiles("Выбранная папка", files)
+        } catch (failure: Exception) {
+            created.asReversed().forEach { runCatching { DocumentsContract.deleteDocument(resolver, it) } }
             throw failure
         }
     }
@@ -265,21 +302,13 @@ object BuildArtifactExporter {
         built: BuiltApkFile,
         destination: OutputStream,
     ) {
-        val digest = MessageDigest.getInstance("SHA-256")
-        FileInputStream(built.file).buffered(BUFFER_BYTES).use { input ->
-            val buffer = ByteArray(BUFFER_BYTES)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                destination.write(buffer, 0, count)
-                digest.update(buffer, 0, count)
-            }
-        }
-        val actual = digest.digest().joinToString("") {
-            "%02x".format(it.toInt() and 0xff)
-        }
-        require(actual.equals(built.sha256, ignoreCase = true)) {
-            "APK file changed after verification; export cancelled."
+        copyVerified(RepackedRuntimeInstallApk(built.file.name, built.file.absolutePath,
+            built.sha256, built.file.length()), destination)
+    }
+
+    private fun copyVerified(apk: RepackedRuntimeInstallApk, destination: OutputStream) {
+        FileInputStream(apk.signedPath).buffered(BUFFER_BYTES).use { input ->
+            VerifiedApkTransfer.copy(input, destination, apk.size, apk.expectedSha256, AtomicCancellationSignal())
         }
     }
 

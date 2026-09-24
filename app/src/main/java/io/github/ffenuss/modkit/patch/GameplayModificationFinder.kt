@@ -78,13 +78,13 @@ object GameplayModificationFinder {
         result: FastAnalysisResult,
         preparation: PatchPreparationPlan,
         projectCodeOnly: Boolean = true,
-        limit: Int = 64,
-        perCategoryLimit: Int = 4,
+        limit: Int = Int.MAX_VALUE,
+        perCategoryLimit: Int = Int.MAX_VALUE,
     ): List<GameplayModificationOpportunity> {
-        require(limit in 1..512) {
+        require(limit > 0) {
             "Gameplay modification result limit is out of bounds."
         }
-        require(perCategoryLimit in 1..64) {
+        require(perCategoryLimit > 0) {
             "Gameplay category result limit is out of bounds."
         }
 
@@ -276,8 +276,12 @@ object GameplayModificationFinder {
                         binding?.returnKind
                             ?: Il2CppNativeReturnKind.UNKNOWN
 
-                    val sharedCount =
-                        sharedBodyCounts[
+                    val pointerIndex = result.il2cppBinaryBinding?.evidence
+                        ?.singleOrNull { it.libraryEntry == candidate.artifact }?.functionIndex
+                    val censusCount = pointerIndex?.let { index ->
+                        runCatching { index.lookup(candidate.offset)?.references ?: 0 }.getOrDefault(0)
+                    }
+                    val sharedCount = censusCount ?: sharedBodyCounts[
                             bodyKey(
                                 candidate.artifact,
                                 candidate.offset,
