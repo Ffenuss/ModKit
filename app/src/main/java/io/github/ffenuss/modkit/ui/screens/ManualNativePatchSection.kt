@@ -44,6 +44,7 @@ import io.github.ffenuss.modkit.analysis.nativecode.AArch64MethodAnalyzer
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.AArch64ScalarReturnEncoder
 import io.github.ffenuss.modkit.patch.GameplayCandidateTriage
+import io.github.ffenuss.modkit.patch.summarizeGameplayBlockers
 import io.github.ffenuss.modkit.patch.GameplayModificationCategory
 import io.github.ffenuss.modkit.patch.GameplayModificationFinder
 import io.github.ffenuss.modkit.patch.GameplayModificationOpportunity
@@ -1705,6 +1706,20 @@ fun ManualNativePatchSection(
                                 ". Это гипотезы для приоритетного анализа.",
                             style = MaterialTheme.typography.bodySmall,
                         )
+                    }
+                    val blockers =
+                        summarizeGameplayBlockers(focusedDeferred)
+                    if (blockers.isNotEmpty()) {
+                        Text(
+                            "Почему остальные пока без галочек:",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        blockers.take(5).forEach { reason ->
+                            Text(
+                                "• " + reason.label + ": " + reason.count,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
             }
