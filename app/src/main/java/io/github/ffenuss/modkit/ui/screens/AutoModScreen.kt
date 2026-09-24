@@ -16,6 +16,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,6 +55,7 @@ import io.github.ffenuss.modkit.runtime.AndroidRepackedRuntimeInstaller
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallPlanner
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallReadiness
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallReadinessState
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallStatusStore
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -133,6 +135,20 @@ fun AutoModScreen(
     var dexRetry by remember(result.index.artifactSha256) {
         mutableStateOf(0)
     }
+    var builtInstallBusy by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
+    }
+    var builtInstallReadiness by remember(result.index.artifactSha256) {
+        mutableStateOf<RepackedRuntimeInstallReadiness?>(null)
+    }
+    var builtInstallNote by remember(result.index.artifactSha256) {
+        mutableStateOf<String?>(null)
+    }
+    var builtInstallSessionId by remember(result.index.artifactSha256) {
+        mutableStateOf<Int?>(null)
+    }
+    val installStatus by RepackedRuntimeInstallStatusStore.status.collectAsState()
+
 
     fun prepareChanges() {
         if (preparing || building || runtimeMenuBusy) return
@@ -230,6 +246,9 @@ fun AutoModScreen(
         error = null
         progress = null
         buildResult = null
+        builtInstallReadiness = null
+        builtInstallNote = null
+        builtInstallSessionId = null
 
         scope.launch {
             try {
@@ -255,6 +274,83 @@ fun AutoModScreen(
     fun buildApk() {
         val staged = stagingOutcome ?: return
         startBuild(staged)
+    }
+
+    fun installBuiltPackage() {
+        val built = buildResult ?: return
+        if (builtInstallBusy || preparing || building || dexApplying) return
+
+        val signal = AtomicCancellationSignal()
+        cancellation = signal
+        builtInstallBusy = true
+        builtInstallNote = null
+        builtInstallReadiness = null
+        builtInstallSessionId = null
+
+        scope.launch {
+            try {
+                val installPlan = withContext(Dispatchers.IO) {
+                    RepackedRuntimeInstallPlanner.plan(
+                        build = built,
+                        cancellation = signal,
+                    )
+                }
+                require(installPlan.ready) {
+                    installPlan.blockers.firstOrNull()
+                        ?: "Готовый APK не прошёл install preflight."
+                }
+                val readiness =
+                    AndroidRepackedRuntimeInstaller.inspectReadiness(
+                        context = context,
+                        plan = installPlan,
+                    )
+                builtInstallReadiness = readiness
+                when (readiness.state) {
+                    RepackedRuntimeInstallReadinessState
+                        .READY_NEW_INSTALL,
+                    RepackedRuntimeInstallReadinessState
+                        .READY_TEST_SIGNER_UPDATE -> {
+                        val submission = withContext(Dispatchers.IO) {
+                            AndroidRepackedRuntimeInstaller.submit(
+                                context = context,
+                                plan = installPlan,
+                                cancellation = signal,
+                            )
+                        }
+                        builtInstallSessionId = submission.sessionId
+                        builtInstallNote =
+                            "Android получил APK-set (" +
+                                submission.apkCount +
+                                " файлов). Подтверди системный запрос установки."
+                    }
+                    RepackedRuntimeInstallReadinessState
+                        .UNKNOWN_SOURCES_PERMISSION_REQUIRED -> {
+                        builtInstallNote =
+                            "Разреши установку из ModKit в настройках Android " +
+                                "и нажми «Установить» ещё раз."
+                        context.startActivity(
+                            AndroidRepackedRuntimeInstaller
+                                .unknownSourcesSettingsIntent(context),
+                        )
+                    }
+                    RepackedRuntimeInstallReadinessState
+                        .INSTALLED_SIGNATURE_CONFLICT -> {
+                        builtInstallNote =
+                            "Установленная версия подписана другим ключом. " +
+                                "Перед удалением сохрани игровые данные: " +
+                                "Android не разрешает обновление поверх неё."
+                    }
+                }
+            } catch (_: AnalysisCancelledException) {
+                builtInstallNote = "Установка отменена."
+            } catch (failure: Throwable) {
+                builtInstallNote =
+                    failure.message ?: failure.javaClass.simpleName
+            } finally {
+                builtInstallBusy = false
+                if (cancellation === signal) cancellation = null
+            }
+        }
     }
 
     fun applySelectedDexChanges() {
@@ -1306,6 +1402,68 @@ fun AutoModScreen(
                             "Подпись: автоматический тестовый ключ ModKit",
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        Button(
+                            onClick = ::installBuiltPackage,
+                            enabled =
+                                !builtInstallBusy &&
+                                    !building &&
+                                    !preparing &&
+                                    !dexApplying,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (builtInstallBusy) "Проверяем и устанавливаем…"
+                                else if (built.files.size == 1) "Установить собранный APK"
+                                else "Установить весь APK-set (" +
+                                    built.files.size + ")",
+                            )
+                        }
+                        builtInstallNote?.let { message ->
+                            Text(
+                                message,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        val readiness = builtInstallReadiness
+                        if (
+                            readiness?.state ==
+                                RepackedRuntimeInstallReadinessState
+                                    .INSTALLED_SIGNATURE_CONFLICT
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    context.startActivity(
+                                        AndroidRepackedRuntimeInstaller
+                                            .uninstallConflictIntent(
+                                                readiness.packageName,
+                                            ),
+                                    )
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Открыть системное удаление оригинала")
+                            }
+                            Text(
+                                "Удаление может стереть сохранения. " +
+                                    "ModKit не удаляет оригинал автоматически.",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (
+                            builtInstallSessionId != null &&
+                            installStatus.sessionId ==
+                                builtInstallSessionId
+                        ) {
+                            Text(
+                                "Установка Android: " +
+                                    installStatus.kind.name +
+                                    " · " +
+                                    installStatus.message.orEmpty(),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+
                         Text(
                             "Android не установит этот APK поверх версии с другой подписью. " +
                                 "Перед заменой оригинала сохраните свои данные.",
