@@ -73,6 +73,12 @@ object VerifiedBuildPipeline {
 
         val built = mutableListOf<BuiltApkFile>()
         try {
+            withContext(Dispatchers.IO) {
+                BuildStoragePreflight.verify(
+                    outputFiles = staging.outputFiles,
+                    destination = root,
+                )
+            }
             staging.outputFiles.forEachIndexed { index, unsigned ->
                 checkCancelled(cancellation)
                 val aligned = File(alignedDir, unsigned.name)
