@@ -52,6 +52,85 @@ class GameplayModificationFinderTest {
     }
 
     @Test
+    fun exactPlayerMaxHealthGetterReceivesAutomaticTypedTestValue() {
+        val target = target(
+            token = 0x06000470,
+            name = "get_MaxHealth",
+            offset = 0x4700,
+            declaringType = "FlickEngine.CharacterSheetHealth",
+            imageName = "FlickEngineAssembly.dll",
+        )
+        val found = GameplayModificationFinder.find(
+            result = result(
+                target = target,
+                returnKind = Il2CppNativeReturnKind.FLOAT32,
+            ),
+            preparation = preparation(target),
+        ).single()
+
+        assertEquals(
+            GameplayModificationCategory.SURVIVABILITY,
+            found.category,
+        )
+        assertEquals(
+            GameplayMutationAction.FORCE_SCALAR_DEFAULT,
+            found.action,
+        )
+        assertTrue(found.selectable)
+        assertTrue(found.replacementHex.orEmpty().isNotBlank())
+        assertTrue(found.title.contains("999"))
+        assertTrue(found.evidenceSummary.contains("эффект в игре не подтверждён"))
+    }
+
+    @Test
+    fun visualMaxHealthGetterRemainsDiscoveryOnly() {
+        val target = target(
+            token = 0x06000471,
+            name = "get_MaxHealth",
+            offset = 0x4710,
+            declaringType = "FlickEngine.DiskInfoBoxMain",
+            imageName = "FlickEngineAssembly.dll",
+        )
+        val found = GameplayModificationFinder.find(
+            result = result(
+                target = target,
+                returnKind = Il2CppNativeReturnKind.FLOAT32,
+            ),
+            preparation = preparation(target),
+        ).single()
+
+        assertFalse(found.selectable)
+        assertEquals(
+            GameplayMutationAction.DISCOVERY_ONLY,
+            found.action,
+        )
+    }
+
+    @Test
+    fun unknownFloatWidthNeverReceivesNumericAutopatch() {
+        val target = target(
+            token = 0x06000472,
+            name = "get_MaxHealth",
+            offset = 0x4720,
+            declaringType = "FlickEngine.CharacterSheetHealth",
+            imageName = "FlickEngineAssembly.dll",
+        )
+        val found = GameplayModificationFinder.find(
+            result = result(
+                target = target,
+                returnKind = Il2CppNativeReturnKind.FLOATING_POINT,
+            ),
+            preparation = preparation(target),
+        ).single()
+
+        assertFalse(found.selectable)
+        assertEquals(
+            GameplayMutationAction.DISCOVERY_ONLY,
+            found.action,
+        )
+    }
+
+    @Test
     fun thirdPartyRuntimeIsNotMistakenForDedicatedGameAssembly() {
         val target = target(
             token = 0x06000012,
