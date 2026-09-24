@@ -65,6 +65,10 @@ object DexScanDiagnosticReport {
             appendLine("Gameplay name signals: " + scan.semanticNamesMatched)
             appendLine("Parameter/return type mismatches: " +
                 scan.rejectedReturnTypes)
+            appendLine(
+                "Ambiguous Level/Experience names excluded: " +
+                    scan.excludedAmbiguousProgressionNames,
+            )
             appendLine("Actionable candidates: " + scan.opportunities.size)
             appendLine("Conclusion: " + scan.explanation)
             appendLine()
