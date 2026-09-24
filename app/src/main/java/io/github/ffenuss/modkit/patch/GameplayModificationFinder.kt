@@ -537,6 +537,12 @@ object GameplayModificationFinder {
                     }
                         .thenBy { it.category.priority }
                         .thenBy {
+                            // Under the per-category result cap, show likely
+                            // game state before HUD/display-only methods.
+                            // This changes ranking, not proof of behavior.
+                            GameplayCandidateTriage.role(it).priority
+                        }
+                        .thenBy {
                             it.targetDisplayName.lowercase()
                         },
                 )
