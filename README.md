@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.22**
+Current application version: **0.0.23**
 
 ## Product flow
 
@@ -43,6 +43,12 @@ If a target yields zero selectable modifications, ModKit now reports how many DE
 Method matching now includes more explicit local names for health/HP, invulnerability, stamina, ammunition, movement, no-clip, cooldowns, XP, level, inventory capacity and debug flags in self-authored apps. Library namespace matching was corrected so game packages containing `/android/` are no longer discarded. This increases coverage for unobfuscated DEX apps; it cannot resolve heavily obfuscated or fully native game logic automatically.
 
 Build retries now use unique output directories and no longer overwrite earlier signed results. The finished-build screen supports saving an APK or split APK ZIP directly to Downloads/ModKit (Android 10+) or through Android's system document picker on older phones.
+
+## Automatic signed APK export (0.0.23)
+
+After a verified Patch Lab build completes, ModKit now saves the signed result to **Downloads/ModKit/** without a separate tap on Android 10 or later. For split-package targets this is a single `*-apk-set.zip` containing every signed split APK, SHA256SUMS.txt, and the build report; a lone base.apk must not be installed as though it were the complete game. The status panel at the top of AutoMod shows whether the APKs are still being signed, being saved, or ready, with the exported filename. Export failure is reported separately without invalidating an already verified build. Android 8/9 continues to use the system save picker.
+
+The original installed app is not silently uninstalled. ModKit's testing certificate may conflict with the original developer's signing certificate; back up local saves before replacing any app. A successfully signed APK does not guarantee the selected code modifications behave as intended.
 
 ## One-tap IL2CPP APK builds (0.0.22)
 
