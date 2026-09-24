@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.18**
+Current application version: **0.0.19**
 
 ## Product flow
 
@@ -36,6 +36,20 @@ Purchase receipt verification, Google Play Billing APIs, account authentication,
 
 After selecting supported modifications, ModKit verifies the exact binary target, stages the changes, aligns and signs the output automatically with its local AndroidKeyStore test key, then verifies the resulting APK. This does not preserve the source APK signature; Android may require uninstalling an existing copy signed with a different key. Back up game data first.
 
+## Automatic Android DEX modifications (0.0.19)
+
+ModKit now supports a second executable mutation backend for ordinary Android applications and games with DEX code. After FAST analysis, the AutoMod screen scans `classes.dex`, `classes2.dex` and other DEX files inside the base APK and installed splits without repeating the full APK deep-index pass. It identifies exact class/method signatures, offers supported modifications as independent checkboxes, and explains which method and return value will change.
+
+Current concrete local DEX changes include proven Boolean gameplay toggles (for example invincibility, movement permission, infinite stamina and cooldown state), selected integer health/ammo/stamina getters and float movement-speed getters. Local Full/Premium Boolean getters are only selectable when the developer explicitly enables the own-game test mode. A method-name match is not proof of a gameplay effect: in-app behavior still requires testing.
+
+For a supported selection, ModKit reopens and revalidates the original APK-set, checks the exact method identity and DEX SHA-256, rewrites the selected methods using dexlib2, reparses the resulting DEX and feeds full DEX entry replacements through the same FILE_REPLACE mutation preflight, verified staging, ZIP alignment, APK signing, mutation diff verification, installability checks and post-build reanalysis used by the existing IL2CPP backend. Multiple selected DEX methods across base/split APKs are supported.
+
+The rebuilt single APK or entire split APK-set can now be installed from the finished-build screen using Android PackageInstaller, with explicit Android confirmation. If the installed original has another signing certificate, ModKit explains the conflict and can open the system uninstall page at the user's request; it never uninstalls the original automatically. **Back up local game saves before uninstalling.**
+
+DEX scanning and rewriting are intentionally bounded to 96 MiB per DEX entry and 350,000 scanned methods. Unsupported DEX formats, inconclusive return types, obfuscated methods, missing assets, compiled Mono assemblies, unsupported native ABIs and server-authoritative entitlements are reported as limitations rather than silently advertised as successful modifications. A local APK edit cannot forge a server-verified purchase.
+
+DEX reading and writing uses `org.smali:dexlib2:2.5.2`, published under the BSD 3-Clause License ([Maven Central](https://central.sonatype.com/artifact/org.smali/dexlib2/2.5.2)).
+
 ## Installed games and applications
 
 The installed-package picker has two explicit modes:
@@ -67,6 +81,9 @@ The dumper does not require root access.
 - single-pass archive inventory;
 - target SHA-256 binding;
 - validated DEX / ELF / WASM / IL2CPP metadata probes;
+- bounded Android DEX method discovery, multi-method exact rewrite and executable output verification;
+- test-mode local Full/Premium getter discovery for own games;
+- Android PackageInstaller flow for the finished APK and split APK-set;
 - multi-label runtime fingerprinting;
 - demand-driven engine routing plan;
 - process-scoped analysis state;
