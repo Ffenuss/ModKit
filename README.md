@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.17**
+Current application version: **0.0.18**
 
 ## Product flow
 
@@ -28,13 +28,13 @@ APK
 
 Version 0.0.16 removes the root-oriented user flow from ModKit. The main application no longer exposes Root Process Lab or the root sandbox, and the manifest no longer declares the floating root overlay services or their foreground/overlay permissions.
 
-## Owner entitlement test mode
+## Local Full / Premium testing
 
-For installed applications owned by the developer, ModKit can verify an owner-provided PKCS12/JKS signing key against the certificate that signed the source APK. The keystore and password are processed locally and are not persisted.
+After selecting an installed game and running static analysis, ModKit lists detected changes in Patch Lab. Exact Unity/IL2CPP Boolean methods such as `get_IsFullVersion`, `isPremium` or `hasEntitlement` can be selected as local `true` patches without entering an alias, a keystore password, or passing an APK signer check. The original content must already exist in the package: a local flag cannot download missing characters or skins.
 
-After the signer matches, exact Unity/IL2CPP Boolean entitlement getters such as `get_IsFullVersion` or equivalent Full/Premium/Owned checks may be offered as owner-only `true` patches. Receipt validation, Billing APIs, authentication, anti-cheat and server-backed purchase flows remain analysis-only and are not converted into automatic bypass patches.
+Purchase receipt verification, Google Play Billing APIs, account authentication, anti-cheat and server-backed entitlements remain diagnostics rather than automatic patches.
 
-When an owner identity has been verified, the verified build pipeline uses that same signing identity for the rebuilt APK. Otherwise ModKit keeps using its local test signer.
+After selecting supported modifications, ModKit verifies the exact binary target, stages the changes, aligns and signs the output automatically with its local AndroidKeyStore test key, then verifies the resulting APK. This does not preserve the source APK signature; Android may require uninstalling an existing copy signed with a different key. Back up game data first.
 
 ## Installed games and applications
 
