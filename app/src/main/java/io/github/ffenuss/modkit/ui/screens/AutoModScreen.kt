@@ -130,6 +130,9 @@ fun AutoModScreen(
     var dexShowAll by remember(result.index.artifactSha256) {
         mutableStateOf(false)
     }
+    var dexRetry by remember(result.index.artifactSha256) {
+        mutableStateOf(0)
+    }
 
     fun prepareChanges() {
         if (preparing || building || runtimeMenuBusy) return
@@ -460,7 +463,7 @@ fun AutoModScreen(
     val hasDex =
         analysisResult.index.entries.any { it.format == BinaryFormat.DEX }
 
-    LaunchedEffect(analysisResult.index.artifactSha256, hasDex) {
+    LaunchedEffect(analysisResult.index.artifactSha256, hasDex, dexRetry) {
         if (hasDex && dexScan == null && !dexLoading) {
             val signal = AtomicCancellationSignal()
             dexLoading = true
@@ -830,6 +833,7 @@ fun AutoModScreen(
                                 onClick = {
                                     dexScan = null
                                     dexLoading = false
+                                    dexRetry++
                                 },
                             ) {
                                 Text("Повторить поиск DEX")
