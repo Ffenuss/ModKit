@@ -1,5 +1,11 @@
 package io.github.ffenuss.modkit.ui.screens
 
+import android.app.Activity
+import android.content.Intent
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -148,6 +154,112 @@ fun AutoModScreen(
         mutableStateOf<Int?>(null)
     }
     val installStatus by RepackedRuntimeInstallStatusStore.status.collectAsState()
+
+    var buildSaveBusy by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
+    }
+    var buildSaveMessage by remember(result.index.artifactSha256) {
+        mutableStateOf<String?>(null)
+    }
+    var buildPendingSafSave by remember(result.index.artifactSha256) {
+        mutableStateOf<VerifiedBuildResult?>(null)
+    }
+    val saveBuildFilePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { activityResult ->
+        val pending = buildPendingSafSave
+        buildPendingSafSave = null
+        val destination = activityResult.data?.data
+        if (
+            activityResult.resultCode == Activity.RESULT_OK &&
+            destination != null &&
+            pending != null
+        ) {
+            buildSaveBusy = true
+            buildSaveMessage = null
+            scope.launch {
+                try {
+                    val saved = withContext(Dispatchers.IO) {
+                        BuildArtifactExporter.writeToUri(
+                            context = context,
+                            result = pending,
+                            destination = destination,
+                        )
+                    }
+                    buildSaveMessage =
+                        "Готовый файл сохранён в выбранную папку · " +
+                            saved.bytesWritten + " байт."
+                } catch (failure: Throwable) {
+                    buildSaveMessage =
+                        "Не удалось сохранить: " +
+                            (failure.message ?: failure.javaClass.simpleName)
+                } finally {
+                    buildSaveBusy = false
+                }
+            }
+        } else if (pending != null) {
+            buildSaveMessage = "Сохранение файла отменено."
+        }
+    }
+
+    fun chooseBuildDestination(built: VerifiedBuildResult) {
+        if (buildSaveBusy || buildPendingSafSave != null) return
+        buildPendingSafSave = built
+        buildSaveMessage = null
+        val mimeType =
+            if (built.files.size == 1) {
+                "application/vnd.android.package-archive"
+            } else {
+                "application/zip"
+            }
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = mimeType
+            putExtra(
+                Intent.EXTRA_TITLE,
+                BuildArtifactExporter.proposedFileName(built),
+            )
+            addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        }
+        try {
+            saveBuildFilePicker.launch(intent)
+        } catch (failure: Throwable) {
+            buildPendingSafSave = null
+            buildSaveMessage =
+                failure.message ?: "Системный выбор папки недоступен."
+        }
+    }
+
+    fun saveBuildToDownloads(built: VerifiedBuildResult) {
+        if (buildSaveBusy || buildPendingSafSave != null) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            chooseBuildDestination(built)
+            return
+        }
+        buildSaveBusy = true
+        buildSaveMessage = null
+        scope.launch {
+            try {
+                val saved = withContext(Dispatchers.IO) {
+                    BuildArtifactExporter.saveToDownloads(
+                        context = context,
+                        result = built,
+                    )
+                }
+                buildSaveMessage =
+                    "Сохранено в Downloads/ModKit/: " + saved.fileName +
+                        " · " + saved.bytesWritten + " байт."
+            } catch (failure: Throwable) {
+                buildSaveMessage =
+                    "Не удалось сохранить: " +
+                        (failure.message ?: failure.javaClass.simpleName) +
+                        ". Можно выбрать другую папку."
+            } finally {
+                buildSaveBusy = false
+            }
+        }
+    }
+
 
 
     fun prepareChanges() {
@@ -1402,6 +1514,55 @@ fun AutoModScreen(
                             "Подпись: автоматический тестовый ключ ModKit",
                             style = MaterialTheme.typography.bodySmall,
                         )
+                        Button(
+                            onClick = { saveBuildToDownloads(built) },
+                            enabled =
+                                !buildSaveBusy &&
+                                    !building &&
+                                    !preparing &&
+                                    !dexApplying,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(
+                                if (buildSaveBusy) {
+                                    "Сохраняем на устройство…"
+                                } else if (Build.VERSION.SDK_INT >=
+                                    Build.VERSION_CODES.Q
+                                ) {
+                                    if (built.files.size == 1) {
+                                        "Сохранить APK в Downloads/ModKit"
+                                    } else {
+                                        "Сохранить APK-set ZIP в Downloads/ModKit"
+                                    }
+                                } else {
+                                    "Сохранить через системный выбор папки"
+                                },
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = { chooseBuildDestination(built) },
+                            enabled =
+                                !buildSaveBusy &&
+                                    !building &&
+                                    !preparing &&
+                                    !dexApplying &&
+                                    buildPendingSafSave == null,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Выбрать другую папку")
+                        }
+                        buildSaveMessage?.let { message ->
+                            Text(
+                                message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color =
+                                    if (message.startsWith("Не удалось")) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
+                            )
+                        }
                         Button(
                             onClick = ::installBuiltPackage,
                             enabled =
