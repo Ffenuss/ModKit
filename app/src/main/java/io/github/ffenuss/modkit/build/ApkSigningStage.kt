@@ -4,6 +4,7 @@ import com.android.apksig.ApkSigner
 import com.android.apksig.ApkVerifier
 import java.io.File
 import java.security.MessageDigest
+import java.security.Signature
 
 data class ApkSignatureVerification(
     val verified: Boolean,
@@ -27,6 +28,15 @@ data class ApkSigningResult(
  * immediately verifies the produced signature before returning the file.
  */
 object ApkSigningStage {
+    /**
+     * ModKit targets the phone it runs on (minSdk 26). Repacked test APKs
+     * use v2/v3 from Android 7 onward. The older v1/JAR signer is unnecessary
+     * and can fail with an AndroidKeyStore non-exportable RSA private key.
+     * Do not claim compatibility with Android 6 or older for test outputs.
+     */
+    internal const val MIN_TEST_APK_API = 24
+    internal const val ENABLE_V1 = false
+
     fun signAndVerify(
         input: File,
         output: File,
@@ -39,6 +49,7 @@ object ApkSigningStage {
         output.delete()
 
         try {
+            requireSigningIdentity(identity)
             val signerConfig = ApkSigner.SignerConfig.Builder(
                 "MODKIT",
                 identity.privateKey,
@@ -48,15 +59,19 @@ object ApkSigningStage {
             ApkSigner.Builder(listOf(signerConfig))
                 .setInputApk(input)
                 .setOutputApk(temp)
-                .setV1SigningEnabled(true)
+                .setMinSdkVersion(MIN_TEST_APK_API)
+                .setV1SigningEnabled(ENABLE_V1)
                 .setV2SigningEnabled(true)
                 .setV3SigningEnabled(true)
                 .setV4SigningEnabled(false)
-                .setCreatedBy("ModKit 0.0.2")
+                .setCreatedBy("ModKit")
                 .build()
                 .sign()
 
-            val verification = verify(temp)
+            val verification = verify(
+                file = temp,
+                minimumCheckedApi = MIN_TEST_APK_API,
+            )
             require(verification.verified) {
                 "Signed APK verification failed: " +
                     (verification.errors.firstOrNull() ?: "unknown signature error")
@@ -73,16 +88,28 @@ object ApkSigningStage {
                 identityAlias = identity.alias,
                 verification = verification,
             )
-        } catch (failure: Throwable) {
+        } catch (failure: Exception) {
             temp.delete()
             output.delete()
-            throw failure
+            throw IllegalStateException(
+                BuildFailureDetails.describe(
+                    stage = "Подпись APK v2/v3",
+                    artifactName = input.name,
+                    failure = failure,
+                ),
+                failure,
+            )
         }
     }
 
-    fun verify(file: File): ApkSignatureVerification {
+    fun verify(
+        file: File,
+        minimumCheckedApi: Int? = null,
+    ): ApkSignatureVerification {
         require(file.isFile && file.canRead()) { "APK is unavailable." }
-        val result = ApkVerifier.Builder(file).build().verify()
+        val builder = ApkVerifier.Builder(file)
+        minimumCheckedApi?.let(builder::setMinCheckedPlatformVersion)
+        val result = builder.build().verify()
         return ApkSignatureVerification(
             verified = result.isVerified,
             v1 = result.isVerifiedUsingV1Scheme,
@@ -97,6 +124,40 @@ object ApkSigningStage {
             warnings = result.warnings.map { it.toString() },
             errors = result.errors.map { it.toString() },
         )
+    }
+
+    /**
+     * Check the key/certificate pair on a 32-byte message before processing a
+     * multi-hundred-megabyte asset split. Reveals a JCA provider/key failure
+     * at the start rather than after the APK has been fully repackaged.
+     */
+    private fun requireSigningIdentity(identity: ApkSigningIdentity) {
+        val certificate =
+            identity.certificates.firstOrNull()
+                ?: error("У ключа ModKit отсутствует сертификат.")
+        try {
+            val payload = "ModKit signer preflight".toByteArray(Charsets.UTF_8)
+            val signature = Signature.getInstance("SHA256withRSA")
+            signature.initSign(identity.privateKey)
+            signature.update(payload)
+            val bytes = signature.sign()
+
+            val verifier = Signature.getInstance("SHA256withRSA")
+            verifier.initVerify(certificate.publicKey)
+            verifier.update(payload)
+            require(verifier.verify(bytes)) {
+                "Ключ и сертификат ModKit не совпадают."
+            }
+        } catch (failure: Exception) {
+            throw IllegalStateException(
+                BuildFailureDetails.describe(
+                    stage = "Самопроверка ключа ModKit",
+                    artifactName = null,
+                    failure = failure,
+                ),
+                failure,
+            )
+        }
     }
 
     private fun ByteArray.toHex(): String =
