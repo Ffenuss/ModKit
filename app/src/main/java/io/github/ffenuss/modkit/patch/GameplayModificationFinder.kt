@@ -27,6 +27,7 @@ enum class GameplayModificationCategory(
     DIFFICULTY("Сложность / параметры врагов", 14),
     WORLD("Прыжок / гравитация / время", 15),
     CAMERA("Камера / FOV", 16),
+    OWNER_ENTITLEMENT("Full / Premium — режим владельца", 17),
     SENSITIVE_SURFACE("Billing / auth / anti-cheat", 90),
 }
 
@@ -76,6 +77,7 @@ object GameplayModificationFinder {
         result: FastAnalysisResult,
         preparation: PatchPreparationPlan,
         projectCodeOnly: Boolean = true,
+        ownerEntitlementAuthorized: Boolean = false,
         limit: Int = 64,
         perCategoryLimit: Int = 4,
     ): List<GameplayModificationOpportunity> {
@@ -107,11 +109,20 @@ object GameplayModificationFinder {
                         return@mapNotNull null
                     }
 
-                    val sensitiveKind =
-                        sensitiveSurfaceKind(
+                    val ownerEntitlementLabel =
+                        ownerEntitlementLabel(
                             target = target,
                             methodTokens = methodTokens,
                         )
+                    val sensitiveKind =
+                        if (ownerEntitlementLabel == null) {
+                            sensitiveSurfaceKind(
+                                target = target,
+                                methodTokens = methodTokens,
+                            )
+                        } else {
+                            null
+                        }
                     if (
                         projectCodeOnly &&
                         !Il2CppPatchTargetBrowser
@@ -128,14 +139,19 @@ object GameplayModificationFinder {
                     }
 
                     val category =
-                        if (sensitiveKind == null) {
-                            classify(methodTokens)
-                                ?: return@mapNotNull null
-                        } else {
-                            GameplayModificationCategory
-                                .SENSITIVE_SURFACE
+                        when {
+                            ownerEntitlementLabel != null ->
+                                GameplayModificationCategory
+                                    .OWNER_ENTITLEMENT
+                            sensitiveKind != null ->
+                                GameplayModificationCategory
+                                    .SENSITIVE_SURFACE
+                            else ->
+                                classify(methodTokens)
+                                    ?: return@mapNotNull null
                         }
                     if (
+                        ownerEntitlementLabel == null &&
                         sensitiveKind == null &&
                         !isSemanticallyPlausible(
                             target = target,
@@ -167,6 +183,8 @@ object GameplayModificationFinder {
                         imageName = imageName,
                         methodTokens = methodTokens,
                         category = category,
+                        ownerEntitlementLabel =
+                            ownerEntitlementLabel,
                         sensitiveKind = sensitiveKind,
                     )
                 }
@@ -258,6 +276,94 @@ object GameplayModificationFinder {
                         binding?.returnKind
                             ?: Il2CppNativeReturnKind.UNKNOWN
 
+                    val sharedCount =
+                        sharedBodyCounts[
+                            bodyKey(
+                                candidate.artifact,
+                                candidate.offset,
+                            )
+                        ] ?: 0
+
+                    if (
+                        candidate.ownerEntitlementLabel !=
+                            null
+                    ) {
+                        val action =
+                            GameplayMutationAction.FORCE_TRUE
+                        val preset =
+                            presetForAction(
+                                abi = candidate.abi,
+                                action = action,
+                                returnKind = returnKind,
+                            )
+                        val blocker =
+                            when {
+                                !ownerEntitlementAuthorized ->
+                                    "Автопатч Full/Premium доступен только после " +
+                                        "проверки ключа владельца: сертификат ключа " +
+                                        "должен совпасть с подписью исходного APK."
+                                sharedCount != 1 ->
+                                    "Native body общий для " +
+                                        sharedCount +
+                                        " metadata-методов; автоматический patch заблокирован."
+                                binding == null ->
+                                    "Не доказана сигнатура return type для exact binary target."
+                                returnKind !=
+                                    Il2CppNativeReturnKind
+                                        .BOOLEAN ->
+                                    "Entitlement-кандидат найден, но метод не доказан как Boolean."
+                                preset == null ->
+                                    "Для ABI/Boolean return type нет безопасного preset."
+                                else -> null
+                            }
+                        return@mapNotNull
+                            GameplayModificationOpportunity(
+                                id =
+                                    "owner-entitlement:" +
+                                        target.id,
+                                category =
+                                    GameplayModificationCategory
+                                        .OWNER_ENTITLEMENT,
+                                title =
+                                    "Режим владельца: " +
+                                        candidate
+                                            .ownerEntitlementLabel +
+                                        " → куплено",
+                                targetId = target.id,
+                                targetDisplayName =
+                                    target.displayName,
+                                action = action,
+                                replacementHex =
+                                    preset?.replacementHex,
+                                selectable =
+                                    blocker == null &&
+                                        preset != null,
+                                blocker = blocker,
+                                evidenceSummary =
+                                    "Точная IL2CPP binary-привязка · " +
+                                        (
+                                            if (
+                                                sharedCount ==
+                                                    1
+                                            ) {
+                                                "unique body"
+                                            } else {
+                                                "shared body: " +
+                                                    sharedCount
+                                            }
+                                            ) +
+                                        " · " +
+                                        Il2CppPatchTargetBrowser
+                                            .returnKindLabel(
+                                                returnKind,
+                                            ) +
+                                        " · owner-key gate",
+                                confidence =
+                                    GameplayModificationConfidence
+                                        .EXACT_ACTION,
+                            )
+                    }
+
                     if (candidate.sensitiveKind != null) {
                         return@mapNotNull GameplayModificationOpportunity(
                             id =
@@ -317,14 +423,6 @@ object GameplayModificationFinder {
                             action = action,
                             returnKind = returnKind,
                         )
-                    val sharedCount =
-                        sharedBodyCounts[
-                            bodyKey(
-                                candidate.artifact,
-                                candidate.offset,
-                            )
-                        ] ?: 0
-
                     val blocker =
                         when {
                             sharedCount != 1 ->
@@ -451,6 +549,7 @@ object GameplayModificationFinder {
         val imageName: String,
         val methodTokens: List<String>,
         val category: GameplayModificationCategory,
+        val ownerEntitlementLabel: String?,
         val sensitiveKind: String?,
     )
 
@@ -696,6 +795,58 @@ object GameplayModificationFinder {
         return generatedTypeMarkers.any {
             it in type
         }
+    }
+
+    private fun ownerEntitlementLabel(
+        target: EvidenceTarget,
+        methodTokens: List<String>,
+    ): String? {
+        if (
+            !Il2CppPatchTargetBrowser
+                .isAssemblyCSharp(target)
+        ) {
+            return null
+        }
+
+        val semantic =
+            stripAccessor(methodTokens)
+        if (semantic.isEmpty()) return null
+
+        val blocked =
+            ownerEntitlementBlockedPhrases.any {
+                containsPhrase(semantic, it)
+            }
+        if (blocked) return null
+
+        val matched =
+            ownerEntitlementPhrases
+                .firstOrNull { (_, phrases) ->
+                    phrases.any {
+                        containsPhrase(
+                            semantic,
+                            it,
+                        )
+                    }
+                }
+                ?: return null
+
+        val booleanShape =
+            methodTokens.firstOrNull() in
+                ownerEntitlementBooleanPrefixes ||
+                isGetter(
+                    target.memberName.orEmpty(),
+                ) ||
+                containsPhrase(
+                    semantic,
+                    p("full version"),
+                ) ||
+                containsPhrase(
+                    semantic,
+                    p("premium unlocked"),
+                )
+        if (!booleanShape) return null
+
+        return matched.first
     }
 
     fun sensitiveSurfaceLabel(
@@ -1073,6 +1224,69 @@ object GameplayModificationFinder {
             "ifixbaseproxy",
             "<>",
             "generatedproxy",
+        )
+
+    private val ownerEntitlementBooleanPrefixes =
+        setOf(
+            "is",
+            "has",
+            "get",
+            "owns",
+            "can",
+        )
+
+    private val ownerEntitlementPhrases =
+        listOf(
+            "Full version" to
+                listOf(
+                    p("full version"),
+                    p("is full"),
+                    p("has full"),
+                ),
+            "Premium" to
+                listOf(
+                    p("premium"),
+                    p("is premium"),
+                    p("has premium"),
+                    p("premium unlocked"),
+                ),
+            "Pro version" to
+                listOf(
+                    p("pro version"),
+                    p("is pro"),
+                    p("has pro"),
+                ),
+            "Purchase entitlement" to
+                listOf(
+                    p("is purchased"),
+                    p("has purchased"),
+                    p("is owned"),
+                    p("owns product"),
+                ),
+            "Entitlement" to
+                listOf(
+                    p("is entitled"),
+                    p("has entitlement"),
+                    p("is unlocked"),
+                ),
+        )
+
+    private val ownerEntitlementBlockedPhrases =
+        listOf(
+            p("buy"),
+            p("purchase"),
+            p("restore purchase"),
+            p("consume"),
+            p("acknowledge"),
+            p("checkout"),
+            p("billing"),
+            p("receipt"),
+            p("validate"),
+            p("verify"),
+            p("server"),
+            p("login"),
+            p("authentication"),
+            p("anti cheat"),
         )
 
     private val sensitiveSurfacePhrases =
