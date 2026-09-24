@@ -252,14 +252,20 @@ fun AutoModScreen(
         scope.launch {
             try {
                 val saved = withContext(Dispatchers.IO) {
-                    BuildArtifactExporter.saveToDownloads(
+                    BuildArtifactExporter.saveApkFilesToDownloads(
                         context = context,
                         result = built,
                     )
                 }
                 buildSaveMessage =
-                    "Сохранено в Downloads/ModKit/: " + saved.fileName +
-                        " · " + saved.bytesWritten + " байт."
+                    "Готово: " + saved.destinationDirectory +
+                        " · сохранено APK: " + saved.files.size +
+                        " (" + saved.totalBytes / 1_048_576L + " МиБ). " +
+                        if (saved.files.size > 1) {
+                            "Чтобы установить игру, нажмите «Установить игру» в ModKit."
+                        } else {
+                            "Можно установить этот APK через ModKit."
+                        }
             } catch (failure: Throwable) {
                 buildSaveMessage =
                     "Не удалось сохранить: " +
@@ -395,17 +401,23 @@ fun AutoModScreen(
                             "Downloads/ModKit; не закрывайте ModKit…"
                     try {
                         val saved = withContext(Dispatchers.IO) {
-                            BuildArtifactExporter.saveToDownloads(
+                            BuildArtifactExporter.saveApkFilesToDownloads(
                                 context = context,
                                 result = built,
                             )
                         }
                         buildSaveMessage =
-                            "Готово: Downloads/ModKit/" +
-                                saved.fileName +
-                                " (" +
-                                (saved.bytesWritten / 1_048_576L) +
-                                " МиБ)."
+                            "Готово: " + saved.destinationDirectory +
+                                " · " + saved.files.size +
+                                " APK (" +
+                                (saved.totalBytes / 1_048_576L) +
+                                " МиБ). " +
+                                if (saved.files.size > 1) {
+                                    "Нажмите «Установить игру» — Android " +
+                                        "получит весь комплект одновременно."
+                                } else {
+                                    "APK можно установить прямо из ModKit."
+                                }
                     } catch (exportFailure: Throwable) {
                         buildSaveMessage =
                             "APK собран, подписан и проверен, но сохранение " +
@@ -837,7 +849,8 @@ fun AutoModScreen(
     Scaffold(
         bottomBar = {
             if (building || buildSaveBusy || error != null ||
-                buildSaveMessage != null
+                buildSaveMessage != null || buildResult != null ||
+                builtInstallBusy || builtInstallNote != null
             ) {
                 Surface(
                     tonalElevation = 5.dp,
@@ -901,6 +914,82 @@ fun AutoModScreen(
                                 Text(
                                     "Все APK подписаны. Сохраняем в Загрузки/ModKit…",
                                 )
+                            }
+                            buildResult != null -> {
+                                val built = requireNotNull(buildResult)
+                                Text(
+                                    if (builtInstallBusy) {
+                                        "Передаём комплект APK в Android…"
+                                    } else if (built.files.size > 1) {
+                                        "Готова игра: " + built.files.size +
+                                            " подписанных APK"
+                                    } else {
+                                        "Готовый подписанный APK"
+                                    },
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                if (builtInstallBusy) {
+                                    LinearProgressIndicator(
+                                        Modifier.fillMaxWidth(),
+                                    )
+                                }
+                                Button(
+                                    onClick = ::installBuiltPackage,
+                                    enabled =
+                                        !builtInstallBusy &&
+                                            !preparing &&
+                                            !dexApplying,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        if (builtInstallBusy) {
+                                            "Проверка и установка…"
+                                        } else if (built.files.size > 1) {
+                                            "Установить игру (" +
+                                                built.files.size + " APK)"
+                                        } else {
+                                            "Установить APK"
+                                        },
+                                    )
+                                }
+                                buildSaveMessage?.let { message ->
+                                    Text(
+                                        message,
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                builtInstallNote?.let { message ->
+                                    Text(
+                                        message,
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                        color =
+                                            if (
+                                                builtInstallReadiness?.state ==
+                                                    RepackedRuntimeInstallReadinessState
+                                                        .INSTALLED_SIGNATURE_CONFLICT
+                                            ) {
+                                                MaterialTheme.colorScheme.error
+                                            } else {
+                                                MaterialTheme.colorScheme
+                                                    .onSurfaceVariant
+                                            },
+                                    )
+                                }
+                                if (
+                                    builtInstallReadiness?.state ==
+                                        RepackedRuntimeInstallReadinessState
+                                            .INSTALLED_SIGNATURE_CONFLICT
+                                ) {
+                                    Text(
+                                        "Не удаляйте оригинал без резервной " +
+                                            "копии сохранений.",
+                                        color = MaterialTheme.colorScheme.error,
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                             }
                             buildSaveMessage != null -> {
                                 Text(
@@ -1014,6 +1103,22 @@ fun AutoModScreen(
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             if (!building && !buildSaveBusy) {
+                                Button(
+                                    onClick = ::installBuiltPackage,
+                                    enabled = !builtInstallBusy,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        if (builtInstallBusy) {
+                                            "Передача Android…"
+                                        } else if (built.files.size > 1) {
+                                            "Установить игру (" +
+                                                built.files.size + " APK)"
+                                        } else {
+                                            "Установить APK"
+                                        },
+                                    )
+                                }
                                 OutlinedButton(
                                     onClick = {
                                         saveBuildToDownloads(built)
@@ -1021,7 +1126,23 @@ fun AutoModScreen(
                                     enabled = buildPendingSafSave == null,
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
-                                    Text("Повторно сохранить готовый файл")
+                                    Text(
+                                        if (built.files.size > 1) {
+                                            "Сохранить все APK в папку"
+                                        } else {
+                                            "Сохранить APK в Загрузки"
+                                        },
+                                    )
+                                }
+                                builtInstallNote?.let { message ->
+                                    Text(
+                                        message,
+                                        color =
+                                            MaterialTheme.colorScheme
+                                                .onSurfaceVariant,
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                    )
                                 }
                             }
                         }
@@ -1895,7 +2016,15 @@ fun AutoModScreen(
                         Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
-                        Text("Готовый APK", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (built.files.size > 1) {
+                                "Готовая игра · " + built.files.size +
+                                    " APK (split-комплект)"
+                            } else {
+                                "Готовый APK"
+                            },
+                            fontWeight = FontWeight.SemiBold,
+                        )
                         Text(
                             "Подпись: автоматический тестовый ключ ModKit",
                             style = MaterialTheme.typography.bodySmall,
@@ -1918,7 +2047,7 @@ fun AutoModScreen(
                                     if (built.files.size == 1) {
                                         "Сохранить APK в Downloads/ModKit"
                                     } else {
-                                        "Сохранить APK-set ZIP в Downloads/ModKit"
+                                        "Сохранить все APK в отдельную папку"
                                     }
                                 } else {
                                     "Сохранить через системный выбор папки"
@@ -1935,7 +2064,13 @@ fun AutoModScreen(
                                     buildPendingSafSave == null,
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("Выбрать другую папку")
+                            Text(
+                                if (built.files.size > 1) {
+                                    "Сохранить резервный ZIP в выбранную папку"
+                                } else {
+                                    "Выбрать другую папку"
+                                },
+                            )
                         }
                         buildSaveMessage?.let { message ->
                             Text(
@@ -1960,9 +2095,9 @@ fun AutoModScreen(
                         ) {
                             Text(
                                 if (builtInstallBusy) "Проверяем и устанавливаем…"
-                                else if (built.files.size == 1) "Установить собранный APK"
-                                else "Установить весь APK-set (" +
-                                    built.files.size + ")",
+                                else if (built.files.size == 1) "Установить APK"
+                                else "Установить игру (" +
+                                    built.files.size + " APK)",
                             )
                         }
                         builtInstallNote?.let { message ->
