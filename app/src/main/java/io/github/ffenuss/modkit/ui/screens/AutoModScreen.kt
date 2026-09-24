@@ -526,10 +526,16 @@ fun AutoModScreen(
                         builtInstallNote =
                             "Требуется разрешение Android на установку из ModKit. " +
                                 "После возврата автоматически повторим попытку."
-                        installPermissionLauncher.launch(
+                        // ActivityResult must launch Settings in the current
+                        // task; NEW_TASK would return a premature cancelled
+                        // result before the user grants the permission.
+                        val settingsIntent =
                             AndroidRepackedRuntimeInstaller
-                                .unknownSourcesSettingsIntent(context),
-                        )
+                                .unknownSourcesSettingsIntent(context)
+                        settingsIntent.flags =
+                            settingsIntent.flags and
+                                Intent.FLAG_ACTIVITY_NEW_TASK.inv()
+                        installPermissionLauncher.launch(settingsIntent)
                     }
                     RepackedRuntimeInstallReadinessState
                         .INSTALLED_SIGNATURE_CONFLICT -> {
