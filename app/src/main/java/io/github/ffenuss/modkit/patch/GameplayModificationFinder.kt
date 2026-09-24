@@ -39,6 +39,7 @@ enum class GameplayMutationAction(
     FORCE_TRUE("arm64-return-one"),
     FORCE_ZERO("arm64-return-zero"),
     FORCE_TWO(null),
+    FORCE_SCALAR_DEFAULT(null),
     DISCOVERY_ONLY(null),
 }
 
@@ -411,12 +412,34 @@ object GameplayModificationFinder {
                         action == GameplayMutationAction.DISCOVERY_ONLY &&
                             !numericCandidate
 
+                    val numericAuto =
+                        if (numericCandidate &&
+                            binding != null &&
+                            sharedCount == 1
+                        ) {
+                            autoNumericPreset(
+                                target = target,
+                                category = category,
+                                returnKind = returnKind,
+                                abi = candidate.abi,
+                            )
+                        } else {
+                            null
+                        }
+                    val effectiveAction =
+                        if (numericAuto != null) {
+                            GameplayMutationAction.FORCE_SCALAR_DEFAULT
+                        } else {
+                            action
+                        }
                     val preset =
                         presetForAction(
                             abi = candidate.abi,
                             action = action,
                             returnKind = returnKind,
                         )
+                    val replacementHex =
+                        numericAuto?.replacementHex ?: preset?.replacementHex
                     val blocker =
                         when {
                             sharedCount != 1 ->
@@ -425,7 +448,7 @@ object GameplayModificationFinder {
                                     " metadata-методов; автоматический patch заблокирован."
                             binding == null ->
                                 "Не доказана сигнатура return type для exact binary target."
-                            numericCandidate ->
+                            numericCandidate && numericAuto == null ->
                                 numericBlocker(
                                     category = category,
                                     returnKind = returnKind,
@@ -436,23 +459,28 @@ object GameplayModificationFinder {
                                     "» по имени и контексту класса. " +
                                     "Готового безопасного автопатча нет; " +
                                     "откройте код метода для ручного изменения."
-                            preset == null ->
+                            replacementHex == null ->
                                 "Для ABI/return type пока нет безопасного готового preset."
                             else -> null
                         }
                     val selectable =
                         blocker == null &&
-                            preset != null &&
-                            action != GameplayMutationAction.DISCOVERY_ONLY
+                            replacementHex != null &&
+                            effectiveAction != GameplayMutationAction.DISCOVERY_ONLY
 
                     GameplayModificationOpportunity(
                         id =
                             category.name.lowercase() + ":" +
                                 target.id + ":" +
-                                action.name.lowercase(),
+                                effectiveAction.name.lowercase(),
                         category = category,
                         title =
-                            if (semanticOnlyCandidate) {
+                            if (numericAuto != null) {
+                                category.title + ": " +
+                                    readableMethod(memberName) +
+                                    "() → " + numericAuto.valueLabel +
+                                    " (тест)"
+                            } else if (semanticOnlyCandidate) {
                                 category.title +
                                     ": кандидат " +
                                     readableMethod(memberName) +
@@ -466,8 +494,8 @@ object GameplayModificationFinder {
                             },
                         targetId = target.id,
                         targetDisplayName = target.displayName,
-                        action = action,
-                        replacementHex = preset?.replacementHex,
+                        action = effectiveAction,
+                        replacementHex = replacementHex,
                         selectable = selectable,
                         blocker = blocker,
                         evidenceSummary =
@@ -482,7 +510,12 @@ object GameplayModificationFinder {
                                     ) +
                                 " · " +
                                 Il2CppPatchTargetBrowser
-                                    .returnKindLabel(returnKind),
+                                    .returnKindLabel(returnKind) +
+                                if (numericAuto != null) {
+                                    " · рекомендованное тестовое значение, эффект в игре не подтверждён"
+                                } else {
+                                    ""
+                                },
                         confidence =
                             when {
                                 numericCandidate ->
@@ -1053,10 +1086,75 @@ object GameplayModificationFinder {
                 category.title + ": " +
                     readableMethod(methodName) +
                     "() → 2.0"
+            GameplayMutationAction.FORCE_SCALAR_DEFAULT ->
+                category.title + ": автоматическое числовое значение " +
+                    readableMethod(methodName)
             GameplayMutationAction.DISCOVERY_ONLY ->
                 category.title + ": найден числовой параметр " +
                     readableMethod(methodName)
         }
+
+    private data class AutoNumericPreset(
+        val valueLabel: String,
+        val replacementHex: String,
+    )
+
+    /**
+     * Suggest a numeric default only when BOTH the proven return type and
+     * the gameplay-owner class have a narrow match. A DiskInfoBox/
+     * HUD/Upgrade getter is not the player's underlying health or stamina.
+     * Every proposed body must still pass the normal exact-offset and
+     * minimum-length preflight before a staged copy can be written.
+     */
+    private fun autoNumericPreset(
+        target: EvidenceTarget,
+        category: GameplayModificationCategory,
+        returnKind: Il2CppNativeReturnKind,
+        abi: String,
+    ): AutoNumericPreset? {
+        if (!abi.equals("arm64-v8a", ignoreCase = true)) return null
+        if (returnKind !in listOf(
+                Il2CppNativeReturnKind.INTEGER,
+                Il2CppNativeReturnKind.FLOAT32,
+                Il2CppNativeReturnKind.FLOAT64,
+            )
+        ) return null
+        val method = target.memberName.orEmpty()
+        if (!isGetter(method)) return null
+        val name = stripAccessor(semanticMethodTokens(method))
+        val owner = tokenizeIdentifier(target.declaringType.orEmpty())
+        if (owner.any {
+                it in setOf(
+                    "ui", "hud", "display", "info", "box", "text",
+                    "tooltip", "upgrade", "trinket", "enemy",
+                )
+            }
+        ) return null
+        val playerContext = owner.any {
+            it in setOf("character", "player", "hero")
+        }
+        if (!playerContext) return null
+
+        val value = when {
+            category == GameplayModificationCategory.SURVIVABILITY &&
+                name == p("max health") &&
+                "health" in owner -> "999"
+            category == GameplayModificationCategory.STAMINA &&
+                name == p("max stamina") &&
+                "stamina" in owner -> "999"
+            category == GameplayModificationCategory.STAMINA &&
+                name == p("max energy") &&
+                "energy" in owner -> "999"
+            else -> return null
+        }
+        val hex = runCatching {
+            AArch64ScalarReturnEncoder.encodeHex(
+                returnKind = returnKind,
+                valueText = value,
+            )
+        }.getOrNull() ?: return null
+        return AutoNumericPreset(valueLabel = value, replacementHex = hex)
+    }
 
     private fun numericBlocker(
         category: GameplayModificationCategory,
