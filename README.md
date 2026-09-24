@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.16**
+Current application version: **0.0.17**
 
 ## Product flow
 
@@ -27,6 +27,14 @@ APK
 ```
 
 Version 0.0.16 removes the root-oriented user flow from ModKit. The main application no longer exposes Root Process Lab or the root sandbox, and the manifest no longer declares the floating root overlay services or their foreground/overlay permissions.
+
+## Owner entitlement test mode
+
+For installed applications owned by the developer, ModKit can verify an owner-provided PKCS12/JKS signing key against the certificate that signed the source APK. The keystore and password are processed locally and are not persisted.
+
+After the signer matches, exact Unity/IL2CPP Boolean entitlement getters such as `get_IsFullVersion` or equivalent Full/Premium/Owned checks may be offered as owner-only `true` patches. Receipt validation, Billing APIs, authentication, anti-cheat and server-backed purchase flows remain analysis-only and are not converted into automatic bypass patches.
+
+When an owner identity has been verified, the verified build pipeline uses that same signing identity for the rebuilt APK. Otherwise ModKit keeps using its local test signer.
 
 ## Installed games and applications
 
