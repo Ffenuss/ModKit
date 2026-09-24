@@ -480,7 +480,9 @@ fun AutoModScreen(
         val signal = AtomicCancellationSignal()
         cancellation = signal
         builtInstallBusy = true
-        builtInstallNote = null
+        builtInstallNote =
+            "Проверяем все APK перед установкой. Большой пакет ресурсов " +
+                "может обрабатываться несколько минут…"
         builtInstallReadiness = null
         builtInstallSessionId = null
 
@@ -512,6 +514,20 @@ fun AutoModScreen(
                                 context = context,
                                 plan = installPlan,
                                 cancellation = signal,
+                                progress = { copied, total, name ->
+                                    val percent =
+                                        if (total > 0) {
+                                            (copied * 100L / total)
+                                                .coerceIn(0L, 100L)
+                                        } else {
+                                            0L
+                                        }
+                                    scope.launch {
+                                        builtInstallNote =
+                                            "Передача Android: " + percent +
+                                                "% · " + name
+                                    }
+                                },
                             )
                         }
                         builtInstallSessionId = submission.sessionId
