@@ -1,6 +1,6 @@
 package io.github.ffenuss.modkit.runtime
 
-import android.Manifest
+import android.content.BroadcastReceiver
 import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
@@ -11,7 +11,6 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import io.github.ffenuss.modkit.MainActivity
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import java.io.BufferedInputStream
@@ -252,13 +251,9 @@ object AndroidRepackedRuntimeInstaller {
             readiness.blockers.firstOrNull()
                 ?: "Repacked runtime install session is not ready."
         }
-        require(
-            context.checkSelfPermission(
-                Manifest.permission.REQUEST_INSTALL_PACKAGES,
-            ) == PackageManager.PERMISSION_GRANTED,
-        ) {
-            "REQUEST_INSTALL_PACKAGES permission is not declared/granted."
-        }
+        // Android 8+ install authorization is governed by the special
+        // per-source setting checked by canRequestPackageInstalls() above,
+        // not a dangerous runtime permission dialog.
 
         plan.apks.forEach {
             verifyApkStillMatches(
@@ -314,9 +309,12 @@ object AndroidRepackedRuntimeInstaller {
                     }
                 }
 
+                // A non-exported explicit BroadcastReceiver can receive the
+                // PackageInstaller result without starting a second activity
+                // or losing the user's Patch Lab navigation state.
                 val callbackIntent = Intent(
                     context,
-                    MainActivity::class.java,
+                    RepackedInstallStatusReceiver::class.java,
                 ).apply {
                     action = ACTION_INSTALL_STATUS
                     putExtra(
@@ -328,28 +326,29 @@ object AndroidRepackedRuntimeInstaller {
                         plan.packageName,
                     )
                 }
-                val callback = PendingIntent.getActivity(
+                val callback = PendingIntent.getBroadcast(
                     context,
                     sessionId,
                     callbackIntent,
                     PendingIntent.FLAG_UPDATE_CURRENT or
                         PendingIntent.FLAG_MUTABLE,
                 )
+                // Publish BEFORE commit: the system may return an immediate
+                // failure, which must not be overwritten by stale "waiting".
+                RepackedRuntimeInstallStatusStore.publish(
+                    context,
+                    RepackedRuntimeInstallStatus(
+                        kind =
+                            RepackedRuntimeInstallStatusKind.SESSION_COMMITTED,
+                        sessionId = sessionId,
+                        packageName = plan.packageName,
+                        message =
+                            "Все APK переданы Android. Ожидаем системное подтверждение установки.",
+                    ),
+                )
                 session.commit(callback.intentSender)
                 committed = true
             }
-
-            RepackedRuntimeInstallStatusStore.publish(
-                context,
-                RepackedRuntimeInstallStatus(
-                    kind =
-                        RepackedRuntimeInstallStatusKind.SESSION_COMMITTED,
-                    sessionId = sessionId,
-                    packageName = plan.packageName,
-                    message =
-                        "PackageInstaller session committed; waiting for Android user confirmation.",
-                ),
-            )
             return RepackedRuntimeInstallSubmission(
                 sessionId = sessionId,
                 packageName = plan.packageName,
@@ -551,6 +550,45 @@ object RepackedRuntimeInstallStatusHandler {
             )
             setPackage(resolved.packageName)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+    }
+}
+
+/**
+ * Receives PackageInstaller callbacks even when MainActivity is in the
+ * background. The manifest must keep this receiver non-exported; the mutable
+ * explicit PendingIntent belongs only to our own PackageInstaller session.
+ */
+class RepackedInstallStatusReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        try {
+            val confirmation = RepackedRuntimeInstallStatusHandler.handle(
+                context = context.applicationContext,
+                intent = intent,
+            )
+            if (confirmation != null) {
+                context.startActivity(
+                    confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+        } catch (failure: Exception) {
+            RepackedRuntimeInstallStatusStore.publish(
+                context.applicationContext,
+                RepackedRuntimeInstallStatus(
+                    kind = RepackedRuntimeInstallStatusKind.FAILURE,
+                    sessionId = intent.getIntExtra(
+                        PackageInstaller.EXTRA_SESSION_ID,
+                        -1,
+                    ).takeIf { it >= 0 },
+                    packageName = intent.getStringExtra(
+                        PackageInstaller.EXTRA_PACKAGE_NAME,
+                    ),
+                    statusCode = PackageInstaller.STATUS_FAILURE,
+                    message =
+                        "Не удалось открыть системное подтверждение установки: " +
+                            (failure.message ?: failure.javaClass.simpleName),
+                ),
+            )
         }
     }
 }
