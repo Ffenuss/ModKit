@@ -53,6 +53,40 @@ class RepackedRuntimeInstallPlannerTest {
     }
 
     @Test
+    fun aFiveApkUnitySplitPackageIsACompleteInstallPlan() {
+        val root = Files.createTempDirectory("modkit-five-splits-").toFile()
+        try {
+            val names = listOf(
+                "base.apk",
+                "split_UnityDataAssetPack.apk",
+                "split_config.arm64_v8a.apk",
+                "split_gpdeku.apk",
+                "split_gpdeku.config.arm64_v8a.apk",
+            )
+            val files = names.mapIndexed { index, name ->
+                File(root, name).apply {
+                    writeText("signed-split-" + index)
+                }
+            }
+            val plan = RepackedRuntimeInstallPlanner.plan(
+                build = buildResult(
+                    files.mapIndexed { index, file ->
+                        built(names[index], file, SIGNER)
+                    },
+                ),
+                cancellation = AtomicCancellationSignal(),
+            )
+            assertTrue(plan.ready)
+            assertEquals(5, plan.apks.size)
+            assertEquals(names, plan.apks.map { it.sourceDisplayName })
+            assertEquals(files.sumOf { it.length() }, plan.totalBytes)
+            assertEquals(setOf(SIGNER), plan.signerCertificateSha256)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun fileChangedAfterBuildVerificationIsBlocked() {
         val root = Files.createTempDirectory("modkit-install-stale-").toFile()
         try {
