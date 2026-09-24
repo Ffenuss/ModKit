@@ -239,13 +239,18 @@ fun AnalysisScreen(
                                     Modifier.padding(14.dp),
                                     verticalArrangement = Arrangement.spacedBy(5.dp),
                                 ) {
-                                    Text("Выводы", fontWeight = FontWeight.SemiBold)
+                                    Text("Статус технических доказательств", fontWeight = FontWeight.SemiBold)
                                     val summary = graph.summary
                                     Text(
-                                        "Найдено: " + summary.found +
-                                            " · подтверждается: " + summary.confirming +
-                                            " · подтверждено: " + summary.confirmed +
-                                            " · готово: " + summary.ready,
+                                        "Сигналы: " + summary.found +
+                                            " · проверяется: " + summary.confirming +
+                                            " · подтверждённые цели: " + summary.confirmed +
+                                            " · готовые изменения: " + summary.ready,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    Text(
+                                        "Это не количество найденных модов: runtime-сигнатуры " +
+                                            "и точные методы учитываются отдельно от подготовленных изменений.",
                                         style = MaterialTheme.typography.bodySmall,
                                     )
                                     if (summary.runtimeRequired > 0 || summary.couldNotConfirm > 0) {
@@ -275,7 +280,7 @@ fun AnalysisScreen(
                             val projectMethods =
                                 exactIl2Cpp.filter {
                                     Il2CppPatchTargetBrowser
-                                        .isAssemblyCSharp(it)
+                                        .isProjectCode(it)
                                 }
                             Card(Modifier.fillMaxWidth()) {
                                 Column(
@@ -290,11 +295,10 @@ fun AnalysisScreen(
                                     )
                                     if (projectMethods.isNotEmpty()) {
                                         Text(
-                                            "Подтверждён код проекта " +
-                                                "(Assembly-CSharp): " +
+                                            "Подтверждено методов игровых сборок: " +
                                                 projectMethods.size +
-                                                " методов. Именно с него " +
-                                                "Patch Lab начинает выбор изменений.",
+                                                ". Patch Lab ищет в них конкретные игровые " +
+                                                "изменения; это ещё не готовые моды.",
                                             style =
                                                 MaterialTheme
                                                     .typography
@@ -316,8 +320,7 @@ fun AnalysisScreen(
                                         Text(
                                             "Точные IL2CPP-методы найдены: " +
                                                 exactIl2Cpp.size +
-                                                ", но среди них пока не выделен " +
-                                                "Assembly-CSharp как код проекта.",
+                                                ", но проектная игровая сборка пока не выделена.",
                                             style =
                                                 MaterialTheme
                                                     .typography
