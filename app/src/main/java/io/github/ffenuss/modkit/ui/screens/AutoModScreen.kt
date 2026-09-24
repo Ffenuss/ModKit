@@ -1062,6 +1062,50 @@ fun AutoModScreen(
                                     }
                                 }
                                 if (
+                                    builtInstallSessionId != null &&
+                                    installStatus.sessionId == builtInstallSessionId &&
+                                    installStatus.kind ==
+                                        RepackedRuntimeInstallStatusKind.SESSION_COMMITTED
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            try {
+                                                val session =
+                                                    context.packageManager
+                                                        .packageInstaller
+                                                        .getSessionInfo(
+                                                            requireNotNull(
+                                                                builtInstallSessionId,
+                                                            ),
+                                                        )
+                                                val details =
+                                                    session?.createDetailsIntent()
+                                                if (details != null) {
+                                                    context.startActivity(
+                                                        details.addFlags(
+                                                            Intent.FLAG_ACTIVITY_NEW_TASK,
+                                                        ),
+                                                    )
+                                                } else {
+                                                    builtInstallNote =
+                                                        "Android не предоставил окно состояния. " +
+                                                            "Ожидаем результат установки; " +
+                                                            "если он не появится, повтори " +
+                                                            "попытку и сохрани сообщение об ошибке."
+                                                }
+                                            } catch (failure: Exception) {
+                                                builtInstallNote =
+                                                    "Не удалось показать сессию Android: " +
+                                                        (failure.message
+                                                            ?: failure.javaClass.simpleName)
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text("Проверить установку в Android")
+                                    }
+                                }
+                                if (
                                     builtInstallReadiness?.state ==
                                         RepackedRuntimeInstallReadinessState
                                             .INSTALLED_SIGNATURE_CONFLICT
