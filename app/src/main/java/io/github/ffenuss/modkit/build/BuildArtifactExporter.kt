@@ -24,6 +24,17 @@ data class SavedBuildArtifact(
     val bytesWritten: Long,
 )
 
+data class SavedApkFiles(
+    val destinationDirectory: String,
+    val files: List<SavedBuildArtifact>,
+) {
+    val totalBytes: Long get() = files.sumOf { it.bytesWritten }
+}
+
+/**
+ * One APK means a single installable APK. A split application is stored as
+ * several real APK files rather than disguising a ZIP as a universal APK.
+ */
 object BuildArtifactExporter {
     private const val BUFFER_BYTES = 128 * 1024
 
@@ -37,6 +48,83 @@ object BuildArtifactExporter {
         val extension = if (result.files.size == 1) ".apk" else "-apk-set.zip"
         return "ModKit-" + packageName + "-" +
             result.builtAtEpochMs + extension
+    }
+
+    /**
+     * The default user-facing export: .apk files in Downloads, never an
+     * unexpected ZIP. Multi-split sets go into a dedicated directory and
+     * remain installable together from ModKit's PackageInstaller screen.
+     */
+    @RequiresApi(Build.VERSION_CODES.Q)
+    fun saveApkFilesToDownloads(
+        context: Context,
+        result: VerifiedBuildResult,
+    ): SavedApkFiles {
+        require(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            "Android 8/9: сохраните комплект через системный выбор папки."
+        }
+        validateBuild(result)
+        if (result.files.size == 1) {
+            return SavedApkFiles(
+                destinationDirectory = "Загрузки/ModKit",
+                files = listOf(saveToDownloads(context, result)),
+            )
+        }
+
+        val plan = ApkSetExportPlanner.plan(
+            packageName = result.installability.packageName,
+            builtAtEpochMs = result.builtAtEpochMs,
+            signedFileNames = result.files.map { it.file.name },
+        )
+        val resolver = context.contentResolver
+        val created = mutableListOf<Uri>()
+        val saved = mutableListOf<SavedBuildArtifact>()
+        try {
+            result.files.zip(plan.fileNames).forEach { (built, filename) ->
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                    put(
+                        MediaStore.MediaColumns.MIME_TYPE,
+                        "application/vnd.android.package-archive",
+                    )
+                    put(
+                        MediaStore.MediaColumns.RELATIVE_PATH,
+                        Environment.DIRECTORY_DOWNLOADS + "/" +
+                            plan.relativeDirectory + "/",
+                    )
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                val uri = resolver.insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    values,
+                ) ?: error("Android не создал файл: $filename")
+                created += uri
+                val bytes = resolver.openOutputStream(uri, "w")?.use {
+                    output ->
+                    val counting = CountingOutputStream(output)
+                    copyVerified(built, counting)
+                    counting.flush()
+                    counting.total
+                } ?: error("Не удалось записать APK: $filename")
+                saved += SavedBuildArtifact(filename, uri, bytes)
+            }
+            val ready = ContentValues().apply {
+                put(MediaStore.MediaColumns.IS_PENDING, 0)
+            }
+            created.forEach { uri ->
+                require(resolver.update(uri, ready, null, null) == 1) {
+                    "Android не опубликовал один из split APK."
+                }
+            }
+            return SavedApkFiles(plan.displayDirectory, saved)
+        } catch (failure: Throwable) {
+            // No incomplete APK should appear as a finished file. Retain
+            // the verified internal build so the export can be retried.
+            created.forEach { uri ->
+                runCatching { resolver.delete(uri, null, null) }
+            }
+            throw failure
+        }
     }
 
     /**
