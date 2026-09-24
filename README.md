@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.19**
+Current application version: **0.0.20**
 
 ## Product flow
 
@@ -35,6 +35,14 @@ After selecting an installed game and running static analysis, ModKit lists dete
 Purchase receipt verification, Google Play Billing APIs, account authentication, anti-cheat and server-backed entitlements remain diagnostics rather than automatic patches.
 
 After selecting supported modifications, ModKit verifies the exact binary target, stages the changes, aligns and signs the output automatically with its local AndroidKeyStore test key, then verifies the resulting APK. This does not preserve the source APK signature; Android may require uninstalling an existing copy signed with a different key. Back up game data first.
+
+## Scan diagnostics and broader gameplay discovery (0.0.20)
+
+If a target yields zero selectable modifications, ModKit now reports how many DEX classes and methods it inspected, how many belonged to excluded libraries, how many have code, which method names resembled gameplay signals but had unsupported signatures, and how many native libraries were present. The result can be exported as a text-only scan diagnostic without sharing the full APK or game save.
+
+Method matching now includes more explicit local names for health/HP, invulnerability, stamina, ammunition, movement, no-clip, cooldowns, XP, level, inventory capacity and debug flags in self-authored apps. Library namespace matching was corrected so game packages containing `/android/` are no longer discarded. This increases coverage for unobfuscated DEX apps; it cannot resolve heavily obfuscated or fully native game logic automatically.
+
+Build retries now use unique output directories and no longer overwrite earlier signed results. The finished-build screen supports saving an APK or split APK ZIP directly to Downloads/ModKit (Android 10+) or through Android's system document picker on older phones.
 
 ## Automatic Android DEX modifications (0.0.19)
 
