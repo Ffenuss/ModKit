@@ -58,6 +58,7 @@ import io.github.ffenuss.modkit.patch.MutationPreflightResult
 import io.github.ffenuss.modkit.patch.NativeCodeWindow
 import io.github.ffenuss.modkit.patch.NativeMutationDraft
 import io.github.ffenuss.modkit.patch.NativePatchPresetCatalog
+import io.github.ffenuss.modkit.patch.AutoModSelectionPolicy
 import io.github.ffenuss.modkit.patch.PatchBuildSelectionMerger
 import io.github.ffenuss.modkit.patch.PatchPreparationPlan
 import io.github.ffenuss.modkit.patch.PreparationTargetStatus
@@ -326,14 +327,8 @@ fun ManualNativePatchSection(
             opportunities = found
             // The normal action path is now scan -> one-tap build. Do not
             // silently opt users into local purchase-entitlement test patches.
-            selectedOpportunityIds = found
-                .filter {
-                    it.selectable &&
-                        it.category !=
-                            GameplayModificationCategory.OWNER_ENTITLEMENT
-                }
-                .map { it.id }
-                .toSet()
+            selectedOpportunityIds =
+                AutoModSelectionPolicy.defaultSelectedIds(found)
         } catch (failure: Throwable) {
             opportunities = emptyList()
             findingOpportunitiesError =
