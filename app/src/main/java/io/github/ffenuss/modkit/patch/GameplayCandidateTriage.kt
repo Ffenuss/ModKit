@@ -57,7 +57,7 @@ enum class GameplayCandidateRole(
 enum class GameplayPatchReadiness(
     val label: String,
 ) {
-    STATIC_PATCH_READY("Шаблон проверен — тест в игре ещё нужен"),
+    STATIC_PATCH_READY("Есть шаблон — нужен preflight и тест в игре"),
     NEEDS_RESEARCH("Кандидат — нужен анализ"),
     METADATA_SIGNAL("Только metadata — адрес не доказан"),
     DIAGNOSTIC_ONLY("Только просмотр"),
@@ -151,7 +151,7 @@ object GameplayCandidateTriage {
         if (configHints.any { it in owner }) {
             return GameplayCandidateRole.CONFIGURATION
         }
-        if (actionNames.any(method::startsWith)) {
+        if (actionNames.any { method.startsWith(it) }) {
             return GameplayCandidateRole.GAMEPLAY_ACTION
         }
         if (mutates && stateHints.any { it in type }) {
