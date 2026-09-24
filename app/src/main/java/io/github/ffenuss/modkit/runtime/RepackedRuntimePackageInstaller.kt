@@ -450,6 +450,41 @@ object AndroidRepackedRuntimeInstaller {
     }
 }
 
+/**
+ * A validated system confirmation Intent can be reopened by an explicit user
+ * tap if the OEM blocked the immediate launch from a background receiver.
+ * It deliberately does not persist a privileged Parcelable across restarts.
+ */
+object RepackedRuntimeInstallConfirmationStore {
+    @Volatile private var pendingSession: Int? = null
+    @Volatile private var pendingIntent: Intent? = null
+
+    fun remember(sessionId: Int?, confirmation: Intent) {
+        pendingSession = sessionId
+        pendingIntent = Intent(confirmation)
+    }
+
+    fun open(context: Context, sessionId: Int): Boolean {
+        val intent = pendingIntent ?: return false
+        if (pendingSession != sessionId) return false
+        context.startActivity(
+            Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        return true
+    }
+
+    fun clear(sessionId: Int?) {
+        if (pendingSession == sessionId) {
+            pendingIntent = null
+            pendingSession = null
+        }
+    }
+
+    fun availableFor(sessionId: Int?): Boolean =
+        sessionId != null && pendingSession == sessionId &&
+            pendingIntent != null
+}
+
 object RepackedRuntimeInstallStatusHandler {
     fun handle(
         context: Context,
@@ -475,6 +510,14 @@ object RepackedRuntimeInstallStatusHandler {
         )
 
         if (statusCode == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+            val confirmation = trustedSystemConfirmationIntent(
+                context = context,
+                statusIntent = intent,
+            )
+            RepackedRuntimeInstallConfirmationStore.remember(
+                sessionId = sessionId,
+                confirmation = confirmation,
+            )
             RepackedRuntimeInstallStatusStore.publish(
                 context,
                 RepackedRuntimeInstallStatus(
@@ -489,12 +532,10 @@ object RepackedRuntimeInstallStatusHandler {
                             ?: "Android requires user confirmation for test-build installation.",
                 ),
             )
-            return trustedSystemConfirmationIntent(
-                context = context,
-                statusIntent = intent,
-            )
+            return confirmation
         }
 
+        RepackedRuntimeInstallConfirmationStore.clear(sessionId)
         val kind = if (statusCode == PackageInstaller.STATUS_SUCCESS) {
             RepackedRuntimeInstallStatusKind.SUCCESS
         } else {
