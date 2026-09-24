@@ -165,6 +165,45 @@ class DexLocalPatchEngineTest {
     }
 
     @Test
+    fun commonAppLevelAndExperienceMethodsAreNotGameplayPatches() {
+        val cases = listOf(
+            Triple("Lcom/example/logging/Logger;", "getLevel", "I"),
+            Triple("Lcom/example/hr/EmployeeProfile;", "getExperience", "I"),
+            Triple("Lcom/example/media/AudioCodec;", "getCurrentLevel", "I"),
+            Triple("Lcom/example/app/ExperienceManager;", "getXP", "I"),
+        )
+        cases.forEach { (owner, method, returnType) ->
+            val scan = DexLocalPatchEngine.scanDex(
+                syntheticDex(owner, method, returnType),
+                0, "classes.dex", false, signal,
+            )
+            assertTrue(
+                "Ordinary application method should not be patchable: $owner.$method",
+                scan.opportunities.isEmpty(),
+            )
+            assertEquals(0, scan.semanticNamesMatched)
+            assertEquals(1, scan.excludedAmbiguousProgressionNames)
+            assertTrue(
+                scan.explanation.contains("Level/Experience"),
+            )
+        }
+    }
+
+    @Test
+    fun gameNamespaceAloneDoesNotMakeHudLevelGetterARealPlayerStat() {
+        val scan = DexLocalPatchEngine.scanDex(
+            syntheticDex(
+                "Lcom/example/game/HudLevelView;",
+                "getLevel",
+                "I",
+            ),
+            0, "classes.dex", false, signal,
+        )
+        assertTrue(scan.opportunities.isEmpty())
+        assertEquals(1, scan.excludedAmbiguousProgressionNames)
+    }
+
+    @Test
     fun debuggingOwnApplicationRequiresExplicitTestMode() {
         val source = syntheticDex(
             "Lcom/example/android/app/DebugSettings;",
