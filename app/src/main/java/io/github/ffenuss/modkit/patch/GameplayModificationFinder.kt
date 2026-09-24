@@ -27,7 +27,7 @@ enum class GameplayModificationCategory(
     DIFFICULTY("Сложность / параметры врагов", 14),
     WORLD("Прыжок / гравитация / время", 15),
     CAMERA("Камера / FOV", 16),
-    OWNER_ENTITLEMENT("Full / Premium — режим владельца", 17),
+    OWNER_ENTITLEMENT("Full / Premium — локальный тест", 17),
     SENSITIVE_SURFACE("Billing / auth / anti-cheat", 90),
 }
 
@@ -77,7 +77,6 @@ object GameplayModificationFinder {
         result: FastAnalysisResult,
         preparation: PatchPreparationPlan,
         projectCodeOnly: Boolean = true,
-        ownerEntitlementAuthorized: Boolean = false,
         limit: Int = 64,
         perCategoryLimit: Int = 4,
     ): List<GameplayModificationOpportunity> {
@@ -298,10 +297,6 @@ object GameplayModificationFinder {
                             )
                         val blocker =
                             when {
-                                !ownerEntitlementAuthorized ->
-                                    "Автопатч Full/Premium доступен только после " +
-                                        "проверки ключа владельца: сертификат ключа " +
-                                        "должен совпасть с подписью исходного APK."
                                 sharedCount != 1 ->
                                     "Native body общий для " +
                                         sharedCount +
@@ -324,7 +319,7 @@ object GameplayModificationFinder {
                                     GameplayModificationCategory
                                         .OWNER_ENTITLEMENT,
                                 title =
-                                    "Режим владельца: " +
+                                    "Локальная проверка: " +
                                         candidate
                                             .ownerEntitlementLabel +
                                         " → куплено",
@@ -356,7 +351,7 @@ object GameplayModificationFinder {
                                             .returnKindLabel(
                                                 returnKind,
                                             ) +
-                                        " · owner-key gate",
+                                        " · local entitlement test",
                                 confidence =
                                     GameplayModificationConfidence
                                         .EXACT_ACTION,
@@ -850,14 +845,21 @@ object GameplayModificationFinder {
 
     fun sensitiveSurfaceLabel(
         target: EvidenceTarget,
-    ): String? =
-        sensitiveSurfaceKind(
-            target = target,
-            methodTokens =
-                semanticMethodTokens(
-                    target.memberName.orEmpty(),
-                ),
+    ): String? {
+        val tokens = semanticMethodTokens(
+            target.memberName.orEmpty(),
         )
+        if (
+            ownerEntitlementLabel(
+                target = target,
+                methodTokens = tokens,
+            ) != null
+        ) return null
+        return sensitiveSurfaceKind(
+            target = target,
+            methodTokens = tokens,
+        )
+    }
 
     private fun isSensitiveTarget(
         target: EvidenceTarget,
