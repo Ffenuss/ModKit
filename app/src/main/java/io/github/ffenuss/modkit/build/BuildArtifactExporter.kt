@@ -1,13 +1,217 @@
 package io.github.ffenuss.modkit.build
 
 import android.content.Context
+import android.content.ContentValues
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import java.io.BufferedOutputStream
+import java.io.FileInputStream
+import java.io.OutputStream
+import java.security.MessageDigest
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
 import io.github.ffenuss.modkit.BuildConfig
 import java.util.ArrayList
 
+data class SavedBuildArtifact(
+    val fileName: String,
+    val uri: Uri,
+    val bytesWritten: Long,
+)
+
 object BuildArtifactExporter {
+    private const val BUFFER_BYTES = 128 * 1024
+
+    fun proposedFileName(result: VerifiedBuildResult): String {
+        require(result.files.isNotEmpty()) { "No built APK to save." }
+        val packageName = result.installability.packageName
+            .orEmpty()
+            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .take(80)
+            .ifBlank { "application" }
+        val extension = if (result.files.size == 1) ".apk" else "-apk-set.zip"
+        return "ModKit-" + packageName + "-" +
+            result.builtAtEpochMs + extension
+    }
+
+    /**
+     * Store the signed output directly on the device, without a share intent.
+     * API 29+ uses scoped MediaStore Downloads/ModKit. Older devices should
+     * use ACTION_CREATE_DOCUMENT and writeToUri().
+     */
+    fun saveToDownloads(
+        context: Context,
+        result: VerifiedBuildResult,
+    ): SavedBuildArtifact {
+        require(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            "Android 8/9: choose a location with the system file picker."
+        }
+        validateBuild(result)
+        val name = proposedFileName(result)
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(
+                MediaStore.MediaColumns.MIME_TYPE,
+                if (result.files.size == 1) {
+                    "application/vnd.android.package-archive"
+                } else {
+                    "application/zip"
+                },
+            )
+            put(
+                MediaStore.MediaColumns.RELATIVE_PATH,
+                Environment.DIRECTORY_DOWNLOADS + "/ModKit/",
+            )
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val uri = resolver.insert(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            values,
+        ) ?: error("Downloads rejected the APK export.")
+        return try {
+            val bytes = resolver.openOutputStream(uri, "w")?.use { output ->
+                writeArtifact(result, output)
+            } ?: error("Cannot open Downloads for writing.")
+            val published = ContentValues().apply {
+                put(MediaStore.MediaColumns.IS_PENDING, 0)
+            }
+            require(resolver.update(uri, published, null, null) == 1) {
+                "Could not publish the saved APK."
+            }
+            SavedBuildArtifact(name, uri, bytes)
+        } catch (failure: Throwable) {
+            runCatching { resolver.delete(uri, null, null) }
+            throw failure
+        }
+    }
+
+    /**
+     * SAF destination for Android 8/9. Also useful when the user wants to
+     * choose another folder. Never persists any signing key or password.
+     */
+    fun writeToUri(
+        context: Context,
+        result: VerifiedBuildResult,
+        destination: Uri,
+    ): SavedBuildArtifact {
+        validateBuild(result)
+        val bytes = context.contentResolver
+            .openOutputStream(destination, "w")
+            ?.use { writeArtifact(result, it) }
+            ?: error("The chosen destination is not writable.")
+        return SavedBuildArtifact(
+            fileName = proposedFileName(result),
+            uri = destination,
+            bytesWritten = bytes,
+        )
+    }
+
+    private fun validateBuild(result: VerifiedBuildResult) {
+        require(
+            result.files.isNotEmpty() &&
+                result.installability.verified &&
+                result.mutationDiffVerification.verified &&
+                result.files.all {
+                    it.file.isFile &&
+                        it.signature.verified &&
+                        it.alignment.verified
+                },
+        ) {
+            "Only verified, signed build outputs can be saved."
+        }
+    }
+
+    private fun writeArtifact(
+        result: VerifiedBuildResult,
+        output: OutputStream,
+    ): Long {
+        val counting = CountingOutputStream(output)
+        if (result.files.size == 1) {
+            copyVerified(
+                result.files.single(),
+                counting,
+            )
+        } else {
+            ZipOutputStream(
+                BufferedOutputStream(counting, BUFFER_BYTES),
+            ).use { zip ->
+                // APK files are already compressed and signed. ZIP level 0
+                // avoids wasting phone CPU recompressing game assets.
+                zip.setLevel(0)
+                result.files.forEach { built ->
+                    val entryName = built.file.name
+                    require(entryName == entryName.substringAfterLast('/')) {
+                        "Unexpected archive member name."
+                    }
+                    zip.putNextEntry(ZipEntry(entryName))
+                    copyVerified(built, zip)
+                    zip.closeEntry()
+                }
+                zip.putNextEntry(ZipEntry("SHA256SUMS.txt"))
+                zip.write(
+                    result.files.joinToString("\n", postfix = "\n") {
+                        it.sha256 + "  " + it.file.name
+                    }.toByteArray(Charsets.UTF_8),
+                )
+                zip.closeEntry()
+                if (result.reportFile.isFile) {
+                    zip.putNextEntry(ZipEntry("ModKit-build-report.txt"))
+                    FileInputStream(result.reportFile).use { input ->
+                        input.copyTo(zip, BUFFER_BYTES)
+                    }
+                    zip.closeEntry()
+                }
+            }
+        }
+        return counting.total
+    }
+
+    private fun copyVerified(
+        built: BuiltApkFile,
+        destination: OutputStream,
+    ) {
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(built.file).buffered(BUFFER_BYTES).use { input ->
+            val buffer = ByteArray(BUFFER_BYTES)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                destination.write(buffer, 0, count)
+                digest.update(buffer, 0, count)
+            }
+        }
+        val actual = digest.digest().joinToString("") {
+            "%02x".format(it.toInt() and 0xff)
+        }
+        require(actual.equals(built.sha256, ignoreCase = true)) {
+            "APK file changed after verification; export cancelled."
+        }
+    }
+
+    private class CountingOutputStream(
+        private val delegate: OutputStream,
+    ) : OutputStream() {
+        var total: Long = 0
+            private set
+
+        override fun write(value: Int) {
+            delegate.write(value)
+            total++
+        }
+
+        override fun write(data: ByteArray, offset: Int, length: Int) {
+            delegate.write(data, offset, length)
+            total += length
+        }
+
+        override fun flush() = delegate.flush()
+        override fun close() = delegate.close()
+    }
     fun shareReport(
         context: Context,
         result: VerifiedBuildResult,
