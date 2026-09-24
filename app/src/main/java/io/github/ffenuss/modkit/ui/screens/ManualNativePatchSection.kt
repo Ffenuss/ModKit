@@ -1,5 +1,6 @@
 package io.github.ffenuss.modkit.ui.screens
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +43,7 @@ import io.github.ffenuss.modkit.analysis.nativecode.AArch64Disassembler
 import io.github.ffenuss.modkit.analysis.nativecode.AArch64MethodAnalyzer
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.AArch64ScalarReturnEncoder
+import io.github.ffenuss.modkit.patch.GameplayCandidateTriage
 import io.github.ffenuss.modkit.patch.GameplayModificationCategory
 import io.github.ffenuss.modkit.patch.GameplayModificationFinder
 import io.github.ffenuss.modkit.patch.GameplayModificationOpportunity
@@ -117,6 +119,9 @@ fun ManualNativePatchSection(
     }
     var showAllDeferred by remember(key) {
         mutableStateOf(false)
+    }
+    var selectedCandidateCategory by remember(key) {
+        mutableStateOf<GameplayModificationCategory?>(null)
     }
     var showAllActionable by remember(key) {
         mutableStateOf(false)
@@ -357,6 +362,27 @@ fun ManualNativePatchSection(
         actionableOpportunities.filter {
             it.id in selectedOpportunityIds
         }
+    val categoryOverviews =
+        GameplayCandidateTriage.overview(displayedOpportunities)
+    val focusedCategory =
+        selectedCandidateCategory
+            ?.takeIf { chosen ->
+                categoryOverviews.any { it.category == chosen }
+            }
+            ?: categoryOverviews.firstOrNull { it.ready > 0 }?.category
+            ?: categoryOverviews.firstOrNull()?.category
+    val focusedActionable =
+        GameplayCandidateTriage.prioritized(
+            actionableOpportunities.filter {
+                it.category == focusedCategory
+            },
+        )
+    val focusedDeferred =
+        GameplayCandidateTriage.prioritized(
+            deferredOpportunities.filter {
+                it.category == focusedCategory
+            },
+        )
     /**
      * Checkboxes now form a complete operation, not merely a staging queue.
      * Draft materialization is performed off the UI thread; the single
@@ -1615,6 +1641,73 @@ fun ManualNativePatchSection(
                     )
                 }
             }
+            if (!findingOpportunities && categoryOverviews.isNotEmpty()) {
+                Text(
+                    "Игровые механики · " + categoryOverviews.size +
+                        " категорий (листайте в сторону)",
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "В каждой категории показаны отдельно готовые шаблоны и " +
+                        "кандидаты, которым не хватает доказательств. " +
+                        "Число методов не равно количеству рабочих модов.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    categoryOverviews.forEach { overview ->
+                        val label =
+                            overview.category.title + " · " +
+                                overview.ready + "/" + overview.total
+                        if (overview.category == focusedCategory) {
+                            Button(
+                                onClick = {
+                                    selectedCandidateCategory =
+                                        overview.category
+                                    showAllDeferred = false
+                                    showAllActionable = false
+                                },
+                            ) { Text(label) }
+                        } else {
+                            OutlinedButton(
+                                onClick = {
+                                    selectedCandidateCategory =
+                                        overview.category
+                                    showAllDeferred = false
+                                    showAllActionable = false
+                                },
+                            ) { Text(label) }
+                        }
+                    }
+                }
+                categoryOverviews.firstOrNull {
+                    it.category == focusedCategory
+                }?.let { overview ->
+                    Text(
+                        overview.category.title +
+                            ": готовых шаблонов " + overview.ready +
+                            " · требуют исследования " +
+                            overview.needsResearch +
+                            " · диагностических " + overview.diagnostics,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    if (overview.stateCandidates > 0 ||
+                        overview.displayOnlyCandidates > 0
+                    ) {
+                        Text(
+                            "По имени/классу: источников или изменений " +
+                                "состояния " + overview.stateCandidates +
+                                " · методов интерфейса " +
+                                overview.displayOnlyCandidates +
+                                ". Это гипотезы для приоритетного анализа.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
             if (findingOpportunities) {
                 LinearProgressIndicator(
                     Modifier.fillMaxWidth(),
@@ -1640,9 +1733,11 @@ fun ManualNativePatchSection(
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Text(
-                    "Проверяемые изменения уже отмечены автоматически, " +
-                        "кроме тестовых локальных entitlement-флагов. " +
-                        "Можно снять ненужные галочки перед сборкой.",
+                    "По всем категориям выбрано: " +
+                        selectedOpportunities.size +
+                        ". Галочки обозначают статически подготовленные патчи, " +
+                        "не подтверждённый эффект в игре. " +
+                        "Локальные entitlement-флаги не выбираются автоматически.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 Button(
@@ -1693,9 +1788,9 @@ fun ManualNativePatchSection(
                 }
                 val visibleActionable =
                     if (showAllActionable) {
-                        actionableOpportunities
+                        focusedActionable
                     } else {
-                        actionableOpportunities.take(12)
+                        focusedActionable.take(12)
                     }
                 visibleActionable.forEach { opportunity ->
                     Row(
@@ -1722,6 +1817,19 @@ fun ManualNativePatchSection(
                         )
                         Column {
                             Text(opportunity.title)
+                            Text(
+                                "Статус: " +
+                                    GameplayCandidateTriage
+                                        .readiness(opportunity).label,
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                "Роль: " +
+                                    GameplayCandidateTriage
+                                        .role(opportunity).label,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
                             Text(
                                 opportunity.targetDisplayName,
                                 style =
@@ -1750,7 +1858,7 @@ fun ManualNativePatchSection(
                     }
                 }
 
-                if (actionableOpportunities.size > 12) {
+                if (focusedActionable.size > 12) {
                     OutlinedButton(
                         onClick = { showAllActionable = !showAllActionable },
                         modifier = Modifier.fillMaxWidth(),
@@ -1760,7 +1868,7 @@ fun ManualNativePatchSection(
                                 "Свернуть список готовых модов"
                             } else {
                                 "Показать остальные готовые (" +
-                                    (actionableOpportunities.size - 12) +
+                                    (focusedActionable.size - 12) +
                                     ")"
                             },
                         )
@@ -1918,26 +2026,23 @@ fun ManualNativePatchSection(
                 )
             }
 
-            if (deferredOpportunities.isNotEmpty()) {
-                val deferredSummary =
-                    deferredOpportunities
-                        .groupingBy { it.category.title }
-                        .eachCount()
-                        .entries
-                        .sortedBy { it.key }
-                        .joinToString(" · ") {
-                            it.key + ": " + it.value
-                        }
+            if (focusedDeferred.isNotEmpty()) {
                 Text(
-                    "Найдены дополнительные кандидаты без безопасного автопатча: " +
-                        deferredSummary,
+                    "Нужен дополнительный анализ · " +
+                        focusedCategory?.title + " (" +
+                        focusedDeferred.size + ")",
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Это не готовые моды. Разбирайте источники игрового " +
+                        "состояния прежде, чем менять методы отображения.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 val visibleDeferred =
                     if (showAllDeferred) {
-                        deferredOpportunities
+                        focusedDeferred
                     } else {
-                        deferredOpportunities.take(
+                        focusedDeferred.take(
                             MAX_VISIBLE_DEFERRED_MODIFICATIONS,
                         )
                     }
@@ -1949,6 +2054,18 @@ fun ManualNativePatchSection(
                             Arrangement.spacedBy(2.dp),
                     ) {
                         Text(opportunity.title)
+                        val role = GameplayCandidateTriage.role(opportunity)
+                        Text(
+                            "Роль: " + role.label +
+                                " · " +
+                                GameplayCandidateTriage
+                                    .readiness(opportunity).label,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            role.description,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
                         Text(
                             opportunity.targetDisplayName,
                             style =
@@ -1997,7 +2114,7 @@ fun ManualNativePatchSection(
                     }
                 }
                 if (
-                    deferredOpportunities.size >
+                    focusedDeferred.size >
                     MAX_VISIBLE_DEFERRED_MODIFICATIONS
                 ) {
                     OutlinedButton(
@@ -2011,7 +2128,7 @@ fun ManualNativePatchSection(
                                 "Свернуть кандидатов"
                             } else {
                                 "Показать все кандидаты (" +
-                                    deferredOpportunities.size +
+                                    focusedDeferred.size +
                                     ")"
                             },
                         )
