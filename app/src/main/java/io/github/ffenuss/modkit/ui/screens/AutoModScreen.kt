@@ -362,13 +362,14 @@ fun AutoModScreen(
         error = null
         progress = null
         buildResult = null
+        buildSaveMessage = null
         builtInstallReadiness = null
         builtInstallNote = null
         builtInstallSessionId = null
 
         scope.launch {
             try {
-                buildResult = VerifiedBuildPipeline.build(
+                val built = VerifiedBuildPipeline.build(
                     context = context,
                     stagingOutcome = staged,
                     cancellation = signal,
@@ -376,10 +377,49 @@ fun AutoModScreen(
                         scope.launch { progress = update }
                     },
                 )
+                // A completed signed build remains available in ModKit even
+                // if exporting a large APK-set exhausts Downloads storage.
+                buildResult = built
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    buildSaveBusy = true
+                    buildSaveMessage =
+                        "Все " + built.files.size +
+                            " APK подписаны и проверены. Сохраняем в " +
+                            "Downloads/ModKit; не закрывайте ModKit…"
+                    try {
+                        val saved = withContext(Dispatchers.IO) {
+                            BuildArtifactExporter.saveToDownloads(
+                                context = context,
+                                result = built,
+                            )
+                        }
+                        buildSaveMessage =
+                            "Готово: Downloads/ModKit/" +
+                                saved.fileName +
+                                " (" +
+                                (saved.bytesWritten / 1_048_576L) +
+                                " МиБ)."
+                    } catch (exportFailure: Throwable) {
+                        buildSaveMessage =
+                            "APK собран, подписан и проверен, но сохранение " +
+                                "в Downloads не удалось: " +
+                                (exportFailure.message
+                                    ?: exportFailure.javaClass.simpleName) +
+                                ". Освободите место или выберите " +
+                                "другую папку ниже."
+                    } finally {
+                        buildSaveBusy = false
+                    }
+                } else {
+                    buildSaveMessage =
+                        "APK собран и проверен. На Android 8/9 " +
+                            "выберите папку для сохранения ниже."
+                }
             } catch (_: AnalysisCancelledException) {
                 error = "Сборка отменена. Staging APK сохранён."
             } catch (failure: Throwable) {
-                error = failure.message ?: failure.javaClass.simpleName
+                error = "Сборка APK не завершена: " +
+                    (failure.message ?: failure.javaClass.simpleName)
             } finally {
                 building = false
                 cancellation = null
@@ -779,6 +819,81 @@ fun AutoModScreen(
                 "Здесь остаётся только пользовательский поток. Проверка SHA, точной привязки и готовности выполняется внутри.",
                 style = MaterialTheme.typography.bodyMedium,
             )
+        }
+
+        if (building || buildSaveBusy || buildResult != null ||
+            buildSaveMessage != null
+        ) {
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "Результат сборки",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        if (buildSaveBusy) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text(
+                                "Подпись и проверка завершены. Сохраняем в " +
+                                    "Загрузки → ModKit. Для больших игр " +
+                                    "это может занять несколько минут.",
+                            )
+                        } else if (building) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text(
+                                progress?.currentTask
+                                    ?: "Подготовка, подпись и проверка APK…",
+                            )
+                            progress?.currentArtifact?.let {
+                                Text(it)
+                            }
+                            Text(
+                                "Пока выполняется сборка, итогового файла " +
+                                    "в Downloads ещё нет.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        buildSaveMessage?.let { message ->
+                            Text(
+                                message,
+                                color =
+                                    if (message.contains("не удалось")) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
+                            )
+                        }
+                        buildResult?.let { built ->
+                            val qualifier =
+                                if (built.files.size > 1) {
+                                    " · для установки требуется весь набор."
+                                } else {
+                                    ""
+                                }
+                            Text(
+                                "Проверенных APK: " + built.files.size +
+                                    qualifier,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            if (!building && !buildSaveBusy) {
+                                OutlinedButton(
+                                    onClick = {
+                                        saveBuildToDownloads(built)
+                                    },
+                                    enabled = buildPendingSafSave == null,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text("Повторно сохранить готовый файл")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         item {
