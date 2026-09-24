@@ -316,8 +316,7 @@ object GameplayModificationFinder {
                                     "Для ABI/Boolean return type нет безопасного preset."
                                 else -> null
                             }
-                        return@mapNotNull
-                            GameplayModificationOpportunity(
+                        return@mapNotNull GameplayModificationOpportunity(
                                 id =
                                     "owner-entitlement:" +
                                         target.id,
