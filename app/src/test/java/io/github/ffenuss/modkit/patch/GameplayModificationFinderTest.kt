@@ -856,7 +856,7 @@ class GameplayModificationFinderTest {
     }
 
     @Test
-    fun ownerEntitlementIsBlockedUntilOwnerKeyIsVerified() {
+    fun localFullVersionEntitlementIsSelectableWithoutKey() {
         val target =
             target(
                 token = 0x06000340,
@@ -887,18 +887,12 @@ class GameplayModificationFinderTest {
             GameplayMutationAction.FORCE_TRUE,
             opportunity.action,
         )
-        assertFalse(opportunity.selectable)
-        assertTrue(
-            opportunity.blocker.orEmpty()
-                .contains(
-                    "ключа владельца",
-                    ignoreCase = true,
-                ),
-        )
+        assertTrue(opportunity.selectable)
+        assertEquals(null, opportunity.blocker)
     }
 
     @Test
-    fun verifiedOwnerCanEnableBooleanFullVersionEntitlement() {
+    fun localBooleanFullVersionPatchUsesProvenReturnPreset() {
         val target =
             target(
                 token = 0x06000341,
@@ -918,7 +912,6 @@ class GameplayModificationFinderTest {
             GameplayModificationFinder.find(
                 result = result,
                 preparation = preparation(target),
-                ownerEntitlementAuthorized = true,
             ).single()
 
         assertEquals(
@@ -958,7 +951,6 @@ class GameplayModificationFinderTest {
             GameplayModificationFinder.find(
                 result = result,
                 preparation = preparation(target),
-                ownerEntitlementAuthorized = true,
             ).single()
 
         assertEquals(
