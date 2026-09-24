@@ -1,6 +1,13 @@
 package io.github.ffenuss.modkit.runtime
 
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
+import io.github.ffenuss.modkit.analysis.ArtifactIndex
+import io.github.ffenuss.modkit.analysis.ArtifactSource
+import io.github.ffenuss.modkit.analysis.EngineRoutingPlan
+import io.github.ffenuss.modkit.analysis.FastAnalysisResult
+import io.github.ffenuss.modkit.build.BuiltApkFile
+import io.github.ffenuss.modkit.build.MutationDiffVerification
+import io.github.ffenuss.modkit.build.VerifiedBuildResult
 import io.github.ffenuss.modkit.build.ApkSignatureVerification
 import io.github.ffenuss.modkit.build.InstallabilityVerification
 import io.github.ffenuss.modkit.build.ZipAlignmentVerification
@@ -102,6 +109,98 @@ class RepackedRuntimeInstallPlannerTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun verifiedPatchedApkSetUsesTheSameSecureInstallFlow() {
+        val root = Files.createTempDirectory("modkit-verified-install-").toFile()
+        try {
+            val base = File(root, "base.apk").apply {
+                writeText("modkit-signed-base")
+            }
+            val split = File(root, "split.apk").apply {
+                writeText("modkit-signed-split")
+            }
+            val files = listOf(base, split).map { file ->
+                BuiltApkFile(
+                    file = file,
+                    sha256 = sha256(file.readBytes()),
+                    alignment = ZipAlignmentVerification(
+                        verified = true,
+                        records = emptyList(),
+                        blockers = emptyList(),
+                    ),
+                    signature = ApkSignatureVerification(
+                        verified = true,
+                        v1 = true,
+                        v2 = true,
+                        v3 = false,
+                        v31 = false,
+                        signerCertificateSha256 = listOf(SIGNER),
+                        warnings = emptyList(),
+                        errors = emptyList(),
+                    ),
+                )
+            }
+            val result = verifiedBuild(files, root)
+            val plan = RepackedRuntimeInstallPlanner.plan(
+                build = result,
+                cancellation = AtomicCancellationSignal(),
+            )
+            assertTrue(plan.ready)
+            assertEquals(2, plan.apks.size)
+            assertEquals(PACKAGE, plan.packageName)
+            assertEquals(base.length() + split.length(), plan.totalBytes)
+
+            split.appendText("-tampered")
+            val stale = RepackedRuntimeInstallPlanner.plan(
+                build = result,
+                cancellation = AtomicCancellationSignal(),
+            )
+            assertFalse(stale.ready)
+            assertTrue(stale.blockers.any {
+                "changed since build" in it
+            })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    private fun verifiedBuild(
+        files: List<BuiltApkFile>,
+        root: File,
+    ) = VerifiedBuildResult(
+        artifactSha256 = ARTIFACT_SHA,
+        files = files,
+        mutationDiffs = emptyList(),
+        mutationDiffVerification = MutationDiffVerification(
+            verified = true, blockers = emptyList(),
+        ),
+        installability = InstallabilityVerification(
+            verified = true,
+            packageName = PACKAGE,
+            files = emptyList(),
+            blockers = emptyList(),
+        ),
+        signerAlias = "MODKIT",
+        signerCertificateSha256 = listOf(SIGNER),
+        postBuildAnalysis = FastAnalysisResult(
+            index = ArtifactIndex(
+                artifactSha256 = ARTIFACT_SHA,
+                sources = listOf(
+                    ArtifactSource("base.apk", 1, ARTIFACT_SHA),
+                ),
+                entries = emptyList(),
+                detectedAbis = emptySet(),
+                runtimeProfiles = emptyList(),
+            ),
+            routingPlan = EngineRoutingPlan(
+                emptyList(), emptyList(),
+            ),
+            elapsedMs = 0,
+        ),
+        reportFile = File(root, "report.txt"),
+        builtAtEpochMs = 1,
+    )
 
     private fun buildResult(
         apks: List<RepackedRuntimeBuiltApk>,
