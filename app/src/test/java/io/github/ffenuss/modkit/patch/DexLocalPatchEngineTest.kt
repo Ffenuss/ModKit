@@ -1,0 +1,141 @@
+package io.github.ffenuss.modkit.patch
+
+import io.github.ffenuss.modkit.analysis.CancellationSignal
+import java.io.File
+import org.jf.dexlib2.AccessFlags
+import org.jf.dexlib2.Opcode
+import org.jf.dexlib2.Opcodes
+import org.jf.dexlib2.dexbacked.DexBackedDexFile
+import org.jf.dexlib2.immutable.ImmutableClassDef
+import org.jf.dexlib2.immutable.ImmutableDexFile
+import org.jf.dexlib2.immutable.ImmutableMethod
+import org.jf.dexlib2.immutable.ImmutableMethodImplementation
+import org.jf.dexlib2.immutable.instruction.ImmutableInstruction11n
+import org.jf.dexlib2.immutable.instruction.ImmutableInstruction11x
+import org.jf.dexlib2.writer.pool.DexPool
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class DexLocalPatchEngineTest {
+    private val signal = CancellationSignal { false }
+
+    @Test
+    fun fullVersionOnlySelectableForDevelopersOwnTestBuild() {
+        val source = syntheticDex("Ldev/game/FeatureManager;", "get_IsFullVersion", "Z")
+        val locked = DexLocalPatchEngine.scanDex(
+            source, 0, "classes.dex", false, signal,
+        )
+        val eligible = locked.opportunities.single()
+        assertEquals(DexLocalCategory.FULL_VERSION, eligible.category)
+        assertFalse(eligible.selectable)
+
+        val localTest = DexLocalPatchEngine.scanDex(
+            source, 0, "classes.dex", true, signal,
+        )
+        assertTrue(localTest.opportunities.single().selectable)
+    }
+
+    @Test
+    fun rewritesExactBooleanMethodAndParsesProducedDex() {
+        val bytes = syntheticDex(
+            "Ldev/game/Player;", "get_IsInvincible", "Z",
+        )
+        val found = DexLocalPatchEngine.scanDex(
+            bytes, 0, "classes.dex", false, signal,
+        ).opportunities.single()
+
+        val output = File.createTempFile("modkit-dex-test", ".dex")
+        try {
+            val rewrite = DexLocalPatchEngine.rewriteDex(
+                bytes, 0, "classes.dex", listOf(found), output, false, signal,
+            )
+            assertEquals(setOf(found.id), rewrite.appliedIds)
+            val parsed = DexBackedDexFile(null, output.readBytes())
+            val method = parsed.classes.single().methods.single()
+            assertEquals("Z", method.returnType)
+            assertEquals(
+                listOf(Opcode.CONST_4, Opcode.RETURN),
+                method.implementation!!.instructions.map { it.opcode }.toList(),
+            )
+        } finally {
+            output.delete()
+        }
+    }
+
+    @Test
+    fun rejectsModifiedSourceBytesAndSensitiveReceiptMethods() {
+        val original = syntheticDex("Ldev/game/Player;", "get_IsInvincible", "Z")
+        val selected = DexLocalPatchEngine.scanDex(
+            original, 0, "classes.dex", false, signal,
+        ).opportunities.single()
+        val changed = syntheticDex("Ldev/game/Player;", "get_MaxHealth", "I")
+        val output = File.createTempFile("modkit-stale-dex", ".dex")
+        try {
+            val result = runCatching {
+                DexLocalPatchEngine.rewriteDex(
+                    changed, 0, "classes.dex", listOf(selected), output, false, signal,
+                )
+            }
+            assertTrue(result.isFailure)
+        } finally {
+            output.delete()
+        }
+
+        val billing = syntheticDex(
+            "Ldev/game/BillingReceiptValidator;",
+            "get_IsFullVersion", "Z",
+        )
+        assertTrue(
+            DexLocalPatchEngine.scanDex(
+                billing, 0, "classes.dex", true, signal,
+            ).opportunities.isEmpty(),
+        )
+    }
+
+    private fun syntheticDex(
+        declaringClass: String,
+        name: String,
+        returnType: String,
+    ): ByteArray {
+        val method = ImmutableMethod(
+            declaringClass, name, emptyList(),
+            returnType,
+            AccessFlags.PUBLIC.value,
+            emptySet(), emptySet(),
+            ImmutableMethodImplementation(
+                1,
+                listOf(
+                    ImmutableInstruction11n(Opcode.CONST_4, 0, 0),
+                    ImmutableInstruction11x(Opcode.RETURN, 0),
+                ),
+                emptyList(),
+                emptyList(),
+            ),
+        )
+        val clazz = ImmutableClassDef(
+            declaringClass,
+            AccessFlags.PUBLIC.value,
+            "Ljava/lang/Object;",
+            emptyList(),
+            null,
+            emptySet(),
+            emptyList(),
+            emptyList(),
+            emptyList(),
+            listOf(method),
+        )
+        val dex = ImmutableDexFile(
+            Opcodes.forApi(28),
+            listOf(clazz),
+        )
+        val path = File.createTempFile("modkit-test-source", ".dex")
+        try {
+            DexPool.writeTo(path.absolutePath, dex)
+            return path.readBytes()
+        } finally {
+            path.delete()
+        }
+    }
+}
