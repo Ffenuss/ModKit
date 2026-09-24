@@ -13,10 +13,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -91,6 +95,9 @@ fun AutoModScreen(
         mutableStateOf<VerifiedBuildResult?>(null)
     }
     var error by remember(result.index.artifactSha256) { mutableStateOf<String?>(null) }
+    var showErrorDetails by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
+    }
     var exportingReport by remember(result.index.artifactSha256) {
         mutableStateOf(false)
     }
@@ -802,10 +809,137 @@ fun AutoModScreen(
         }
     }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
+    // Long game reports can span thousands of lines. Keep operation feedback
+    // attached to the visible viewport instead of hiding it near the top.
+    LaunchedEffect(error) {
+        if (error?.startsWith("Сборка APK") == true) {
+            showErrorDetails = true
+        }
+    }
+    if (showErrorDetails && error != null) {
+        AlertDialog(
+            onDismissRequest = { showErrorDetails = false },
+            title = { Text("Ошибка ModKit") },
+            text = {
+                Text(
+                    error.orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { showErrorDetails = false },
+                ) { Text("Закрыть") }
+            },
+        )
+    }
+
+    Scaffold(
+        bottomBar = {
+            if (building || buildSaveBusy || error != null ||
+                buildSaveMessage != null
+            ) {
+                Surface(
+                    tonalElevation = 5.dp,
+                    shadowElevation = 5.dp,
+                ) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        when {
+                            error != null -> {
+                                Text(
+                                    "Ошибка операции — подробности здесь",
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    error.orEmpty().take(230),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                                Row(
+                                    horizontalArrangement =
+                                        Arrangement.spacedBy(12.dp),
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            showErrorDetails = true
+                                        },
+                                    ) { Text("Полная причина") }
+                                    TextButton(
+                                        onClick = {
+                                            error = null
+                                            showErrorDetails = false
+                                        },
+                                    ) { Text("Закрыть") }
+                                }
+                            }
+                            building -> {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                                Text(
+                                    progress?.currentTask
+                                        ?: "APK выравнивается и подписывается…",
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                progress?.currentArtifact?.let {
+                                    Text(
+                                        it,
+                                        style =
+                                            MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                Text(
+                                    "Не закрывайте приложение: большие split APK " +
+                                        "могут обрабатываться несколько минут.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            buildSaveBusy -> {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                                Text(
+                                    "Все APK подписаны. Сохраняем в Загрузки/ModKit…",
+                                )
+                            }
+                            buildSaveMessage != null -> {
+                                Text(
+                                    buildSaveMessage.orEmpty(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color =
+                                        if (
+                                            buildSaveMessage
+                                                ?.contains("не удалось") ==
+                                                true
+                                        ) {
+                                            MaterialTheme.colorScheme.error
+                                        } else {
+                                            MaterialTheme.colorScheme.primary
+                                        },
+                                )
+                                buildResult?.let { built ->
+                                    if (!buildSaveBusy) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                chooseBuildDestination(built)
+                                            },
+                                        ) { Text("Выбрать папку для APK") }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+    ) { scaffoldPadding ->
+        LazyColumn(
+            modifier =
+                Modifier.fillMaxSize()
+                    .padding(scaffoldPadding)
+                    .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
         item {
             OutlinedButton(onClick = onBack) { Text("← Назад к результатам") }
         }
@@ -1945,6 +2079,7 @@ fun AutoModScreen(
                     }
                 }
             }
+        }
         }
     }
 }
