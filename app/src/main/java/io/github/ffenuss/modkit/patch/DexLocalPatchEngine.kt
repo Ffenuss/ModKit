@@ -14,6 +14,7 @@ import org.jf.dexlib2.iface.ClassDef
 import org.jf.dexlib2.iface.DexFile
 import org.jf.dexlib2.iface.Method
 import org.jf.dexlib2.iface.instruction.Instruction
+import org.jf.dexlib2.iface.instruction.NarrowLiteralInstruction
 import org.jf.dexlib2.immutable.ImmutableClassDef
 import org.jf.dexlib2.immutable.ImmutableMethod
 import org.jf.dexlib2.immutable.ImmutableMethodImplementation
@@ -294,21 +295,40 @@ object DexLocalPatchEngine {
             val verified = temp.inputStream().buffered().use {
                 DexBackedDexFile.fromInputStream(null, it)
             }
+            val verifiedIds = HashSet<String>()
             for (clazz in verified.classes) {
                 for (method in clazz.methods) {
                     val id = stableId(apkIndex, dexEntry, method)
                     val expectation = wanted[id] ?: continue
-                    val opcodes = method.implementation?.instructions?.toList().orEmpty()
-                    val expected = if (expectation.action == DexLocalAction.TRUE ||
-                        expectation.action == DexLocalAction.FALSE) Opcode.CONST_4
-                    else Opcode.CONST
-                    require(opcodes.size == 2 &&
-                        opcodes[0].opcode == expected &&
-                        opcodes[1].opcode == Opcode.RETURN
+                    val instructions =
+                        method.implementation?.instructions?.toList().orEmpty()
+                    val expectedOpcode = when (expectation.action) {
+                        DexLocalAction.TRUE, DexLocalAction.FALSE -> Opcode.CONST_4
+                        DexLocalAction.INT_9999, DexLocalAction.FLOAT_2 -> Opcode.CONST
+                    }
+                    val expectedValue = when (expectation.action) {
+                        DexLocalAction.TRUE -> 1
+                        DexLocalAction.FALSE -> 0
+                        DexLocalAction.INT_9999 -> 9999
+                        DexLocalAction.FLOAT_2 -> 2.0f.toBits()
+                    }
+                    val actualValue =
+                        (instructions.firstOrNull() as? NarrowLiteralInstruction)
+                            ?.narrowLiteral
+                    require(instructions.size == 2 &&
+                        instructions[0].opcode == expectedOpcode &&
+                        actualValue == expectedValue &&
+                        instructions[1].opcode == Opcode.RETURN
                     ) {
-                        "Rewritten DEX failed exact method-body verification: " + id
+                        "Rewritten DEX failed exact return-value verification: " + id
+                    }
+                    require(verifiedIds.add(id)) {
+                        "Rewritten DEX contains a duplicate selected method: " + id
                     }
                 }
+            }
+            require(verifiedIds == wanted.keys) {
+                "Rewritten DEX is missing one or more selected methods."
             }
             require(temp.renameTo(destination)) {
                 "Failed to finalize the rewritten DEX."
