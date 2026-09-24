@@ -46,9 +46,9 @@ object VerifiedBuildPipeline {
     suspend fun build(
         context: Context,
         stagingOutcome: MutationApplyOutcome,
-        signingIdentity: ApkSigningIdentity? = null,
         cancellation: CancellationSignal,
         progress: ProgressSink,
+        signingIdentity: ApkSigningIdentity? = null,
     ): VerifiedBuildResult {
         require(stagingOutcome.applied) {
             "Verified staging mutation is required before Build APK."
