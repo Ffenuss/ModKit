@@ -2,11 +2,13 @@ package io.github.ffenuss.modkit.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -24,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
+import io.github.ffenuss.modkit.analysis.BinaryFormat
 import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
@@ -35,6 +38,10 @@ import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.AutoModPreparationCoordinator
 import io.github.ffenuss.modkit.patch.AutoModRuntimeTestMenuBuild
 import io.github.ffenuss.modkit.patch.AutoModRuntimeTestMenuCoordinator
+import io.github.ffenuss.modkit.patch.DexAutoModCoordinator
+import io.github.ffenuss.modkit.patch.DexLocalCategory
+import io.github.ffenuss.modkit.patch.DexLocalOpportunity
+import io.github.ffenuss.modkit.patch.DexLocalScan
 import io.github.ffenuss.modkit.patch.GameplayModificationFinder
 import io.github.ffenuss.modkit.patch.GameplayModificationOpportunity
 import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
@@ -102,6 +109,28 @@ fun AutoModScreen(
     var cancellation by remember(result.index.artifactSha256) {
         mutableStateOf<AtomicCancellationSignal?>(null)
     }
+    var dexScan by remember(result.index.artifactSha256) {
+        mutableStateOf<DexLocalScan?>(null)
+    }
+    var dexLoading by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
+    }
+    var dexScanError by remember(result.index.artifactSha256) {
+        mutableStateOf<String?>(null)
+    }
+    var dexApplying by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
+    }
+    var dexDeveloperTestMode by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
+    }
+    var dexSelectedIds by remember(result.index.artifactSha256) {
+        mutableStateOf<Set<String>>(emptySet())
+    }
+    var dexShowAll by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
+    }
+
     fun prepareChanges() {
         if (preparing || building || runtimeMenuBusy) return
         val signal = AtomicCancellationSignal()
@@ -223,6 +252,60 @@ fun AutoModScreen(
     fun buildApk() {
         val staged = stagingOutcome ?: return
         startBuild(staged)
+    }
+
+    fun applySelectedDexChanges() {
+        val scan = dexScan ?: return
+        if (dexApplying || preparing || building || runtimeMenuBusy) return
+        val selected = scan.opportunities.filter { it.id in dexSelectedIds }
+        if (selected.isEmpty()) {
+            error = "Отметьте хотя бы одно найденное изменение DEX."
+            return
+        }
+        if (!dexDeveloperTestMode &&
+            selected.any { it.category == DexLocalCategory.FULL_VERSION }
+        ) {
+            error = "Full/Premium доступен только в режиме тестирования собственной игры."
+            return
+        }
+        val signal = AtomicCancellationSignal()
+        cancellation = signal
+        dexApplying = true
+        error = null
+        progress = null
+        buildResult = null
+        stagingOutcome = null
+
+        scope.launch {
+            try {
+                val outcome = DexAutoModCoordinator.prepareAndApply(
+                    context = context,
+                    target = target,
+                    analysis = analysisResult,
+                    selected = selected,
+                    developerTestMode = dexDeveloperTestMode,
+                    cancellation = signal,
+                    progress = ProgressSink { update ->
+                        scope.launch { progress = update }
+                    },
+                )
+                require(outcome.applied) {
+                    outcome.blockers.joinToString("; ")
+                        .ifBlank { "DEX staging не прошёл проверку." }
+                }
+                stagingOutcome = outcome
+                dexApplying = false
+                cancellation = null
+                startBuild(outcome)
+            } catch (_: AnalysisCancelledException) {
+                error = "Изменение DEX отменено; исходное приложение не затронуто."
+            } catch (failure: Throwable) {
+                error = failure.message ?: failure.javaClass.simpleName
+            } finally {
+                dexApplying = false
+                if (cancellation === signal) cancellation = null
+            }
+        }
     }
 
     fun buildRuntimeTestMenu() {
@@ -370,6 +453,33 @@ fun AutoModScreen(
                         ?: failure.javaClass.simpleName
             } finally {
                 runtimeMenuBusy = false
+            }
+        }
+    }
+
+    val hasDex =
+        analysisResult.index.entries.any { it.format == BinaryFormat.DEX }
+
+    LaunchedEffect(analysisResult.index.artifactSha256, hasDex) {
+        if (hasDex && dexScan == null && !dexLoading) {
+            val signal = AtomicCancellationSignal()
+            dexLoading = true
+            dexScanError = null
+            try {
+                dexScan = DexAutoModCoordinator.scan(
+                    context = context,
+                    target = target,
+                    analysis = analysisResult,
+                    cancellation = signal,
+                    progress = ProgressSink { },
+                )
+            } catch (_: AnalysisCancelledException) {
+                dexScanError = "Поиск DEX отменён."
+            } catch (failure: Throwable) {
+                dexScanError =
+                    failure.message ?: failure.javaClass.simpleName
+            } finally {
+                dexLoading = false
             }
         }
     }
@@ -660,6 +770,179 @@ fun AutoModScreen(
                         modifier = Modifier.padding(14.dp),
                         style = MaterialTheme.typography.bodySmall,
                     )
+                }
+            }
+        }
+
+        if (hasDex) {
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "Автомодификации Android DEX",
+                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            "ModKit ищет методы твоего приложения, проверяет сигнатуру, " +
+                                "предлагает конкретные изменения и пересобирает DEX. " +
+                                "Исходные APK не изменяются.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Row(Modifier.fillMaxWidth()) {
+                            Checkbox(
+                                checked = dexDeveloperTestMode,
+                                onCheckedChange = { enabled ->
+                                    dexDeveloperTestMode = enabled
+                                    if (!enabled) {
+                                        val blockedIds =
+                                            dexScan?.opportunities.orEmpty()
+                                                .filter {
+                                                    it.category ==
+                                                        DexLocalCategory.FULL_VERSION
+                                                }
+                                                .map { it.id }.toSet()
+                                        dexSelectedIds -= blockedIds
+                                    }
+                                    stagingOutcome = null
+                                    buildResult = null
+                                },
+                            )
+                            Text(
+                                "Тестирую свою игру: показывать локальные Full/Premium-флаги",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (dexLoading) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                            Text("Проверяем DEX-классы и методы…")
+                        }
+                        dexScanError?.let { message ->
+                            Text(
+                                message,
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    dexScan = null
+                                    dexLoading = false
+                                },
+                            ) {
+                                Text("Повторить поиск DEX")
+                            }
+                        }
+                        val current = dexScan
+                        if (current != null) {
+                            Text(
+                                "Проверено: " + current.dexFilesExamined +
+                                    " DEX · " + current.methodsExamined +
+                                    " методов · найдено: " +
+                                    current.opportunities.size,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            val visible =
+                                if (dexShowAll) current.opportunities
+                                else current.opportunities.take(48)
+                            if (current.opportunities.isEmpty()) {
+                                Text(
+                                    "Локальных DEX-методов с доказанной сигнатурой " +
+                                        "для готового изменения нет. " +
+                                        "Для Unity/IL2CPP используй Patch Lab ниже.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            visible.forEach { opportunity ->
+                                val allowed = opportunity.selectable &&
+                                    (dexDeveloperTestMode ||
+                                        opportunity.category !=
+                                            DexLocalCategory.FULL_VERSION)
+                                Row(Modifier.fillMaxWidth()) {
+                                    Checkbox(
+                                        checked =
+                                            opportunity.id in dexSelectedIds,
+                                        enabled =
+                                            allowed &&
+                                                !dexApplying &&
+                                                !building,
+                                        onCheckedChange = { checked ->
+                                            dexSelectedIds =
+                                                if (checked) dexSelectedIds + opportunity.id
+                                                else dexSelectedIds - opportunity.id
+                                            stagingOutcome = null
+                                            buildResult = null
+                                        },
+                                    )
+                                    Column {
+                                        Text(
+                                            opportunity.category.label +
+                                                ": " + opportunity.action.label,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                        Text(
+                                            opportunity.displayName,
+                                            style = MaterialTheme.typography.bodySmall,
+                                        )
+                                        Text(
+                                            if (allowed) opportunity.reason
+                                            else "Для Full/Premium отметь режим тестирования своей игры.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                            if (current.opportunities.size > 48) {
+                                OutlinedButton(
+                                    onClick = { dexShowAll = !dexShowAll },
+                                ) {
+                                    Text(
+                                        if (dexShowAll) "Свернуть список"
+                                        else "Показать все (" +
+                                            current.opportunities.size + ")",
+                                    )
+                                }
+                            }
+                            current.warnings.take(4).forEach { warning ->
+                                Text(
+                                    "Внимание: " + warning,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                            }
+                            Text(
+                                "Выбрано: " + dexSelectedIds.size,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Button(
+                                onClick = ::applySelectedDexChanges,
+                                enabled =
+                                    dexSelectedIds.isNotEmpty() &&
+                                        !dexApplying &&
+                                        !preparing &&
+                                        !building &&
+                                        !runtimeMenuBusy,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    if (dexApplying) "Применяем DEX…"
+                                    else "Применить выбранное и собрать APK",
+                                )
+                            }
+                            if (dexApplying) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                                Text(progress?.currentTask ?: "Подготовка DEX…")
+                                OutlinedButton(
+                                    onClick = { cancellation?.cancel() },
+                                ) {
+                                    Text("Отменить")
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
