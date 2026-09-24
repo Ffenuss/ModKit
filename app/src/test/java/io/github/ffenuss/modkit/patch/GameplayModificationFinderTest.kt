@@ -856,6 +856,124 @@ class GameplayModificationFinderTest {
     }
 
     @Test
+    fun ownerEntitlementIsBlockedUntilOwnerKeyIsVerified() {
+        val target =
+            target(
+                token = 0x06000340,
+                name = "get_IsFullVersion",
+                offset = 0x3400,
+                declaringType =
+                    "Game.PremiumManager",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.BOOLEAN,
+            )
+
+        val opportunity =
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+            ).single()
+
+        assertEquals(
+            GameplayModificationCategory
+                .OWNER_ENTITLEMENT,
+            opportunity.category,
+        )
+        assertEquals(
+            GameplayMutationAction.FORCE_TRUE,
+            opportunity.action,
+        )
+        assertFalse(opportunity.selectable)
+        assertTrue(
+            opportunity.blocker.orEmpty()
+                .contains(
+                    "ключа владельца",
+                    ignoreCase = true,
+                ),
+        )
+    }
+
+    @Test
+    fun verifiedOwnerCanEnableBooleanFullVersionEntitlement() {
+        val target =
+            target(
+                token = 0x06000341,
+                name = "get_IsFullVersion",
+                offset = 0x3410,
+                declaringType =
+                    "Game.PremiumManager",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.BOOLEAN,
+            )
+
+        val opportunity =
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+                ownerEntitlementAuthorized = true,
+            ).single()
+
+        assertEquals(
+            GameplayModificationCategory
+                .OWNER_ENTITLEMENT,
+            opportunity.category,
+        )
+        assertEquals(
+            GameplayMutationAction.FORCE_TRUE,
+            opportunity.action,
+        )
+        assertTrue(opportunity.selectable)
+        assertEquals(
+            "20 00 80 D2 C0 03 5F D6",
+            opportunity.replacementHex,
+        )
+    }
+
+    @Test
+    fun receiptValidationStaysAnalysisOnlyEvenForVerifiedOwner() {
+        val target =
+            target(
+                token = 0x06000342,
+                name = "ValidatePurchaseReceipt",
+                offset = 0x3420,
+                declaringType =
+                    "Game.Billing.ReceiptValidator",
+            )
+        val result =
+            result(
+                target = target,
+                returnKind =
+                    Il2CppNativeReturnKind.BOOLEAN,
+            )
+
+        val opportunity =
+            GameplayModificationFinder.find(
+                result = result,
+                preparation = preparation(target),
+                ownerEntitlementAuthorized = true,
+            ).single()
+
+        assertEquals(
+            GameplayModificationCategory
+                .SENSITIVE_SURFACE,
+            opportunity.category,
+        )
+        assertFalse(opportunity.selectable)
+        assertEquals(
+            GameplayMutationAction.DISCOVERY_ONLY,
+            opportunity.action,
+        )
+    }
+
+    @Test
     fun sensitiveLibrarySurfaceRemainsVisibleInProjectOnlyMode() {
         val target =
             target(
