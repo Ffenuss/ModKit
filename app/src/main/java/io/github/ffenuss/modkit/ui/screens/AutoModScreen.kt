@@ -68,6 +68,8 @@ import io.github.ffenuss.modkit.runtime.AndroidRepackedRuntimeInstaller
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallPlanner
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallReadiness
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallReadinessState
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallConfirmationStore
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallStatusKind
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstallStatusStore
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -1015,14 +1017,11 @@ fun AutoModScreen(
                                     Text(
                                         "Android: " +
                                             when (installStatus.kind) {
-                                                io.github.ffenuss.modkit.runtime
-                                                    .RepackedRuntimeInstallStatusKind.SUCCESS ->
+                                                RepackedRuntimeInstallStatusKind.SUCCESS ->
                                                     "Установка завершена"
-                                                io.github.ffenuss.modkit.runtime
-                                                    .RepackedRuntimeInstallStatusKind.FAILURE ->
+                                                RepackedRuntimeInstallStatusKind.FAILURE ->
                                                     "Ошибка установки"
-                                                io.github.ffenuss.modkit.runtime
-                                                    .RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED ->
+                                                RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED ->
                                                     "Подтверди установку в системном окне"
                                                 else ->
                                                     "Ожидаем ответ установщика"
@@ -1032,12 +1031,35 @@ fun AutoModScreen(
                                         color =
                                             if (
                                                 installStatus.kind ==
-                                                    io.github.ffenuss.modkit.runtime
-                                                        .RepackedRuntimeInstallStatusKind.FAILURE
+                                                    RepackedRuntimeInstallStatusKind.FAILURE
                                             ) MaterialTheme.colorScheme.error
                                             else MaterialTheme.colorScheme.primary,
                                         style = MaterialTheme.typography.bodySmall,
                                     )
+                                }
+                                if (builtInstallSessionId != null &&
+                                    installStatus.sessionId == builtInstallSessionId &&
+                                    RepackedRuntimeInstallConfirmationStore
+                                        .availableFor(builtInstallSessionId)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            try {
+                                                RepackedRuntimeInstallConfirmationStore.open(
+                                                    context,
+                                                    requireNotNull(builtInstallSessionId),
+                                                )
+                                            } catch (failure: Exception) {
+                                                builtInstallNote =
+                                                    "Не удалось открыть системный установщик: " +
+                                                        (failure.message
+                                                            ?: failure.javaClass.simpleName)
+                                            }
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text("Открыть системное окно установки")
+                                    }
                                 }
                                 if (
                                     builtInstallReadiness?.state ==
