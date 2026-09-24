@@ -37,12 +37,16 @@ enum class DexLocalCategory(val label: String, val rank: Int) {
     AMMO("Боезапас", 3),
     MOVEMENT("Скорость / движение", 4),
     COOLDOWN("Ограничения / таймеры", 5),
+    EXPERIENCE("Опыт / уровень", 6),
+    INVENTORY("Размер инвентаря", 7),
+    DEBUG_UI("Отладочный интерфейс своей программы", 8),
 }
 
 enum class DexLocalAction(val label: String) {
     TRUE("Возвращать true"),
     FALSE("Возвращать false"),
     INT_9999("Возвращать 9999"),
+    INT_99("Возвращать 99"),
     FLOAT_2("Возвращать 2.0f"),
 }
 
@@ -69,7 +73,35 @@ data class DexLocalScan(
     val warnings: List<String>,
     val dexFilesExamined: Int,
     val methodsExamined: Int,
-)
+    val classesInspected: Int = 0,
+    val classesExcluded: Int = 0,
+    val methodsWithCode: Int = 0,
+    val noArgumentMethods: Int = 0,
+    val scalarNoArgumentMethods: Int = 0,
+    val semanticNamesMatched: Int = 0,
+    val rejectedReturnTypes: Int = 0,
+    val nativeLibrariesObserved: Int = 0,
+    val diagnostics: List<String> = emptyList(),
+) {
+    val explanation: String
+        get() = when {
+            opportunities.isNotEmpty() ->
+                "Найдены локальные методы с проверенной сигнатурой. " +
+                    "Эффект модификации нужно проверить в запущенной игре."
+            dexFilesExamined == 0 ->
+                "DEX-код отсутствует. Логика может быть в нативных библиотеках " +
+                    "или приложение содержит только ресурсы."
+            methodsExamined == 0 ->
+                "DEX присутствует, но пригодных классов приложения не обнаружено. " +
+                    "Возможно, это только загрузчик Unity или системные библиотеки."
+            semanticNamesMatched > 0 && rejectedReturnTypes > 0 ->
+                "Найдены имена, похожие на игровые функции, но часть имеет " +
+                    "неподдерживаемые параметры или возвращаемый тип."
+            else ->
+                "DEX прочитан, но подходящих локальных методов не найдено. " +
+                    "Возможны обфускация, нестандартная логика или нативный движок."
+        }
+}
 
 data class DexLocalRewrite(
     val file: File,
@@ -105,6 +137,15 @@ object DexLocalPatchEngine {
         val warnings = ArrayList<String>()
         var dexCount = 0
         var methodCount = 0
+        var inspectedClasses = 0
+        var excludedClasses = 0
+        var methodsWithCode = 0
+        var noArgumentMethods = 0
+        var scalarMethods = 0
+        var semanticMatches = 0
+        var rejectedReturnTypes = 0
+        var nativeLibraries = 0
+        val diagnostics = ArrayList<String>()
         apkFiles.forEachIndexed { apkIndex, apk ->
             checkCancelled(cancellation)
             ZipFile(apk).use { zip ->
@@ -112,6 +153,9 @@ object DexLocalPatchEngine {
                 while (entries.hasMoreElements()) {
                     checkCancelled(cancellation)
                     val entry = entries.nextElement()
+                    if (entry.name.startsWith("lib/") &&
+                        entry.name.endsWith(".so") && !entry.isDirectory
+                    ) nativeLibraries++
                     if (entry.isDirectory || !DEX_NAME.matches(entry.name)) continue
                     dexCount++
                     if (entry.size !in 1..MAX_DEX_BYTES) {
@@ -131,6 +175,16 @@ object DexLocalPatchEngine {
                             cancellation = cancellation,
                         )
                         methodCount += scan.methodsExamined
+                        inspectedClasses += scan.classesInspected
+                        excludedClasses += scan.classesExcluded
+                        methodsWithCode += scan.methodsWithCode
+                        noArgumentMethods += scan.noArgumentMethods
+                        scalarMethods += scan.scalarNoArgumentMethods
+                        semanticMatches += scan.semanticNamesMatched
+                        rejectedReturnTypes += scan.rejectedReturnTypes
+                        diagnostics += scan.diagnostics.map {
+                            apk.name + ":" + entry.name + ": " + it
+                        }.take(20)
                         warnings += scan.warnings.map {
                             apk.name + ":" + entry.name + ": " + it
                         }
@@ -156,6 +210,15 @@ object DexLocalPatchEngine {
             warnings = warnings.distinct(),
             dexFilesExamined = dexCount,
             methodsExamined = methodCount,
+            classesInspected = inspectedClasses,
+            classesExcluded = excludedClasses,
+            methodsWithCode = methodsWithCode,
+            noArgumentMethods = noArgumentMethods,
+            scalarNoArgumentMethods = scalarMethods,
+            semanticNamesMatched = semanticMatches,
+            rejectedReturnTypes = rejectedReturnTypes,
+            nativeLibrariesObserved = nativeLibraries,
+            diagnostics = diagnostics.distinct().take(30),
         )
     }
 
@@ -174,18 +237,49 @@ object DexLocalPatchEngine {
         val candidates = ArrayList<DexLocalOpportunity>()
         val warnings = ArrayList<String>()
         var methods = 0
+        var classesInspected = 0
+        var classesExcluded = 0
+        var methodsWithCode = 0
+        var noArgumentMethods = 0
+        var scalarMethods = 0
+        var semanticMatches = 0
+        var rejectedReturnTypes = 0
+        val diagnostics = ArrayList<String>()
         for (classDef in dex.classes) {
             checkCancelled(cancellation)
-            if (excludedClass(classDef.type)) continue
+            classesInspected++
+            if (excludedClass(classDef.type)) {
+                classesExcluded++
+                continue
+            }
             for (method in classDef.methods) {
                 methods++
                 if (methods >= MAX_METHODS) {
                     warnings += "Method scan limit reached; results may be incomplete."
                     break
                 }
-                if (method.parameters.isNotEmpty()) continue
-                val impl = method.implementation ?: continue
-                if (impl.registerCount < 1) continue
+                val impl = method.implementation
+                if (impl != null) methodsWithCode++
+                val noArgs = method.parameters.isEmpty()
+                if (noArgs) noArgumentMethods++
+                if (noArgs && method.returnType in setOf("Z", "I", "F")) {
+                    scalarMethods++
+                }
+                val semantic = looksLikeGameplay(method.name)
+                if (semantic) {
+                    semanticMatches++
+                    if (diagnostics.size < 20) {
+                        diagnostics += method.definingClass + "->" +
+                            method.name + "(" +
+                            method.parameterTypes.joinToString("") +
+                            ")" + method.returnType
+                    }
+                }
+                if (semantic && (!noArgs || method.returnType !in
+                        setOf("Z", "I", "F")
+                    )
+                ) rejectedReturnTypes++
+                if (!noArgs || impl == null || impl.registerCount < 1) continue
                 val match = classify(method.name, method.returnType) ?: continue
                 val id = stableId(apkIndex, dexEntry, method)
                 candidates += DexLocalOpportunity(
@@ -198,11 +292,13 @@ object DexLocalPatchEngine {
                     originalDexSha256 = sha,
                     category = match.first,
                     action = match.second,
-                    selectable = match.first != DexLocalCategory.FULL_VERSION ||
+                    selectable = match.first !in
+                        setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI) ||
                         developerTestMode,
-                    reason = if (match.first == DexLocalCategory.FULL_VERSION &&
+                    reason = if (match.first in
+                        setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI) &&
                         !developerTestMode) {
-                        "Available only when testing your own local game build."
+                        "Доступно только в тестовом режиме собственной игры или приложения."
                     } else {
                         "Exact DEX method and return type verified; gameplay effect requires an on-device test."
                     },
@@ -214,7 +310,20 @@ object DexLocalPatchEngine {
             }
             if (methods >= MAX_METHODS || candidates.size >= MAX_DISPLAYED_CANDIDATES) break
         }
-        return DexLocalScan(candidates, warnings, 1, methods)
+        return DexLocalScan(
+            opportunities = candidates,
+            warnings = warnings,
+            dexFilesExamined = 1,
+            methodsExamined = methods,
+            classesInspected = classesInspected,
+            classesExcluded = classesExcluded,
+            methodsWithCode = methodsWithCode,
+            noArgumentMethods = noArgumentMethods,
+            scalarNoArgumentMethods = scalarMethods,
+            semanticNamesMatched = semanticMatches,
+            rejectedReturnTypes = rejectedReturnTypes,
+            diagnostics = diagnostics,
+        )
     }
 
     /**
