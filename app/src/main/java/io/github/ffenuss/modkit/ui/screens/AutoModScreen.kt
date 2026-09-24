@@ -49,6 +49,7 @@ import io.github.ffenuss.modkit.patch.DexAutoModCoordinator
 import io.github.ffenuss.modkit.patch.DexLocalCategory
 import io.github.ffenuss.modkit.patch.DexLocalOpportunity
 import io.github.ffenuss.modkit.patch.DexLocalScan
+import io.github.ffenuss.modkit.patch.DexScanDiagnosticReport
 import io.github.ffenuss.modkit.patch.GameplayModificationFinder
 import io.github.ffenuss.modkit.patch.GameplayModificationOpportunity
 import io.github.ffenuss.modkit.patch.Il2CppPatchTargetBrowser
@@ -140,6 +141,9 @@ fun AutoModScreen(
     }
     var dexRetry by remember(result.index.artifactSha256) {
         mutableStateOf(0)
+    }
+    var dexReportBusy by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
     }
     var builtInstallBusy by remember(result.index.artifactSha256) {
         mutableStateOf(false)
@@ -465,6 +469,29 @@ fun AutoModScreen(
         }
     }
 
+    fun exportDexDiagnostics(scan: DexLocalScan) {
+        if (dexReportBusy) return
+        dexReportBusy = true
+        scope.launch {
+            try {
+                val report = withContext(Dispatchers.IO) {
+                    DexScanDiagnosticReport.write(
+                        context = context,
+                        targetName = target.label,
+                        analysis = analysisResult,
+                        scan = scan,
+                    )
+                }
+                DexScanDiagnosticReport.share(context, report)
+            } catch (failure: Throwable) {
+                error = "Не удалось экспортировать диагностику: " +
+                    (failure.message ?: failure.javaClass.simpleName)
+            } finally {
+                dexReportBusy = false
+            }
+        }
+    }
+
     fun applySelectedDexChanges() {
         val scan = dexScan ?: return
         if (dexApplying || preparing || building || runtimeMenuBusy) return
@@ -474,9 +501,15 @@ fun AutoModScreen(
             return
         }
         if (!dexDeveloperTestMode &&
-            selected.any { it.category == DexLocalCategory.FULL_VERSION }
+            selected.any {
+                it.category in setOf(
+                    DexLocalCategory.FULL_VERSION,
+                    DexLocalCategory.DEBUG_UI,
+                )
+            }
         ) {
-            error = "Full/Premium доступен только в режиме тестирования собственной игры."
+            error = "Full/Premium и отладочные флаги требуют режима " +
+                "тестирования собственной игры или приложения."
             return
         }
         val signal = AtomicCancellationSignal()
@@ -985,6 +1018,44 @@ fun AutoModScreen(
             }
         }
 
+        if (!hasDex) {
+            item {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(
+                        Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "В APK не обнаружено DEX-кода",
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            "Нельзя предложить DEX-патчи, если нет classes.dex. " +
+                                "Для Unity/IL2CPP используйте подготовку и Native Patch Lab. " +
+                                "Нативные библиотеки нельзя модифицировать DEX-шаблонами.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                exportDexDiagnostics(
+                                    DexLocalScan(
+                                        opportunities = emptyList(),
+                                        warnings = emptyList(),
+                                        dexFilesExamined = 0,
+                                        methodsExamined = 0,
+                                    ),
+                                )
+                            },
+                            enabled = !dexReportBusy,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Экспортировать отчёт о причинах")
+                        }
+                    }
+                }
+            }
+        }
+
         if (hasDex) {
             item {
                 Card(Modifier.fillMaxWidth()) {
@@ -1012,8 +1083,10 @@ fun AutoModScreen(
                                         val blockedIds =
                                             dexScan?.opportunities.orEmpty()
                                                 .filter {
-                                                    it.category ==
-                                                        DexLocalCategory.FULL_VERSION
+                                                    it.category in setOf(
+                                                        DexLocalCategory.FULL_VERSION,
+                                                        DexLocalCategory.DEBUG_UI,
+                                                    )
                                                 }
                                                 .map { it.id }.toSet()
                                         dexSelectedIds -= blockedIds
@@ -1023,7 +1096,7 @@ fun AutoModScreen(
                                 },
                             )
                             Text(
-                                "Тестирую свою игру: показывать локальные Full/Premium-флаги",
+                                "Тестирую свою игру/приложение: Full/Premium и debug-флаги",
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
@@ -1061,17 +1134,51 @@ fun AutoModScreen(
                                 else current.opportunities.take(48)
                             if (current.opportunities.isEmpty()) {
                                 Text(
-                                    "Локальных DEX-методов с доказанной сигнатурой " +
-                                        "для готового изменения нет. " +
-                                        "Для Unity/IL2CPP используй Patch Lab ниже.",
+                                    current.explanation,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                                Text(
+                                    "Найдено в DEX: классов " +
+                                        current.classesInspected +
+                                        " · исключено библиотечных " +
+                                        current.classesExcluded +
+                                        " · методов с кодом " +
+                                        current.methodsWithCode +
+                                        " · сигналы игровых имён " +
+                                        current.semanticNamesMatched +
+                                        " · несовместимые сигнатуры " +
+                                        current.rejectedReturnTypes +
+                                        ".",
                                     style = MaterialTheme.typography.bodySmall,
                                 )
+                                if (current.nativeLibrariesObserved > 0) {
+                                    Text(
+                                        "Обнаружено нативных библиотек: " +
+                                            current.nativeLibrariesObserved +
+                                            ". Игровая логика может находиться в .so.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                if (
+                                    analysisResult.index.runtimeProfiles.any {
+                                        it.runtimeId == "unity_il2cpp"
+                                    }
+                                ) {
+                                    Text(
+                                        "Обнаружен Unity/IL2CPP: нажмите " +
+                                            "«Подготовить изменения» и откройте Patch Lab.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                             }
                             visible.forEach { opportunity ->
                                 val allowed = opportunity.selectable &&
                                     (dexDeveloperTestMode ||
-                                        opportunity.category !=
-                                            DexLocalCategory.FULL_VERSION)
+                                        opportunity.category !in setOf(
+                                            DexLocalCategory.FULL_VERSION,
+                                            DexLocalCategory.DEBUG_UI,
+                                        ))
                                 Row(Modifier.fillMaxWidth()) {
                                     Checkbox(
                                         checked =
@@ -1100,7 +1207,7 @@ fun AutoModScreen(
                                         )
                                         Text(
                                             if (allowed) opportunity.reason
-                                            else "Для Full/Premium отметь режим тестирования своей игры.",
+                                            else "Для тестовых флагов отметьте режим собственной игры/приложения.",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
@@ -1117,6 +1224,32 @@ fun AutoModScreen(
                                             current.opportunities.size + ")",
                                     )
                                 }
+                            }
+                            OutlinedButton(
+                                onClick = { exportDexDiagnostics(current) },
+                                enabled = !dexReportBusy,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    if (dexReportBusy) {
+                                        "Создаём диагностический отчёт…"
+                                    } else {
+                                        "Экспортировать подробный отчёт сканирования"
+                                    },
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    dexScan = null
+                                    dexSelectedIds = emptySet()
+                                    stagingOutcome = null
+                                    buildResult = null
+                                    dexRetry++
+                                },
+                                enabled = !dexLoading && !dexApplying && !building,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Сканировать ещё раз")
                             }
                             current.warnings.take(4).forEach { warning ->
                                 Text(
