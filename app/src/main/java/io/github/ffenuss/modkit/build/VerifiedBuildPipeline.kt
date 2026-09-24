@@ -62,9 +62,11 @@ object VerifiedBuildPipeline {
                     ModKitSigningIdentityProvider
                         .getOrCreateDevelopmentIdentity()
                 }
-        val root = File(
+        // Each build is isolated: a failed retry must never overwrite or
+        // delete an earlier signed APK or its diagnostic report.
+        val root = BuildOutputStorage.createRunDirectory(
             context.filesDir,
-            "patch-build/" + artifactSha,
+            artifactSha,
         )
         val alignedDir = File(root, "aligned").apply { mkdirs() }
         val signedDir = File(root, "signed").apply { mkdirs() }
@@ -233,7 +235,9 @@ object VerifiedBuildPipeline {
                 builtAtEpochMs = builtAt,
             )
         } catch (failure: Throwable) {
-            built.forEach { it.file.delete() }
+            // Only this invocation's partial files are removed. Previous
+            // successful builds live in independent run directories.
+            root.deleteRecursively()
             throw failure
         }
     }
