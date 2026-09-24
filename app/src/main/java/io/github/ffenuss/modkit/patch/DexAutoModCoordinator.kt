@@ -1,6 +1,7 @@
 package io.github.ffenuss.modkit.patch
 
 import android.content.Context
+import android.net.Uri
 import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.analysis.EngineResultCache
@@ -10,6 +11,8 @@ import io.github.ffenuss.modkit.analysis.EvidenceTargetKind
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.analysis.UserFindingStatus
+import io.github.ffenuss.modkit.analysis.TargetMaterializer
+import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.domain.EngineScheduleClass
 import io.github.ffenuss.modkit.domain.ProofLevel
@@ -34,22 +37,42 @@ object DexAutoModCoordinator {
         cancellation: CancellationSignal,
         progress: ProgressSink,
     ): DexLocalScan = withContext(Dispatchers.IO) {
-        val cache = EngineResultCache(
-            File(context.filesDir, "analysis-cache"),
-        )
-        PatchWorkspaceProvider.open(
-            context = context,
-            target = target,
-            expected = analysis,
-            cache = cache,
-            cancellation = cancellation,
-            progress = progress,
-        ).use { snapshot ->
+        val temporaryFiles = ArrayList<File>()
+        try {
+            val files = when (target) {
+                is AnalysisTargetDescriptor.InstalledPackage -> {
+                    val installed = InstalledAppRepository(context)
+                        .find(target.packageName)
+                        ?: error("Установленное приложение больше недоступно.")
+                    val indexedNames = analysis.index.sources.map {
+                        it.displayName
+                    }
+                    val byName = installed.apkFiles.groupBy { it.name }
+                    indexedNames.map { name ->
+                        byName[name]?.singleOrNull()
+                            ?: error("APK-set изменился: " + name)
+                    }
+                }
+                is AnalysisTargetDescriptor.FileUri -> {
+                    val local = TargetMaterializer.fromUri(
+                        context = context,
+                        uri = Uri.parse(target.uri),
+                        cancellation = cancellation,
+                        progress = progress,
+                    )
+                    temporaryFiles += local.file
+                    listOf(local.file)
+                }
+            }
+            // This first pass only reads DEX entries, not deep-indexes the
+            // whole APK twice. The apply path revalidates the exact source SHA.
             DexLocalPatchEngine.scanApks(
-                apkFiles = snapshot.workspace.sources.map { it.file },
+                apkFiles = files,
                 developerTestMode = true,
                 cancellation = cancellation,
             )
+        } finally {
+            temporaryFiles.forEach(File::delete)
         }
     }
 
