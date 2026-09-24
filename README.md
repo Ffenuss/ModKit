@@ -2,7 +2,13 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.26**
+Current application version: **0.0.27**
+
+## False-positive gameplay filtering (0.0.27)
+
+Ordinary Android apps contain methods named getLevel, getExperience and getXP: logging severity, audio level, resumes and education profiles are not game stats. DEX XP/Level discovery now requires **both** a supported method signature and narrow game-owner/package context, and excludes UI/logging/education owners even inside a game package. Suppressed ambiguous candidates are counted in the on-screen scan and exported diagnostic report. This reduces spurious selectable mods without claiming any remaining method affects actual gameplay.
+
+The default split-game output is now real, separately signed APK files in one Downloads/ModKit/<package>-<build-time>/ directory with a primary in-app **Установить игру** action. ZIP is an explicit backup option, not the default build output. Android must receive all required splits together.
 
 ## Gameplay categories and direct split installation (0.0.26)
 
