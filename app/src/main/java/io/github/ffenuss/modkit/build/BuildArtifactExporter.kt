@@ -13,6 +13,7 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import android.content.Intent
 import android.net.Uri
+import androidx.annotation.RequiresApi
 import androidx.core.content.FileProvider
 import io.github.ffenuss.modkit.BuildConfig
 import java.util.ArrayList
@@ -43,6 +44,7 @@ object BuildArtifactExporter {
      * API 29+ uses scoped MediaStore Downloads/ModKit. Older devices should
      * use ACTION_CREATE_DOCUMENT and writeToUri().
      */
+    @RequiresApi(Build.VERSION_CODES.Q)
     fun saveToDownloads(
         context: Context,
         result: VerifiedBuildResult,
