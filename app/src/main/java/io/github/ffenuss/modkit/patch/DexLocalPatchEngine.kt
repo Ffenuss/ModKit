@@ -78,6 +78,7 @@ data class DexLocalScan(
     val scalarNoArgumentMethods: Int = 0,
     val semanticNamesMatched: Int = 0,
     val rejectedReturnTypes: Int = 0,
+    val excludedAmbiguousProgressionNames: Int = 0,
     val nativeLibrariesObserved: Int = 0,
     val diagnostics: List<String> = emptyList(),
 ) {
@@ -95,6 +96,10 @@ data class DexLocalScan(
             semanticNamesMatched > 0 && rejectedReturnTypes > 0 ->
                 "Найдены имена, похожие на игровые функции, но часть имеет " +
                     "неподдерживаемые параметры или возвращаемый тип."
+            excludedAmbiguousProgressionNames > 0 ->
+                "Пропущено " + excludedAmbiguousProgressionNames +
+                    " методов с неоднозначными именами Level/Experience: " +
+                    "они не имеют доказанного игрового контекста."
             else ->
                 "DEX прочитан, но подходящих локальных методов не найдено. " +
                     "Возможны обфускация, нестандартная логика или нативный движок."
@@ -134,6 +139,7 @@ object DexLocalPatchEngine {
         var scalarMethods = 0
         var semanticMatches = 0
         var rejectedReturnTypes = 0
+        var excludedAmbiguousProgressionNames = 0
         var nativeLibraries = 0
         val diagnostics = ArrayList<String>()
         apkFiles.forEachIndexed { apkIndex, apk ->
@@ -172,6 +178,8 @@ object DexLocalPatchEngine {
                         scalarMethods += scan.scalarNoArgumentMethods
                         semanticMatches += scan.semanticNamesMatched
                         rejectedReturnTypes += scan.rejectedReturnTypes
+                        excludedAmbiguousProgressionNames +=
+                            scan.excludedAmbiguousProgressionNames
                         diagnostics += scan.diagnostics.map {
                             apk.name + ":" + entry.name + ": " + it
                         }.take(20)
@@ -207,6 +215,8 @@ object DexLocalPatchEngine {
             scalarNoArgumentMethods = scalarMethods,
             semanticNamesMatched = semanticMatches,
             rejectedReturnTypes = rejectedReturnTypes,
+            excludedAmbiguousProgressionNames =
+                excludedAmbiguousProgressionNames,
             nativeLibrariesObserved = nativeLibraries,
             diagnostics = diagnostics.distinct().take(30),
         )
@@ -234,6 +244,7 @@ object DexLocalPatchEngine {
         var scalarMethods = 0
         var semanticMatches = 0
         var rejectedReturnTypes = 0
+        var excludedAmbiguousProgressionNames = 0
         val diagnostics = ArrayList<String>()
         for (classDef in dex.classes) {
             checkCancelled(cancellation)
@@ -255,7 +266,17 @@ object DexLocalPatchEngine {
                 if (noArgs && method.returnType in setOf("Z", "I", "F")) {
                     scalarMethods++
                 }
-                val semantic = looksLikeGameplay(method.name)
+                if (DexGameplayContext.isProgressionGetter(method.name) &&
+                    !DexGameplayContext.isPlausibleProgressionOwner(
+                        method.definingClass,
+                    )
+                ) {
+                    excludedAmbiguousProgressionNames++
+                }
+                val semantic = looksLikeGameplay(
+                    method.name,
+                    method.definingClass,
+                )
                 if (semantic) {
                     semanticMatches++
                     if (diagnostics.size < 20) {
@@ -270,7 +291,11 @@ object DexLocalPatchEngine {
                     )
                 ) rejectedReturnTypes++
                 if (!noArgs || impl == null || impl.registerCount < 1) continue
-                val match = classify(method.name, method.returnType) ?: continue
+                val match = classify(
+                    method.name,
+                    method.returnType,
+                    method.definingClass,
+                ) ?: continue
                 val id = stableId(apkIndex, dexEntry, method)
                 candidates += DexLocalOpportunity(
                     id = id,
@@ -300,6 +325,13 @@ object DexLocalPatchEngine {
             }
             if (methods >= MAX_METHODS || candidates.size >= MAX_DISPLAYED_CANDIDATES) break
         }
+        if (excludedAmbiguousProgressionNames > 0) {
+            warnings +=
+                "Пропущено неоднозначных Level/Experience методов: " +
+                    excludedAmbiguousProgressionNames +
+                    ". Имя метода без игрового класса не доказывает " +
+                    "наличие опыта или уровней."
+        }
         return DexLocalScan(
             opportunities = candidates,
             warnings = warnings,
@@ -312,6 +344,8 @@ object DexLocalPatchEngine {
             scalarNoArgumentMethods = scalarMethods,
             semanticNamesMatched = semanticMatches,
             rejectedReturnTypes = rejectedReturnTypes,
+            excludedAmbiguousProgressionNames =
+                excludedAmbiguousProgressionNames,
             diagnostics = diagnostics,
         )
     }
@@ -496,9 +530,17 @@ object DexLocalPatchEngine {
     private fun classify(
         methodName: String,
         returnType: String,
+        definingClass: String,
     ): Pair<DexLocalCategory, DexLocalAction>? {
         val key = normalizeName(methodName)
         if (sensitiveMethodName(key)) return null
+        // getLevel()/getExperience() also occur in loggers, media codecs,
+        // education and user profiles. Never patch them on name alone.
+        if (DexGameplayContext.isProgressionGetter(methodName) &&
+            !DexGameplayContext.acceptProgressionGetter(
+                definingClass, methodName,
+            )
+        ) return null
 
         if (returnType == "Z") {
             // Prefer explicit gameplay verbs over broad substring matches:
@@ -619,9 +661,17 @@ object DexLocalPatchEngine {
             "checkout", "transaction", "account",
         ).any(name::contains)
 
-    private fun looksLikeGameplay(methodName: String): Boolean {
+    private fun looksLikeGameplay(
+        methodName: String,
+        definingClass: String,
+    ): Boolean {
         val key = normalizeName(methodName)
         if (sensitiveMethodName(key)) return false
+        if (DexGameplayContext.isProgressionGetter(methodName)) {
+            return DexGameplayContext.acceptProgressionGetter(
+                definingClass, methodName,
+            )
+        }
         return listOf(
             "health", "hitpoint", "invincib",
             "immortal", "damage", "godmode",
@@ -629,12 +679,11 @@ object DexLocalPatchEngine {
             "ammunition", "sprint", "run",
             "walk", "move", "noclip",
             "fly", "cooldown", "stun",
-            "reloading", "experience", "level",
-            "inventory", "capacity", "debug",
+            "reloading", "inventory", "capacity", "debug",
             "fps", "fullversion", "premium",
             "proversion",
         ).any(key::contains) ||
-            key in setOf("gethp", "getxp", "getexp")
+            key == "gethp"
     }
 
     private fun excludedClass(name: String): Boolean {
