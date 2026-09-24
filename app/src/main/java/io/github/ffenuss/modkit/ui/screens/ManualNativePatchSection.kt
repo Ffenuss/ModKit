@@ -70,17 +70,13 @@ fun ManualNativePatchSection(
     target: AnalysisTargetDescriptor,
     analysis: FastAnalysisResult,
     preparation: PatchPreparationPlan,
-    ownerEntitlementAuthorized: Boolean = false,
     onStagingReady: (MutationApplyOutcome) -> Unit = { },
     onStagingInvalidated: () -> Unit = { },
     onBuildRequested: (MutationApplyOutcome) -> Unit = { },
 ) {
     val context = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
-    val key =
-        analysis.index.artifactSha256 + ":" +
-            preparation.preparedAtEpochMs + ":" +
-            ownerEntitlementAuthorized
+    val key = analysis.index.artifactSha256 + ":" + preparation.preparedAtEpochMs
 
     var selectedTargetId by remember(key) { mutableStateOf<String?>(null) }
     var targetFilter by remember(key) { mutableStateOf("") }
@@ -313,8 +309,6 @@ fun ManualNativePatchSection(
                         preparation = preparation,
                         projectCodeOnly =
                             effectiveProjectCodeOnly,
-                        ownerEntitlementAuthorized =
-                            ownerEntitlementAuthorized,
                         limit =
                             MAX_SUGGESTED_MODIFICATIONS,
                         perCategoryLimit =
