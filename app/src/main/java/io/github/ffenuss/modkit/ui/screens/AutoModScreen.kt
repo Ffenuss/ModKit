@@ -1499,6 +1499,18 @@ fun AutoModScreen(
                                     current.opportunities.size,
                                 style = MaterialTheme.typography.bodySmall,
                             )
+                            if (current.excludedAmbiguousProgressionNames > 0) {
+                                Text(
+                                    "Не показано " +
+                                        current.excludedAmbiguousProgressionNames +
+                                        " неоднозначных совпадений Level/Experience. " +
+                                        "Это может быть уровень логирования, " +
+                                        "профиль пользователя или иная логика " +
+                                        "обычного приложения, а не игровой опыт.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                             val visible =
                                 if (dexShowAll) current.opportunities
                                 else current.opportunities.take(48)
