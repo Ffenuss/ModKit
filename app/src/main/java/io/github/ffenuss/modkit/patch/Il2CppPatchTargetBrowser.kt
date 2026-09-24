@@ -48,6 +48,33 @@ object Il2CppPatchTargetBrowser {
                     it == "assembly-csharp.dll"
             } == true
 
+    /**
+     * Unity games are not required to compile gameplay into Assembly-CSharp.
+     * Some builds place game code in a dedicated *EngineAssembly or
+     * *GameAssembly DLL. Keep the rule narrow: do not accidentally promote
+     * UnityEngine, System or plugin libraries to project code.
+     */
+    fun isProjectImageName(imageName: String?): Boolean {
+        val name = imageName
+            ?.lowercase()
+            ?.removeSuffix(".dll")
+            ?: return false
+        if (name == "assembly-csharp" ||
+            name.startsWith("assembly-csharp-")
+        ) return true
+        val framework = listOf(
+            "unityengine", "unity.", "system", "microsoft",
+            "mscorlib", "netstandard", "newtonsoft", "fmod",
+            "google.", "sirenix", "dotween",
+        )
+        if (framework.any(name::startsWith)) return false
+        return name.endsWith("engineassembly") ||
+            name.endsWith("gameassembly")
+    }
+
+    fun isProjectCode(target: EvidenceTarget): Boolean =
+        isProjectImageName(imageName(target))
+
     fun originLabel(
         target: EvidenceTarget,
     ): String {
@@ -56,7 +83,7 @@ object Il2CppPatchTargetBrowser {
                 ?.lowercase()
                 .orEmpty()
         return when {
-            isAssemblyCSharp(target) ->
+            isProjectCode(target) ->
                 "Код проекта"
             image.startsWith("unityengine") ||
                 image.startsWith("unity.") ->
