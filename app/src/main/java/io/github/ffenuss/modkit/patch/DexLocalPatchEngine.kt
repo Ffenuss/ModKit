@@ -413,12 +413,14 @@ object DexLocalPatchEngine {
                         method.implementation?.instructions?.toList().orEmpty()
                     val expectedOpcode = when (expectation.action) {
                         DexLocalAction.TRUE, DexLocalAction.FALSE -> Opcode.CONST_4
-                        DexLocalAction.INT_9999, DexLocalAction.FLOAT_2 -> Opcode.CONST
+                        DexLocalAction.INT_9999, DexLocalAction.INT_99,
+                        DexLocalAction.FLOAT_2 -> Opcode.CONST
                     }
                     val expectedValue = when (expectation.action) {
                         DexLocalAction.TRUE -> 1
                         DexLocalAction.FALSE -> 0
                         DexLocalAction.INT_9999 -> 9999
+                        DexLocalAction.INT_99 -> 99
                         DexLocalAction.FLOAT_2 -> 2.0f.toBits()
                     }
                     val actualValue =
@@ -467,7 +469,7 @@ object DexLocalPatchEngine {
         val implementation = requireNotNull(original.implementation)
         require(original.returnType == when (request.action) {
             DexLocalAction.TRUE, DexLocalAction.FALSE -> "Z"
-            DexLocalAction.INT_9999 -> "I"
+            DexLocalAction.INT_9999, DexLocalAction.INT_99 -> "I"
             DexLocalAction.FLOAT_2 -> "F"
         })
         require(implementation.registerCount >= 1)
@@ -478,6 +480,8 @@ object DexLocalPatchEngine {
                 ImmutableInstruction11n(Opcode.CONST_4, 0, 0)
             DexLocalAction.INT_9999 ->
                 ImmutableInstruction31i(Opcode.CONST, 0, 9999)
+            DexLocalAction.INT_99 ->
+                ImmutableInstruction31i(Opcode.CONST, 0, 99)
             DexLocalAction.FLOAT_2 ->
                 ImmutableInstruction31i(Opcode.CONST, 0, 2.0f.toBits())
         }
@@ -503,68 +507,163 @@ object DexLocalPatchEngine {
         methodName: String,
         returnType: String,
     ): Pair<DexLocalCategory, DexLocalAction>? {
-        val key = methodName.lowercase().filter(Char::isLetterOrDigit)
-        if (key.contains("billing") || key.contains("receipt") ||
-            key.contains("license") || key.contains("server") ||
-            key.contains("verify") || key.contains("authenticate") ||
-            key.contains("payment") || key.contains("anticheat")
-        ) return null
+        val key = normalizeName(methodName)
+        if (sensitiveMethodName(key)) return null
 
         if (returnType == "Z") {
-            val category = when (key) {
+            // Prefer explicit gameplay verbs over broad substring matches:
+            // method names alone are weak evidence of runtime behaviour.
+            return when (key) {
                 "isfullversion", "getisfullversion", "hasfullversion",
                 "gethasfullversion", "ispremium", "getispremium",
                 "haspremium", "gethaspremium", "premiumunlocked",
-                "ispremiumunlocked", "isprounlocked",
-                "getfullversion", "getpremium", "getproversion" ->
-                    DexLocalCategory.FULL_VERSION
+                "ispremiumunlocked", "isprounlocked", "isproversion",
+                "getisproversion", "getfullversion", "getpremium",
+                "getproversion", "isfullgame", "getisfullgame" ->
+                    DexLocalCategory.FULL_VERSION to DexLocalAction.TRUE
+
                 "isinvincible", "getisinvincible", "isimmortal",
-                "getisimmortal", "isgodmode", "hasinfinitehealth" ->
-                    DexLocalCategory.HEALTH
-                "hasinfinitestamina", "isinfiniteenergy", "hasinfiniteenergy" ->
-                    DexLocalCategory.STAMINA
-                "hasinfiniteammo", "isinfiniteammo" ->
-                    DexLocalCategory.AMMO
-                "canrun", "cansprint", "canmove", "canjump" ->
-                    DexLocalCategory.MOVEMENT
-                "isoncooldown", "getisoncooldown", "isstunned",
-                "getisstunned", "ismovementblocked" ->
-                    DexLocalCategory.COOLDOWN
-                else -> return null
+                "getisimmortal", "isgodmode", "getisgodmode",
+                "hasinfinitehealth", "isinvulnerable",
+                "getisinvulnerable", "isundamageable",
+                "getisundamageable" ->
+                    DexLocalCategory.HEALTH to DexLocalAction.TRUE
+
+                "isdead", "getisdead", "isdamageable",
+                "getisdamageable", "candamageplayer",
+                "cantakedamage", "istakingdamage" ->
+                    DexLocalCategory.HEALTH to DexLocalAction.FALSE
+
+                "hasinfinitestamina", "isinfiniteenergy",
+                "hasinfiniteenergy", "isinfinitestamina",
+                "isunlimitedstamina", "hasunlimitedenergy",
+                "isendlessstamina", "canalwayssprint" ->
+                    DexLocalCategory.STAMINA to DexLocalAction.TRUE
+
+                "hasinfiniteammo", "isinfiniteammo",
+                "isunlimitedammo", "hasunlimitedammo" ->
+                    DexLocalCategory.AMMO to DexLocalAction.TRUE
+
+                "canrun", "cansprint", "canmove", "canjump",
+                "canfly", "isnoclip", "getisnoclip",
+                "cannoclip", "isflying", "getisflying" ->
+                    DexLocalCategory.MOVEMENT to DexLocalAction.TRUE
+
+                "isoncooldown", "getisoncooldown",
+                "hascooldown", "iscooldownactive",
+                "isstunned", "getisstunned",
+                "ismovementblocked", "isreloading",
+                "getisreloading" ->
+                    DexLocalCategory.COOLDOWN to DexLocalAction.FALSE
+
+                "isdebug", "getisdebug", "isdebugmode",
+                "getisdebugmode", "isdebugenabled",
+                "getisdebugenabled", "showfps",
+                "getshowfps", "isshowfps",
+                "showdebugmenu", "getshowdebugmenu",
+                "isdevelopermode", "getisdevelopermode" ->
+                    DexLocalCategory.DEBUG_UI to DexLocalAction.TRUE
+
+                else -> null
             }
-            val action = if (category == DexLocalCategory.COOLDOWN) {
-                DexLocalAction.FALSE
-            } else DexLocalAction.TRUE
-            return category to action
         }
 
         if (returnType == "I") {
-            val category = when (key) {
-                "gethealth", "getmaxhealth", "getcurrenthealth" ->
-                    DexLocalCategory.HEALTH
-                "getammo", "getmaxammo" ->
-                    DexLocalCategory.AMMO
-                "getstamina", "getmaxstamina" ->
-                    DexLocalCategory.STAMINA
-                else -> return null
+            return when (key) {
+                "gethealth", "gethp", "getmaxhp", "getcurrenthp",
+                "getmaxhealth", "getcurrenthealth",
+                "getplayerhealth", "getplayerhp",
+                "gethitpoints", "getmaxhitpoints",
+                "getmaxhitpoint" ->
+                    DexLocalCategory.HEALTH to DexLocalAction.INT_9999
+
+                "getammo", "getmaxammo", "getbullets",
+                "getammunition", "getmaxammunition",
+                "getmagazinesize" ->
+                    DexLocalCategory.AMMO to DexLocalAction.INT_9999
+
+                "getstamina", "getmaxstamina",
+                "getenergy", "getmaxenergy",
+                "getcurrentstamina" ->
+                    DexLocalCategory.STAMINA to DexLocalAction.INT_9999
+
+                "getexp", "getxp", "getexperience",
+                "getcurrentxp", "getcurrentexperience",
+                "getskillpoints", "getabilitypoints" ->
+                    DexLocalCategory.EXPERIENCE to DexLocalAction.INT_9999
+
+                "getlevel", "getplayerlevel",
+                "getcharacterlevel", "getcurrentlevel",
+                "getskilllevel" ->
+                    DexLocalCategory.EXPERIENCE to DexLocalAction.INT_99
+
+                "getinventorysize", "getinventorycapacity",
+                "getmaxinventorysize", "getmaxinventoryslots",
+                "getmaxslots", "getbagcapacity",
+                "getbackpackslots" ->
+                    DexLocalCategory.INVENTORY to DexLocalAction.INT_99
+                else -> null
             }
-            return category to DexLocalAction.INT_9999
         }
+
         if (returnType == "F") {
-            val category = when (key) {
-                "getmovespeed", "getrunspeed", "getwalkspeed" ->
-                    DexLocalCategory.MOVEMENT
-                else -> return null
+            return when (key) {
+                "getmovespeed", "getrunspeed",
+                "getwalkspeed", "getsprintspeed",
+                "getmovementspeed", "getplayerspeed" ->
+                    DexLocalCategory.MOVEMENT to DexLocalAction.FLOAT_2
+                else -> null
             }
-            return category to DexLocalAction.FLOAT_2
         }
         return null
     }
 
+    private fun normalizeName(name: String): String =
+        name.lowercase().filter(Char::isLetterOrDigit)
+
+    private fun sensitiveMethodName(name: String): Boolean =
+        listOf(
+            "billing", "receipt", "license", "server",
+            "verify", "authenticate", "payment",
+            "anticheat", "integrity", "purchase",
+            "checkout", "transaction", "account",
+        ).any(name::contains)
+
+    private fun looksLikeGameplay(methodName: String): Boolean {
+        val key = normalizeName(methodName)
+        if (sensitiveMethodName(key)) return false
+        return listOf(
+            "health", "hitpoint", "invincib",
+            "immortal", "damage", "godmode",
+            "stamina", "energy", "ammo",
+            "ammunition", "sprint", "run",
+            "walk", "move", "noclip",
+            "fly", "cooldown", "stun",
+            "reloading", "experience", "level",
+            "inventory", "capacity", "debug",
+            "fps", "fullversion", "premium",
+            "proversion",
+        ).any(key::contains) ||
+            key in setOf("gethp", "getxp", "getexp")
+    }
+
     private fun excludedClass(name: String): Boolean {
         val path = name.lowercase()
-        return excludedClassMarkers.any { it in path } ||
-            (path.startsWith("ljava/") || path.startsWith("lorg/junit/"))
+        val sensitive = listOf(
+            "billing", "receipt", "purchaseclient",
+            "payment", "authentication", "anticheat",
+            "integrity", "remoteservice", "server",
+            "account", "licensing",
+        )
+        // Only exclude framework namespaces when they are a prefix.
+        // Game packages such as Lcom/example/android/game/ must be kept.
+        val framework = listOf(
+            "landroid/", "landroidx/", "lkotlin/",
+            "ljava/", "lcom/google/", "lorg/junit/",
+            "lcom/unity3d/",
+        )
+        return sensitive.any { it in path } ||
+            framework.any(path::startsWith)
     }
 
     private fun stableId(
