@@ -91,9 +91,13 @@ object DexAutoModCoordinator {
         }
         if (!developerTestMode) {
             require(selected.none {
-                it.category == DexLocalCategory.FULL_VERSION
+                it.category in setOf(
+                    DexLocalCategory.FULL_VERSION,
+                    DexLocalCategory.DEBUG_UI,
+                )
             }) {
-                "Full/Premium — только для тестирования собственной игры."
+                "Full/Premium и отладочные флаги доступны только в тестовом " +
+                    "режиме собственной игры или приложения."
             }
         }
 
