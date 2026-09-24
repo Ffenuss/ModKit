@@ -2,7 +2,15 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.27**
+Current application version: **0.0.28**
+
+## Reliable installation feedback (0.0.28)
+
+PackageInstaller session callbacks now go to a private BroadcastReceiver instead of opening another MainActivity. The pinned install control displays Android's real install status and errors. If the device prevents an automatic confirmation dialog from appearing, a separate button opens the verified pending system confirmation with a direct user tap. After granting "install unknown apps" permission, ModKit retries automatically when the user returns from Android Settings.
+
+If the original game with the same package name uses a different signing certificate, Android cannot install a ModKit-signed APK on top of it. This blocker is now explained directly by the install button with a link to the original app's settings. ModKit never silently uninstalls anything. Back up local game data before user-initiated removal.
+
+**About the 160 candidates:** the prior release grouped and prioritized discovered methods by game mechanics; it did not turn every candidate into a working modification. Automatic patches still require a verified executable binding, known return type and compatible replacement. Static verification is not a gameplay test.
 
 ## False-positive gameplay filtering (0.0.27)
 
