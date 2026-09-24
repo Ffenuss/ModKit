@@ -7,6 +7,7 @@ import org.jf.dexlib2.Opcode
 import org.jf.dexlib2.Opcodes
 import org.jf.dexlib2.dexbacked.DexBackedDexFile
 import org.jf.dexlib2.immutable.ImmutableClassDef
+import org.jf.dexlib2.iface.instruction.NarrowLiteralInstruction
 import org.jf.dexlib2.immutable.ImmutableDexFile
 import org.jf.dexlib2.immutable.ImmutableMethod
 import org.jf.dexlib2.immutable.ImmutableMethodImplementation
@@ -63,6 +64,43 @@ class DexLocalPatchEngineTest {
             )
         } finally {
             output.delete()
+        }
+    }
+
+    @Test
+    fun rewritesIntAndFloatReturnsWithExactLiteralValues() {
+        val samples = listOf(
+            Triple("getHealth", "I", 9999),
+            Triple("getMoveSpeed", "F", 2.0f.toBits()),
+        )
+        samples.forEachIndexed { index, (name, returnType, expectedBits) ->
+            val bytes = syntheticDex(
+                "Ldev/game/Player;", name, returnType,
+            )
+            val candidate = DexLocalPatchEngine.scanDex(
+                bytes, 0, "classes.dex", false, signal,
+            ).opportunities.single()
+            val output = File.createTempFile(
+                "modkit-numeric-" + index, ".dex",
+            )
+            try {
+                DexLocalPatchEngine.rewriteDex(
+                    bytes, 0, "classes.dex",
+                    listOf(candidate), output, false, signal,
+                )
+                val method = DexBackedDexFile(null, output.readBytes())
+                    .classes.single().methods.single()
+                val instructions = method.implementation!!
+                    .instructions.toList()
+                assertEquals(Opcode.CONST, instructions[0].opcode)
+                assertEquals(
+                    expectedBits,
+                    (instructions[0] as NarrowLiteralInstruction).narrowLiteral,
+                )
+                assertEquals(Opcode.RETURN, instructions[1].opcode)
+            } finally {
+                output.delete()
+            }
         }
     }
 
