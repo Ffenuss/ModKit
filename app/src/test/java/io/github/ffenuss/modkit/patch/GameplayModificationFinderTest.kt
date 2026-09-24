@@ -24,6 +24,55 @@ import org.junit.Test
 
 class GameplayModificationFinderTest {
     @Test
+    fun dedicatedEngineAssemblyReceivesProjectGameplayModifications() {
+        val target = target(
+            token = 0x06000011,
+            name = "get_MaxHealth",
+            offset = 0x400,
+            imageName = "FlickEngineAssembly.dll",
+            declaringType = "FlickEngine.DiskMB",
+        )
+        val result = result(
+            target = target,
+            returnKind = Il2CppNativeReturnKind.INTEGER,
+        )
+        val suggestions = GameplayModificationFinder.find(
+            result = result,
+            preparation = preparation(target),
+            projectCodeOnly = true,
+        )
+        assertTrue(
+            "Gameplay in a dedicated engine assembly must not be discarded",
+            suggestions.any {
+                it.targetId == target.id &&
+                    it.category ==
+                        GameplayModificationCategory.SURVIVABILITY
+            },
+        )
+    }
+
+    @Test
+    fun thirdPartyRuntimeIsNotMistakenForDedicatedGameAssembly() {
+        val target = target(
+            token = 0x06000012,
+            name = "get_MaxHealth",
+            offset = 0x500,
+            imageName = "UnityEngine.CoreModule.dll",
+            declaringType = "UnityEngine.Debug.Player",
+        )
+        val result = result(
+            target = target,
+            returnKind = Il2CppNativeReturnKind.INTEGER,
+        )
+        val suggestions = GameplayModificationFinder.find(
+            result = result,
+            preparation = preparation(target),
+            projectCodeOnly = true,
+        )
+        assertTrue(suggestions.isEmpty())
+    }
+
+    @Test
     fun proposesConcreteVoidDamageMutationWithoutClaimingGodMode() {
         val target = target(
             token = 0x06000001,
