@@ -20,120 +20,108 @@ object OwnerTargetAuthorizationVerifier {
         context: Context,
         target: AnalysisTargetDescriptor,
         imported: ImportedSigningIdentity,
-    ): OwnerTargetAuthorization =
-        withContext(Dispatchers.IO) {
+    ): OwnerTargetAuthorization {
+        return withContext(Dispatchers.IO) {
             val installed =
                 target as?
                     AnalysisTargetDescriptor
                         .InstalledPackage
-                    ?: return@withContext
-                        OwnerTargetAuthorization(
-                            supported = false,
-                            verified = false,
-                            packageName = null,
-                            sourceSignerSha256 =
-                                emptyList(),
-                            ownerSignerSha256 =
-                                imported
-                                    .certificateSha256,
-                            message =
-                                "Режим владельца пока проверяет " +
-                                    "только установленное приложение. " +
-                                    "Выберите игру из списка установленных.",
-                        )
+            if (installed == null) {
+                return@withContext OwnerTargetAuthorization(
+                    supported = false,
+                    verified = false,
+                    packageName = null,
+                    sourceSignerSha256 = emptyList(),
+                    ownerSignerSha256 =
+                        imported.certificateSha256,
+                    message =
+                        "Режим владельца пока проверяет " +
+                            "только установленное приложение. " +
+                            "Выберите игру из списка установленных.",
+                )
+            }
 
             val app =
-                InstalledAppRepository(
-                    context,
-                ).find(
-                    installed.packageName,
+                InstalledAppRepository(context)
+                    .find(installed.packageName)
+            if (app == null) {
+                return@withContext OwnerTargetAuthorization(
+                    supported = true,
+                    verified = false,
+                    packageName =
+                        installed.packageName,
+                    sourceSignerSha256 = emptyList(),
+                    ownerSignerSha256 =
+                        imported.certificateSha256,
+                    message =
+                        "Выбранное приложение больше " +
+                            "не доступно на устройстве.",
                 )
-                    ?: return@withContext
-                        OwnerTargetAuthorization(
-                            supported = true,
-                            verified = false,
-                            packageName =
-                                installed.packageName,
-                            sourceSignerSha256 =
-                                emptyList(),
-                            ownerSignerSha256 =
-                                imported
-                                    .certificateSha256,
-                            message =
-                                "Выбранное приложение больше " +
-                                    "не доступно на устройстве.",
-                        )
+            }
 
             val baseApk =
                 app.apkFiles.firstOrNull()
-                    ?: return@withContext
-                        OwnerTargetAuthorization(
-                            supported = true,
-                            verified = false,
-                            packageName =
-                                installed.packageName,
-                            sourceSignerSha256 =
-                                emptyList(),
-                            ownerSignerSha256 =
-                                imported
-                                    .certificateSha256,
-                            message =
-                                "У приложения не найден base APK.",
-                        )
+            if (baseApk == null) {
+                return@withContext OwnerTargetAuthorization(
+                    supported = true,
+                    verified = false,
+                    packageName =
+                        installed.packageName,
+                    sourceSignerSha256 = emptyList(),
+                    ownerSignerSha256 =
+                        imported.certificateSha256,
+                    message =
+                        "У приложения не найден base APK.",
+                )
+            }
 
             val source =
-                runCatching {
+                try {
                     ApkSigningStage.verify(baseApk)
-                }.getOrElse {
-                    failure ->
-                    return@withContext
-                        OwnerTargetAuthorization(
-                            supported = true,
-                            verified = false,
-                            packageName =
-                                installed.packageName,
-                            sourceSignerSha256 =
-                                emptyList(),
-                            ownerSignerSha256 =
-                                imported
-                                    .certificateSha256,
-                            message =
-                                "Не удалось проверить подпись " +
-                                    "исходного APK: " +
-                                    (
-                                        failure.message
-                                            ?: failure
-                                                .javaClass
-                                                .simpleName
-                                    ),
-                        )
-                }
-
-            if (!source.verified) {
-                return@withContext
-                    OwnerTargetAuthorization(
+                } catch (failure: Throwable) {
+                    return@withContext OwnerTargetAuthorization(
                         supported = true,
                         verified = false,
                         packageName =
                             installed.packageName,
                         sourceSignerSha256 =
-                            source
-                                .signerCertificateSha256,
+                            emptyList(),
                         ownerSignerSha256 =
-                            imported
-                                .certificateSha256,
+                            imported.certificateSha256,
                         message =
-                            "Исходная подпись APK не прошла " +
-                                "проверку apksig.",
+                            "Не удалось проверить подпись " +
+                                "исходного APK: " +
+                                (
+                                    failure.message
+                                        ?: failure
+                                            .javaClass
+                                            .simpleName
+                                ),
                     )
+                }
+
+            if (!source.verified) {
+                return@withContext OwnerTargetAuthorization(
+                    supported = true,
+                    verified = false,
+                    packageName =
+                        installed.packageName,
+                    sourceSignerSha256 =
+                        source
+                            .signerCertificateSha256,
+                    ownerSignerSha256 =
+                        imported.certificateSha256,
+                    message =
+                        "Исходная подпись APK не прошла " +
+                            "проверку apksig.",
+                )
             }
 
             val match =
                 source.signerCertificateSha256
-                    .any {
-                        it.equals(
-                            imported
-                                .certificateSha256,
+                    .any { signer ->
+                        signer.equals(
+                            imported.certificateSha256,
                             ignoreCase = true,
                         )
                     }
@@ -144,11 +132,9 @@ object OwnerTargetAuthorizationVerifier {
                 packageName =
                     installed.packageName,
                 sourceSignerSha256 =
-                    source
-                        .signerCertificateSha256,
+                    source.signerCertificateSha256,
                 ownerSignerSha256 =
-                    imported
-                        .certificateSha256,
+                    imported.certificateSha256,
                 message =
                     if (match) {
                         "Ключ владельца совпадает с подписью " +
@@ -161,4 +147,5 @@ object OwnerTargetAuthorizationVerifier {
                     },
             )
         }
+    }
 }
