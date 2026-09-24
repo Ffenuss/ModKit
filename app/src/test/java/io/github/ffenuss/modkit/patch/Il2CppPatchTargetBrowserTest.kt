@@ -35,6 +35,30 @@ class Il2CppPatchTargetBrowserTest {
     }
 
     @Test
+    fun dedicatedGameAssembliesAreRecognizedWithoutPromotingPlugins() {
+        val game = target(
+            id = "il2cpp:method:FlickEngineAssembly.dll:6000001:FlickEngineAssembly.dll",
+            displayName = "FlickEngine.Health.get_MaxHealth",
+            memberName = "get_MaxHealth",
+        )
+        assertFalse(Il2CppPatchTargetBrowser.isAssemblyCSharp(game))
+        assertTrue(Il2CppPatchTargetBrowser.isProjectCode(game))
+        assertEquals("Код проекта", Il2CppPatchTargetBrowser.originLabel(game))
+        listOf(
+            "UnityEngine.CoreModule.dll",
+            "FMODUnity.dll",
+            "System.Runtime.dll",
+            "Newtonsoft.Json.dll",
+            "ShapesRuntime.dll",
+        ).forEach { image ->
+            assertFalse(
+                "Third-party DLL should not become project code: " + image,
+                Il2CppPatchTargetBrowser.isProjectImageName(image),
+            )
+        }
+    }
+
+    @Test
     fun searchMatchesManagedIdentityAndImage() {
         val target = target(
             id =
