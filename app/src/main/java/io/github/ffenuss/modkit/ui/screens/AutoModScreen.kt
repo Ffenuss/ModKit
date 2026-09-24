@@ -1470,6 +1470,8 @@ fun AutoModScreen(
                             buildResult = null
                             startBuild(outcome)
                         },
+                        externalBusy =
+                            building || preparing || runtimeMenuBusy || dexApplying,
                     )
                 }
             }
@@ -1629,7 +1631,9 @@ fun AutoModScreen(
                     plan?.automaticApplyAllowed != true ->
                         "Сборка заблокирована, пока нет полностью подготовленного изменения."
                     else ->
-                        "Нужно сначала применить проверенное изменение в staging APK."
+                        "Отметьте готовые моды в Patch Lab и нажмите «Применить и собрать APK». " +
+                            "Эта кнопка сама выполнит staging, подпись и проверку; " +
+                            "нижняя кнопка сборки нужна только для уже подготовленного APK."
                 },
                 style = MaterialTheme.typography.bodySmall,
             )
