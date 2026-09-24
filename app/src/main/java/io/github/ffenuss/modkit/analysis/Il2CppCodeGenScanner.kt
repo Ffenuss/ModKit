@@ -1255,6 +1255,8 @@ object Il2CppCodeGenScanner {
             return when {
                 name == "assembly-csharp" -> 0
                 name.startsWith("assembly-csharp-") -> 0
+                name.endsWith("engineassembly") -> 0
+                name.endsWith("gameassembly") -> 0
                 name.startsWith("unityengine") ||
                     name.startsWith("unity.") ||
                     name == "mscorlib" ||
