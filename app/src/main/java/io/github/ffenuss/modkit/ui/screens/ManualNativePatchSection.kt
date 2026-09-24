@@ -149,7 +149,7 @@ fun ManualNativePatchSection(
     val assemblyCSharpCount = remember(key) {
         preparation.targets.count {
             isManualNativeEligible(it) &&
-                Il2CppPatchTargetBrowser.isAssemblyCSharp(
+                Il2CppPatchTargetBrowser.isProjectCode(
                     it.target,
                 )
         }
@@ -355,7 +355,7 @@ fun ManualNativePatchSection(
             .filter(::isManualNativeEligible)
             .filter { prepared ->
                 !effectiveProjectCodeOnly ||
-                    Il2CppPatchTargetBrowser.isAssemblyCSharp(
+                    Il2CppPatchTargetBrowser.isProjectCode(
                         prepared.target,
                     )
             }
@@ -1791,7 +1791,7 @@ fun ManualNativePatchSection(
             if (assemblyCSharpCount > 0) {
                 Text(
                     if (effectiveProjectCodeOnly) {
-                        "Сейчас показан код проекта: Assembly-CSharp (" +
+                        "Сейчас показан код проекта: игровых сборок (" +
                             assemblyCSharpCount +
                             "). Это обычно скрипты самой игры/приложения; " +
                             "системные и библиотечные методы скрыты."
