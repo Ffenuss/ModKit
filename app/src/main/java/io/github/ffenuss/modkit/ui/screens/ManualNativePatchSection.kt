@@ -466,7 +466,8 @@ fun ManualNativePatchSection(
                 applyOutcome = outcome
                 onStagingReady(outcome)
                 oneTapBuildStatus =
-                    "4/4 · Промежуточный APK проверен. Запущена подпись и проверка итоговой сборки…"
+                    "4/4 · Изменения применены и проверены. " +
+                        "Подпись итогового APK запущена — результат появится ниже."
                 onBuildRequested(outcome)
             } catch (_: AnalysisCancelledException) {
                 error = "Подготовка и сборка отменены. Оригинал не изменён."
@@ -1833,7 +1834,9 @@ fun ManualNativePatchSection(
                 style = MaterialTheme.typography.bodySmall,
             )
             oneTapBuildStatus?.let { status ->
-                LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (busy) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
                 Text(
                     status,
                     style = MaterialTheme.typography.bodySmall,
