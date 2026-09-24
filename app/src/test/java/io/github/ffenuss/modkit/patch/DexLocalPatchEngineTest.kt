@@ -2,6 +2,8 @@ package io.github.ffenuss.modkit.patch
 
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import java.io.File
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import org.jf.dexlib2.AccessFlags
 import org.jf.dexlib2.Opcode
 import org.jf.dexlib2.Opcodes
@@ -134,7 +136,140 @@ class DexLocalPatchEngineTest {
         )
     }
 
-    private fun syntheticDex(
+    @Test
+    fun recognizesBroaderGameplayMethodsWithoutDroppingGameAndroidPackages() {
+        val cases = listOf(
+            Triple("getHP", "I", DexLocalCategory.HEALTH),
+            Triple("getXP", "I", DexLocalCategory.EXPERIENCE),
+            Triple("getPlayerLevel", "I", DexLocalCategory.EXPERIENCE),
+            Triple("getInventoryCapacity", "I", DexLocalCategory.INVENTORY),
+            Triple("isNoClip", "Z", DexLocalCategory.MOVEMENT),
+            Triple("get_IsInvulnerable", "Z", DexLocalCategory.HEALTH),
+        )
+        cases.forEach { (name, returnType, category) ->
+            val bytes = syntheticDex(
+                "Lcom/example/android/game/PlayerStats;",
+                name,
+                returnType,
+            )
+            val scan = DexLocalPatchEngine.scanDex(
+                bytes, 0, "classes.dex", false, signal,
+            )
+            assertEquals("Expected an exact candidate for " + name,
+                1, scan.opportunities.size)
+            assertEquals(category, scan.opportunities.single().category)
+            assertTrue(scan.opportunities.single().selectable)
+            assertEquals(1, scan.classesInspected)
+            assertEquals(0, scan.classesExcluded)
+        }
+    }
+
+    @Test
+    fun debuggingOwnApplicationRequiresExplicitTestMode() {
+        val source = syntheticDex(
+            "Lcom/example/android/app/DebugSettings;",
+            "isDebugEnabled",
+            "Z",
+        )
+        val default = DexLocalPatchEngine.scanDex(
+            source, 0, "classes.dex", false, signal,
+        )
+        assertEquals(DexLocalCategory.DEBUG_UI,
+            default.opportunities.single().category)
+        assertFalse(default.opportunities.single().selectable)
+        val authorizedTest = DexLocalPatchEngine.scanDex(
+            source, 0, "classes.dex", true, signal,
+        )
+        assertTrue(authorizedTest.opportunities.single().selectable)
+    }
+
+    @Test
+    fun explainsWhenMethodsExistButNamesAreObfuscated() {
+        val bytes = syntheticDex(
+            "Lcom/example/game/Character;",
+            "a",
+            "Z",
+        )
+        val scan = DexLocalPatchEngine.scanDex(
+            bytes, 0, "classes.dex", false, signal,
+        )
+        assertTrue(scan.opportunities.isEmpty())
+        assertEquals(1, scan.methodsExamined)
+        assertEquals(1, scan.methodsWithCode)
+        assertEquals(1, scan.scalarNoArgumentMethods)
+        assertEquals(0, scan.semanticNamesMatched)
+        assertTrue(scan.explanation.contains("обфускация"))
+    }
+
+    @Test
+    fun scansBothDexEntriesAndDetectsNativeGameLibrary() {
+        val apk = File.createTempFile("modkit-synthetic-game", ".apk")
+        try {
+            ZipOutputStream(apk.outputStream().buffered()).use { output ->
+                val entries = mapOf(
+                    "classes.dex" to syntheticDex(
+                        "Lcom/example/game/Player;",
+                        "getHealth",
+                        "I",
+                    ),
+                    "classes2.dex" to syntheticDex(
+                        "Lcom/example/game/Movement;",
+                        "isNoClip",
+                        "Z",
+                    ),
+                    "lib/arm64-v8a/libgame.so" to
+                        byteArrayOf(0x7f, 0x45, 0x4c, 0x46),
+                )
+                entries.forEach { (name, bytes) ->
+                    output.putNextEntry(ZipEntry(name))
+                    output.write(bytes)
+                    output.closeEntry()
+                }
+            }
+            val scan = DexLocalPatchEngine.scanApks(
+                listOf(apk), false, signal,
+            )
+            assertEquals(2, scan.dexFilesExamined)
+            assertEquals(2, scan.opportunities.size)
+            assertEquals(1, scan.nativeLibrariesObserved)
+            assertEquals(2, scan.methodsExamined)
+        } finally {
+            apk.delete()
+        }
+    }
+
+    @Test
+    fun levelPatchWritesExactNinetyNineValue() {
+        val bytes = syntheticDex(
+            "Lcom/example/game/Stats;",
+            "getPlayerLevel",
+            "I",
+        )
+        val option = DexLocalPatchEngine.scanDex(
+            bytes, 0, "classes.dex", false, signal,
+        ).opportunities.single()
+        assertEquals(DexLocalAction.INT_99, option.action)
+        val output = File.createTempFile("modkit-level-rewrite", ".dex")
+        try {
+            DexLocalPatchEngine.rewriteDex(
+                bytes, 0, "classes.dex",
+                listOf(option), output, false, signal,
+            )
+            val instructions = DexBackedDexFile(
+                null, output.readBytes(),
+            ).classes.single().methods.single()
+                .implementation!!.instructions.toList()
+            assertEquals(
+                99,
+                (instructions[0] as NarrowLiteralInstruction).narrowLiteral,
+            )
+            assertEquals(Opcode.RETURN, instructions[1].opcode)
+        } finally {
+            output.delete()
+        }
+    }
+
+        private fun syntheticDex(
         declaringClass: String,
         name: String,
         returnType: String,
