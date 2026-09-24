@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.21**
+Current application version: **0.0.22**
 
 ## Product flow
 
@@ -43,6 +43,12 @@ If a target yields zero selectable modifications, ModKit now reports how many DE
 Method matching now includes more explicit local names for health/HP, invulnerability, stamina, ammunition, movement, no-clip, cooldowns, XP, level, inventory capacity and debug flags in self-authored apps. Library namespace matching was corrected so game packages containing `/android/` are no longer discarded. This increases coverage for unobfuscated DEX apps; it cannot resolve heavily obfuscated or fully native game logic automatically.
 
 Build retries now use unique output directories and no longer overwrite earlier signed results. The finished-build screen supports saving an APK or split APK ZIP directly to Downloads/ModKit (Android 10+) or through Android's system document picker on older phones.
+
+## One-tap IL2CPP APK builds (0.0.22)
+
+Previously, checking available Native Patch Lab modifications did not enable the bottom Build APK action. Applying a patch required two additional manual staging operations, so tapping Build appeared to do nothing.
+
+Now the Patch Lab action **«Применить и собрать APK»** combines checkbox selections with any existing queued manual drafts, performs one strict preflight, creates and validates the staged APK, and triggers the existing align/sign/verify pipeline. The top-level Build APK button still requires a previously staged result and explains this requirement. Parallel build attempts are blocked, and the UI distinguishes completed staging from ongoing signing. A successful CI build proves implementation checks, not that every detected modification will affect gameplay.
 
 ## Dedicated Unity gameplay assemblies (0.0.21)
 
