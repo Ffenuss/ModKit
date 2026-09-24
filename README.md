@@ -2,7 +2,7 @@
 
 ModKit is an Android-first workbench for **authorized analysis, reverse engineering and defensive validation of APK/APK-set targets**.
 
-Current application version: **0.0.23**
+Current application version: **0.0.24**
 
 ## Product flow
 
@@ -43,6 +43,14 @@ If a target yields zero selectable modifications, ModKit now reports how many DE
 Method matching now includes more explicit local names for health/HP, invulnerability, stamina, ammunition, movement, no-clip, cooldowns, XP, level, inventory capacity and debug flags in self-authored apps. Library namespace matching was corrected so game packages containing `/android/` are no longer discarded. This increases coverage for unobfuscated DEX apps; it cannot resolve heavily obfuscated or fully native game logic automatically.
 
 Build retries now use unique output directories and no longer overwrite earlier signed results. The finished-build screen supports saving an APK or split APK ZIP directly to Downloads/ModKit (Android 10+) or through Android's system document picker on older phones.
+
+## Signing recovery and visible build status (0.0.24)
+
+ModKit now displays operation progress and errors in a **persistent bottom status bar**, regardless of where the user has scrolled in the long Patch Lab list. Build failures also open a detail dialog without returning to the top. Nested signing-provider failures are shown with the split APK filename, not only the generic `Failed to sign using signer MODKIT` message.
+
+The phone-side testing output signs using APK Signature Scheme v2/v3 for Android 7+ rather than adding a legacy v1/JAR signature. This avoids v1-specific signing-provider failures, but cannot guarantee the hardware-backed AndroidKeyStore is functional on every phone. A 32-byte key/certificate self-test runs before large-APK signing; insufficient internal storage is reported before alignment. A failed build retains verified staging for retry.
+
+The output certificate is still ModKit's test certificate, not the original game's certificate. Android requires the APK set to use one consistent signer, and an installed original with a different signature cannot be updated in place. Back up saves before considering any replacement.
 
 ## Automatic signed APK export (0.0.23)
 
