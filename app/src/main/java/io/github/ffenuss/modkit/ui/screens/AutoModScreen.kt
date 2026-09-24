@@ -523,9 +523,13 @@ fun AutoModScreen(
                                             0L
                                         }
                                     scope.launch {
-                                        builtInstallNote =
-                                            "Передача Android: " + percent +
-                                                "% · " + name
+                                        if (builtInstallBusy &&
+                                            builtInstallSessionId == null
+                                        ) {
+                                            builtInstallNote =
+                                                "Передача Android: " + percent +
+                                                    "% · " + name
+                                        }
                                     }
                                 },
                             )
