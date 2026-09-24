@@ -2,6 +2,8 @@ package io.github.ffenuss.modkit.ui.screens
 
 import android.app.Activity
 import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -165,6 +167,24 @@ fun AutoModScreen(
         mutableStateOf<Int?>(null)
     }
     val installStatus by RepackedRuntimeInstallStatusStore.status.collectAsState()
+    var retryAfterInstallPermission by remember(result.index.artifactSha256) {
+        mutableStateOf(false)
+    }
+    val installPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            context.packageManager.canRequestPackageInstalls()
+        ) {
+            builtInstallNote =
+                "Разрешение выдано. Повторяем проверку установки автоматически…"
+            retryAfterInstallPermission = true
+        } else {
+            builtInstallNote =
+                "Android не разрешил установку из ModKit. " +
+                    "Включи разрешение для ModKit в настройках и вернись."
+        }
+    }
 
     var buildSaveBusy by remember(result.index.artifactSha256) {
         mutableStateOf(false)
@@ -494,16 +514,17 @@ fun AutoModScreen(
                         }
                         builtInstallSessionId = submission.sessionId
                         builtInstallNote =
-                            "Android получил APK-set (" +
+                            "Передано Android: " +
                                 submission.apkCount +
-                                " файлов). Подтверди системный запрос установки."
+                                " APK. Ожидаем системное подтверждение. " +
+                                "Если окно не появится, причина будет показана здесь."
                     }
                     RepackedRuntimeInstallReadinessState
                         .UNKNOWN_SOURCES_PERMISSION_REQUIRED -> {
                         builtInstallNote =
-                            "Разреши установку из ModKit в настройках Android " +
-                                "и нажми «Установить» ещё раз."
-                        context.startActivity(
+                            "Требуется разрешение Android на установку из ModKit. " +
+                                "После возврата автоматически повторим попытку."
+                        installPermissionLauncher.launch(
                             AndroidRepackedRuntimeInstaller
                                 .unknownSourcesSettingsIntent(context),
                         )
@@ -511,9 +532,10 @@ fun AutoModScreen(
                     RepackedRuntimeInstallReadinessState
                         .INSTALLED_SIGNATURE_CONFLICT -> {
                         builtInstallNote =
-                            "Установленная версия подписана другим ключом. " +
-                                "Перед удалением сохрани игровые данные: " +
-                                "Android не разрешает обновление поверх неё."
+                            "Установка заблокирована: оригинальная игра " +
+                                "подписана другим сертификатом. Android не " +
+                                "разрешает заменить её сборкой ModKit. " +
+                                "Не удаляй игру без резервной копии сохранений."
                     }
                 }
             } catch (_: AnalysisCancelledException) {
@@ -525,6 +547,16 @@ fun AutoModScreen(
                 builtInstallBusy = false
                 if (cancellation === signal) cancellation = null
             }
+        }
+    }
+
+    LaunchedEffect(retryAfterInstallPermission, builtInstallBusy) {
+        if (retryAfterInstallPermission &&
+            !builtInstallBusy &&
+            buildResult != null
+        ) {
+            retryAfterInstallPermission = false
+            installBuiltPackage()
         }
     }
 
@@ -977,17 +1009,72 @@ fun AutoModScreen(
                                             },
                                     )
                                 }
+                                if (builtInstallSessionId != null &&
+                                    installStatus.sessionId == builtInstallSessionId
+                                ) {
+                                    Text(
+                                        "Android: " +
+                                            when (installStatus.kind) {
+                                                io.github.ffenuss.modkit.runtime
+                                                    .RepackedRuntimeInstallStatusKind.SUCCESS ->
+                                                    "Установка завершена"
+                                                io.github.ffenuss.modkit.runtime
+                                                    .RepackedRuntimeInstallStatusKind.FAILURE ->
+                                                    "Ошибка установки"
+                                                io.github.ffenuss.modkit.runtime
+                                                    .RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED ->
+                                                    "Подтверди установку в системном окне"
+                                                else ->
+                                                    "Ожидаем ответ установщика"
+                                            } +
+                                            ". " +
+                                            installStatus.message.orEmpty(),
+                                        color =
+                                            if (
+                                                installStatus.kind ==
+                                                    io.github.ffenuss.modkit.runtime
+                                                        .RepackedRuntimeInstallStatusKind.FAILURE
+                                            ) MaterialTheme.colorScheme.error
+                                            else MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                                 if (
                                     builtInstallReadiness?.state ==
                                         RepackedRuntimeInstallReadinessState
                                             .INSTALLED_SIGNATURE_CONFLICT
                                 ) {
                                     Text(
-                                        "Не удаляйте оригинал без резервной " +
-                                            "копии сохранений.",
+                                        "Причина: подпись готового APK отличается " +
+                                            "от подписи установленной игры. " +
+                                            "Это не ошибка выбора модов.",
                                         color = MaterialTheme.colorScheme.error,
                                         style =
                                             MaterialTheme.typography.bodySmall,
+                                    )
+                                    OutlinedButton(
+                                        onClick = {
+                                            context.startActivity(
+                                                Intent(
+                                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                                    Uri.parse(
+                                                        "package:" +
+                                                            requireNotNull(
+                                                                builtInstallReadiness,
+                                                            ).packageName,
+                                                    ),
+                                                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                            )
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Text("Открыть сведения об установленной игре")
+                                    }
+                                    Text(
+                                        "Не удаляй оригинал без резервной копии " +
+                                            "сохранений. ModKit не удаляет его автоматически.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error,
                                     )
                                 }
                             }
