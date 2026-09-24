@@ -19,7 +19,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DexLocalPatchEngineTest {
-    private val signal = CancellationSignal { false }
+    private val signal = object : CancellationSignal {
+        override fun isCancelled(): Boolean = false
+    }
 
     @Test
     fun fullVersionOnlySelectableForDevelopersOwnTestBuild() {
