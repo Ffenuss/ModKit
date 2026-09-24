@@ -120,8 +120,10 @@ jobs:
           gradle-version: '9.5.0'
       - name: Install compile SDK and NDK
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;28.2.13676358"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-37.0" "build-tools;36.0.0" "ndk;28.2.13676358"
       - name: Enable emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -140,7 +142,7 @@ jobs:
           script: |
             bash tools/install_device_fixture.sh ${{ matrix.fixture }}
             adb logcat -c
-            gradle --no-daemon :app:connectedDebugAndroidTest; RESULT=$?; adb logcat -d > device-logcat.txt; adb pull /sdcard/Android/data/io.github.ffenuss.modkit/files/device-validation device-validation || true; exit $RESULT
+            set +e; gradle --no-daemon :app:connectedDebugAndroidTest; RESULT=$?; adb logcat -d > device-logcat.txt; adb pull /sdcard/Android/data/io.github.ffenuss.modkit/files/device-validation device-validation || true; exit $RESULT
       - name: Upload device evidence
         if: always()
         uses: actions/upload-artifact@v4
