@@ -49,8 +49,24 @@ fun SimpleAnalysisScreen(title: String, progress: EngineProgress?, result: FastA
                     }, style = MaterialTheme.typography.titleMedium)
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     partialNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                    progress?.processed?.let { count -> Text(progress.total?.let { "$count / $it" } ?: "Обработано: $count",
-                        style = MaterialTheme.typography.bodyMedium) }
+                    progress?.processed?.let { count ->
+                        val extractionBytes = progress.engineId == "il2cpp.codegen-bind" &&
+                            (progress.currentTask?.contains("извлечение libil2cpp.so", ignoreCase = true) == true ||
+                                progress.currentTask?.contains("libil2cpp.so извлечена", ignoreCase = true) == true)
+                        val total = progress.total
+                        val display = if (extractionBytes && total != null && total > 0L) {
+                            val percent = (count.toDouble() * 100.0 / total).coerceIn(0.0, 100.0)
+                            "Извлечено: %.1f / %.1f МиБ (%.0f%%)".format(
+                                java.util.Locale.getDefault(),
+                                count.toDouble() / 1_048_576.0,
+                                total.toDouble() / 1_048_576.0,
+                                percent,
+                            )
+                        } else {
+                            total?.let { "$count / $it" } ?: "Обработано: $count"
+                        }
+                        Text(display, style = MaterialTheme.typography.bodyMedium)
+                    }
                     if (result != null) Text("Результаты сохраняются по мере анализа.", style = MaterialTheme.typography.bodySmall)
                 }
             }
