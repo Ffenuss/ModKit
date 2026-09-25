@@ -97,13 +97,18 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                     } else if (resultVisible) {
                         if (status?.kind == RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED) {
                             Text("Android ждёт подтверждения установки", style = MaterialTheme.typography.labelLarge)
-                            Button(onClick = {
-                                runCatching {
-                                    check(RepackedRuntimeInstallConfirmationStore.open(context, requireNotNull(status.sessionId))) {
-                                        "Подтверждение больше недоступно. Повторите установку."
-                                    }
-                                }.onFailure { model.showError(it.message.orEmpty()) }
-                            }, modifier = Modifier.fillMaxWidth()) { Text("Подтвердить установку") }
+                            if (RepackedRuntimeInstallConfirmationStore.availableFor(status.sessionId)) {
+                                Button(onClick = {
+                                    runCatching {
+                                        check(RepackedRuntimeInstallConfirmationStore.open(context, requireNotNull(status.sessionId))) {
+                                            "Подтверждение уже открыто. Если вы закрыли окно Android, повторите установку."
+                                        }
+                                    }.onFailure { model.showError(it.message.orEmpty()) }
+                                }, modifier = Modifier.fillMaxWidth()) { Text("Подтвердить установку") }
+                            } else {
+                                Text("Системное окно подтверждения уже запрошено. Если оно было закрыто, нажмите «Установить» ещё раз.",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
                         } else {
                             status?.let { Text(when (it.kind) {
                                 RepackedRuntimeInstallStatusKind.SUCCESS -> "Приложение установлено"

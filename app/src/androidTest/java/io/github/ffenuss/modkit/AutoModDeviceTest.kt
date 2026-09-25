@@ -70,12 +70,91 @@ class AutoModDeviceTest {
     private fun launchGame() {
         context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(fixturePackage))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
-        assertTrue("Fixture must launch", device.wait(Until.hasObject(By.textContains("Health:")), 15_000))
+        val gameReady = device.wait(Until.hasObject(By.textContains("Health:")), 45_000)
+        if (!gameReady) evidence("fixture-launch-failure.png") { device.takeScreenshot(it) }
+        assertTrue("Fixture must launch", gameReady)
+    }
+
+
+    /**
+     * Exercise the real system confirmation once per session. The receiver
+     * normally opens it; repeatedly re-opening the same Intent on API 29
+     * leaves a stale parse-error dialog over the following UI test.
+     */
+    private fun awaitInstallResult(
+        attemptedAt: Long,
+        timeoutMs: Long,
+        expectedSessionId: Int? = null,
+        manualUiFallback: Boolean = false,
+    ): RepackedRuntimeInstallStatus {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var pendingSince: Long? = null
+        var systemConfirmationTapped = false
+        var manualConfirmationRequested = false
+        while (System.currentTimeMillis() < deadline) {
+            assertFalse(
+                "A stale/duplicate PackageInstaller confirmation displayed a parse-error dialog",
+                device.hasObject(By.textContains("There was a problem parsing the package")),
+            )
+            val status = RepackedRuntimeInstallStatusStore.status.value
+            if (status.updatedAtEpochMs >= attemptedAt &&
+                (expectedSessionId == null || status.sessionId == expectedSessionId)
+            ) {
+                assertNotEquals(status.message, RepackedRuntimeInstallStatusKind.FAILURE, status.kind)
+                if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) {
+                    assertFalse(
+                        "Successful install must not leave an extra parse-error dialog",
+                        device.hasObject(By.textContains("There was a problem parsing the package")),
+                    )
+                    return status
+                }
+                if (status.kind == RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED) {
+                    if (pendingSince == null) pendingSince = System.currentTimeMillis()
+                    val installerVisible =
+                        device.hasObject(By.pkg("com.android.packageinstaller")) ||
+                            device.hasObject(By.pkg("com.google.android.packageinstaller"))
+                    if (installerVisible && !systemConfirmationTapped) {
+                        val systemInstall =
+                            device.findObject(By.res("com.android.packageinstaller", "ok_button"))
+                                ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
+                                ?: device.findObject(By.text("Install"))
+                                ?: device.findObject(By.text("INSTALL"))
+                                ?: device.findObject(By.text("Update"))
+                                ?: device.findObject(By.text("UPDATE"))
+                        if (systemInstall != null) {
+                            systemInstall.click()
+                            systemConfirmationTapped = true
+                        }
+                    } else if (!installerVisible && !manualConfirmationRequested &&
+                        System.currentTimeMillis() - pendingSince >= 3_000L &&
+                        RepackedRuntimeInstallConfirmationStore.availableFor(status.sessionId)
+                    ) {
+                        if (manualUiFallback) {
+                            val button = device.findObject(By.text("Подтвердить установку"))
+                            if (button != null) {
+                                button.click()
+                                manualConfirmationRequested = true
+                            }
+                        } else {
+                            val id = requireNotNull(status.sessionId)
+                            instrumentation.runOnMainSync {
+                                assertTrue(RepackedRuntimeInstallConfirmationStore.open(context, id))
+                            }
+                            manualConfirmationRequested = true
+                        }
+                    }
+                }
+            }
+            device.wait(Until.hasObject(By.text("Приложение установлено")), 500)
+        }
+        return RepackedRuntimeInstallStatusStore.status.value
     }
 
     @Test fun a_simpleInterfaceSelectsAndBuildsWithoutExpertTools() {
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        assertTrue(device.wait(Until.hasObject(By.text("Выбрать игру")), 15_000))
+        val homeReady = device.wait(Until.hasObject(By.text("Выбрать игру")), 45_000)
+        if (!homeReady) evidence("modkit-home-timeout.png") { device.takeScreenshot(it) }
+        assertTrue("ModKit home must become accessible", homeReady)
         evidence("home.png") { device.takeScreenshot(it) }
         device.findObject(By.text("Выбрать игру")).click()
         assertTrue(device.wait(Until.hasObject(By.text("ModKit Test Game")), 15_000))
@@ -165,25 +244,12 @@ class AutoModDeviceTest {
         assertTrue(device.executeShellCommand("pm uninstall $fixturePackage").contains("Success"))
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         device.waitForIdle()
+        val attemptedAt = System.currentTimeMillis()
         val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
-        val deadline = System.currentTimeMillis() + 30_000
-        while (System.currentTimeMillis() < deadline) {
-            val status = RepackedRuntimeInstallStatusStore.status.value
-            if (status.kind == RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED) {
-                instrumentation.runOnMainSync {
-                    RepackedRuntimeInstallConfirmationStore.open(context, submission.sessionId)
-                }
-                val install = device.wait(Until.findObject(By.res("com.android.packageinstaller", "ok_button")), 1500)
-                    ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
-                    ?: device.findObject(By.text("Install"))
-                    ?: device.findObject(By.text("INSTALL"))
-                install?.click()
-            }
-            if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) break
-            assertNotEquals(status.message, RepackedRuntimeInstallStatusKind.FAILURE, status.kind)
-            device.waitForIdle(500)
-        }
-        assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, RepackedRuntimeInstallStatusStore.status.value.kind)
+        val directInstall = awaitInstallResult(
+            attemptedAt, 100_000L, expectedSessionId = submission.sessionId,
+        )
+        assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, directInstall.kind)
         launchGame()
         assertTrue(device.hasObject(By.text("ALIVE | Health: 9999")))
         repeat(3) { hit() }
@@ -213,29 +279,40 @@ class AutoModDeviceTest {
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val installButton = device.wait(Until.findObject(By.text("Установить")), 15_000)
         assertNotNull("Retained UI build must remain installable", installButton)
+        val previousSessionId = RepackedRuntimeInstallStatusStore.status.value.sessionId
         val attemptedAt = System.currentTimeMillis()
         installButton.click()
-        val deadline = System.currentTimeMillis() + 45_000
-        while (System.currentTimeMillis() < deadline) {
-            val status = RepackedRuntimeInstallStatusStore.status.value
-            if (status.updatedAtEpochMs >= attemptedAt) {
-                if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) break
-                assertNotEquals(status.message, RepackedRuntimeInstallStatusKind.FAILURE, status.kind)
-                device.findObject(By.text("Подтвердить установку"))?.click()
-                val systemInstall = device.findObject(By.res("com.android.packageinstaller", "ok_button"))
-                    ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
-                    ?: device.findObject(By.text("Install"))
-                    ?: device.findObject(By.text("INSTALL"))
-                    ?: device.findObject(By.text("Update"))
-                    ?: device.findObject(By.text("UPDATE"))
-                systemInstall?.click()
+        // A late callback from the direct-install test must never satisfy
+        // this UI install assertion or be mistaken for its own success.
+        val newSessionDeadline = System.currentTimeMillis() + 45_000L
+        var uiSessionId: Int? = null
+        while (System.currentTimeMillis() < newSessionDeadline) {
+            val current = RepackedRuntimeInstallStatusStore.status.value
+            if (current.updatedAtEpochMs >= attemptedAt &&
+                current.sessionId != null && current.sessionId != previousSessionId
+            ) {
+                uiSessionId = current.sessionId
+                break
             }
             device.wait(Until.hasObject(By.text("Приложение установлено")), 500)
         }
-        val completed = RepackedRuntimeInstallStatusStore.status.value
-        evidence("ui-install-state.png") { device.takeScreenshot(it) }
-        evidence("ui-install-hierarchy.xml") { device.dumpWindowHierarchy(it) }
-        assertTrue("A new installation must complete from the retained UI build", completed.updatedAtEpochMs >= attemptedAt)
+        val actualUiSession = requireNotNull(uiSessionId) {
+            "The retained UI install button must submit its own PackageInstaller session."
+        }
+        val completed: RepackedRuntimeInstallStatus
+        try {
+            completed = awaitInstallResult(
+                attemptedAt, 100_000L, expectedSessionId = actualUiSession,
+                manualUiFallback = true,
+            )
+        } finally {
+            evidence("ui-install-state.png") { device.takeScreenshot(it) }
+            evidence("ui-install-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+        }
+        assertTrue(
+            "A new installation must complete from the retained UI build",
+            completed.updatedAtEpochMs >= attemptedAt,
+        )
         assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, completed.kind)
         launchGame()
         repeat(3) { hit() }
