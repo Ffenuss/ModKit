@@ -13,6 +13,15 @@ object Il2CppOnDemandBindings {
     ): Il2CppMethodBinaryBinding? {
         val disk = evidence.bindingIndex ?: return null
         val indexed = disk.lookup(method.index) ?: return null
+        return resolveIndexed(evidence, method, imageDef, indexed)
+    }
+
+    fun resolveIndexed(
+        evidence: Il2CppBinaryEvidence,
+        method: Il2CppMethodDefinition,
+        imageDef: Il2CppImageDefinition,
+        indexed: Il2CppIndexedMethod,
+    ): Il2CppMethodBinaryBinding? {
         val module = evidence.modules.getOrNull(indexed.moduleIndex) ?: return null
         if (!imageDef.name.equals(module.moduleName, ignoreCase = true) ||
             indexed.slotIndex >= module.methodPointerCount
