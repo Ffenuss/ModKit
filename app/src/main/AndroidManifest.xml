@@ -17,6 +17,11 @@
         android:name="android.permission.REQUEST_DELETE_PACKAGES"
         tools:ignore="RequestDeletePackagesPolicy" />
 
+    <!-- Explicit consent for the user-controlled floating menu, never requested silently. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <application
         android:allowBackup="false"
         android:largeHeap="true"
@@ -35,6 +40,15 @@
 
         <!-- Explicit PackageInstaller callback: preserves the current Patch Lab
              screen and receives results without launching a second activity. -->
+        <service
+            android:name=".runtime.ModKitRuntimeOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Explicitly launched user-controlled game modification overlay" />
+        </service>
+
         <receiver
             android:name=".runtime.RepackedInstallStatusReceiver"
             android:exported="false" />
