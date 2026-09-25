@@ -321,6 +321,7 @@ object FastArtifactIndexer {
         if (base in setOf("libmonosgen-2.0.so", "libmonobdwgc-2.0.so", "libmonodroid.so")) tags += "mono_native"
         if (base in setOf("libue4.so", "libunreal.so", "libunrealengine.so")) tags += "unreal_native"
         if (low.endsWith(".pak") || low.endsWith(".utoc") || low.endsWith(".ucas")) tags += "unreal_container_candidate"
+        if (low.endsWith(".uasset") || low.endsWith(".umap")) tags += "unreal_asset_candidate"
         if (base in setOf("libgodot_android.so", "libgodot.so")) tags += "godot_native"
         if (low.endsWith(".pck")) tags += "godot_pck_candidate"
         if (base == "libdmengine.so") tags += "defold_native"

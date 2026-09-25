@@ -52,7 +52,7 @@ object RuntimeFingerprintProfiler {
         val managed = evidence("managed_candidate", "mono_native")
         if (managed.size >= 2) out += likely("dotnet_android", ".NET Android / Xamarin / MAUI", managed)
 
-        val unreal = evidence("unreal_native", "unreal_container_candidate")
+        val unreal = evidence("unreal_native", "unreal_container_candidate", "unreal_asset_candidate")
         if (unreal.isNotEmpty()) out += likely("unreal", "Unreal Engine", unreal)
 
         val godot = evidence("godot_native", "godot_pck_candidate")

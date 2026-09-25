@@ -19,6 +19,7 @@ object RoutedEngineScheduler {
     private val registeredEngineIds = setOf(
         "dex.inventory",
         "elf.universal-inventory",
+        "unreal.package-inventory",
         "il2cpp.fast-dump",
         "il2cpp.codegen-bind",
     )
@@ -115,6 +116,37 @@ object RoutedEngineScheduler {
                                         engine.id + ": " + it
                                     }
                                 ).distinct(),
+                        )
+                    }
+
+                    "unreal.package-inventory" -> {
+                        val cached = withContext(Dispatchers.IO) {
+                            cache?.loadUnrealAssetInventory(result.index.artifactSha256)
+                        }
+                        val inventory = cached ?: withContext(Dispatchers.IO) {
+                            UnrealAssetInventoryEngine.analyze(
+                                workspace, engineCancellation, progress,
+                            )
+                        }.also { produced ->
+                            withContext(Dispatchers.IO) {
+                                cache?.saveUnrealAssetInventory(
+                                    result.index.artifactSha256, produced,
+                                )
+                            }
+                        }
+                        if (cached != null) {
+                            publishCacheHit(progress, engine, result.index.artifactSha256)
+                        }
+                        result.copy(
+                            unrealAssetInventory = inventory,
+                            engineCacheHits = if (cached != null) {
+                                result.engineCacheHits + engine.id
+                            } else result.engineCacheHits,
+                            engineWarnings = (
+                                result.engineWarnings + inventory.warnings.map {
+                                    engine.id + ": " + it
+                                }
+                            ).distinct(),
                         )
                     }
 

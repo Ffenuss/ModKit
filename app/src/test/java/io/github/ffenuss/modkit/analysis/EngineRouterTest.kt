@@ -110,4 +110,27 @@ class EngineRouterTest {
         assertTrue(plan.missingCapabilities.any { "global-metadata.dat" in it })
     }
 
+    @Test
+    fun unrealPakGetsRealStructuralBackendButNotUnprovenGameplayPatches() {
+        val pak = ArtifactEntry(
+            container = "base.apk",
+            path = "assets/Paks/Game.pak",
+            size = 4096L,
+            tags = setOf("unreal_container_candidate"),
+        )
+        val index = ArtifactIndex(
+            artifactSha256 = "sha",
+            sources = listOf(ArtifactSource("base.apk", 4096L, "sha")),
+            entries = listOf(pak),
+            runtimeProfiles = RuntimeFingerprintProfiler.profile(listOf(pak)),
+        )
+        val plan = EngineRouter.plan(index)
+        assertTrue(plan.targeted.any {
+            it.id == UnrealAssetInventoryEngine.ID && it.availableNow
+        })
+        assertFalse(plan.targeted.first { it.id == "unreal.deep" }.availableNow)
+        assertTrue(plan.missingCapabilities.any { "Blueprint" in it })
+        assertTrue(RoutedEngineScheduler.supportsEngine(UnrealAssetInventoryEngine.ID))
+    }
+
 }

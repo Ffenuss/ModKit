@@ -52,6 +52,7 @@ class EngineResultCache(
         val index = loadArtifactIndex(artifactSha256) ?: return null
         val dexInventory = loadDexInventory(artifactSha256)
         val elfInventory = loadUniversalElfInventory(artifactSha256)
+        val unrealInventory = loadUnrealAssetInventory(artifactSha256)
         val dump = loadIl2CppFastDump(artifactSha256)
         val binding = loadIl2CppBinaryBinding(artifactSha256)
         val runtimeEvidence = loadRuntimeEvidence(artifactSha256)
@@ -60,6 +61,7 @@ class EngineResultCache(
             add(ARTIFACT_INDEX_ENGINE_ID)
             if (dexInventory != null) add(DEX_INVENTORY_ENGINE_ID)
             if (elfInventory != null) add(UNIVERSAL_ELF_INVENTORY_ENGINE_ID)
+            if (unrealInventory != null) add(UNREAL_ASSET_INVENTORY_ENGINE_ID)
             if (dump != null) add(IL2CPP_FAST_DUMP_ENGINE_ID)
             if (binding != null) add(IL2CPP_BINARY_BINDING_ENGINE_ID)
             if (runtimeEvidence != null) add(RUNTIME_EVIDENCE_ENGINE_ID)
@@ -72,6 +74,7 @@ class EngineResultCache(
             elapsedMs = 0L,
             dexInventory = dexInventory,
             elfInventory = elfInventory,
+            unrealAssetInventory = unrealInventory,
             il2cppFastDump = dump,
             il2cppBinaryBinding = binding,
             runtimeStageAttempts = runtimeAttempts?.attempts.orEmpty(),
@@ -153,6 +156,19 @@ class EngineResultCache(
         engineId = UNIVERSAL_ELF_INVENTORY_ENGINE_ID,
         engineVersion = UNIVERSAL_ELF_INVENTORY_ENGINE_VERSION,
         payload = result,
+    )
+
+    fun loadUnrealAssetInventory(artifactSha256: String): UnrealAssetInventoryResult? =
+        load(
+            artifactSha256, UNREAL_ASSET_INVENTORY_ENGINE_ID,
+            UNREAL_ASSET_INVENTORY_ENGINE_VERSION, UnrealAssetInventoryResult::class.java,
+        )
+
+    fun saveUnrealAssetInventory(
+        artifactSha256: String, result: UnrealAssetInventoryResult,
+    ): Boolean = save(
+        artifactSha256, UNREAL_ASSET_INVENTORY_ENGINE_ID,
+        UNREAL_ASSET_INVENTORY_ENGINE_VERSION, result,
     )
 
     fun loadIl2CppFastDump(artifactSha256: String): Il2CppFastDumpResult? {
@@ -374,6 +390,9 @@ class EngineResultCache(
 
         const val UNIVERSAL_ELF_INVENTORY_ENGINE_ID = "elf.universal-inventory"
         const val UNIVERSAL_ELF_INVENTORY_ENGINE_VERSION = "2"
+
+        const val UNREAL_ASSET_INVENTORY_ENGINE_ID = "unreal.package-inventory"
+        const val UNREAL_ASSET_INVENTORY_ENGINE_VERSION = "1"
 
         const val IL2CPP_FAST_DUMP_ENGINE_ID = "il2cpp.fast-dump"
         const val IL2CPP_FAST_DUMP_ENGINE_VERSION = "4"

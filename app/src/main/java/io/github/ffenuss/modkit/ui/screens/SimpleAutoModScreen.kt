@@ -214,6 +214,24 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                         Text("Готовые рецепты не найдены", style = MaterialTheme.typography.titleMedium)
                         val missingIl2Cpp = result.routingPlan.missingCapabilities
                             .firstOrNull { it.startsWith("IL2CPP:") }
+                        result.unrealAssetInventory?.let { inventory ->
+                            Text(
+                                "Unreal: изучено контейнеров и пакетов: " +
+                                    inventory.records.size +
+                                    "; подтверждённых индексов PAK: " +
+                                    inventory.verifiedPakCount + ".",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                "Проверка Blueprint и игровых объектов ещё не поддерживается. " +
+                                    "Этот результат — инвентаризация, а не найденные моды.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            if (inventory.records.isEmpty()) Text(
+                                "PAK/IoStore не обнаружены в выбранных APK: ресурсы могли загружаться отдельно.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         Text(missingIl2Cpp ?: "Доступный анализ не подтвердил поддерживаемые изменения. Подробности и ручные инструменты есть в экспертном режиме.")
                         TextButton(onClick = model::discover) { Text("Повторить проверку") }
                     } }
