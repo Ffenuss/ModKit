@@ -135,8 +135,9 @@ final class RuntimeModMenu {
             );
         }
         Config parsed = parseBundle(extras);
-        persist(context.getApplicationContext(), parsed);
         synchronized (LOCK) {
+            restoreAllActive();
+            persist(context.getApplicationContext(), parsed);
             config = parsed;
             ACTIVE.clear();
             APPLYING.clear();
@@ -146,17 +147,31 @@ final class RuntimeModMenu {
     }
 
     static void clear(Context context) {
-        context.getApplicationContext()
-                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit()
-                .remove(KEY_CONFIG)
-                .apply();
         synchronized (LOCK) {
+            restoreAllActive();
+            context.getApplicationContext()
+                    .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit()
+                    .remove(KEY_CONFIG)
+                    .apply();
             config = Config.empty();
             ACTIVE.clear();
             APPLYING.clear();
         }
         requestRefresh();
+    }
+
+    /** Reconfiguration cannot silently forget bytes patched by an old menu. */
+    private static void restoreAllActive() {
+        for (Item item : config.items) {
+            if (MODE_PATCH.equals(item.mode) &&
+                    Boolean.TRUE.equals(ACTIVE.get(item.id)) &&
+                    !apply(item, false)) {
+                throw new IllegalStateException(
+                        "Turn off active modifications before replacing their menu."
+                );
+            }
+        }
     }
 
     /**
