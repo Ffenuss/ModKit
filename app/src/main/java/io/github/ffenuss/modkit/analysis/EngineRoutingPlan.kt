@@ -55,18 +55,48 @@ object EngineRouter {
                 available = true,
             )
         }
-        if ("unity_il2cpp" in runtimes) {
-            targeted(
-                id = "il2cpp.fast-dump",
-                reason = "Validated global-metadata.dat + libil2cpp.so pair",
-                available = true,
-            )
-            engines += PlannedEngine(
-                id = "il2cpp.codegen-bind",
-                scheduleClass = EngineScheduleClass.CONFIRMATION,
-                availableNow = true,
-                reason = "Run after metadata image reconstruction to prove token-slot executable bindings",
-            )
+        val il2cppProfile = index.runtimeProfiles.firstOrNull {
+            it.runtimeId == "unity_il2cpp"
+        }
+        if (il2cppProfile != null) {
+            // A LIKELY runtime ID is not proof that an extractable metadata
+            // image exists. Aniimo's partial evidence used to route into
+            // fast-dump and fail on its first required input.
+            val binaryReady = index.entries.any {
+                "il2cpp_binary" in it.tags && "elf_valid" in it.tags
+            }
+            val metadataReady = index.entries.any {
+                "il2cpp_metadata" in it.tags && "il2cpp_metadata_valid" in it.tags
+            }
+            if (il2cppProfile.status == DetectionStatus.CONFIRMED &&
+                binaryReady && metadataReady
+            ) {
+                targeted(
+                    id = "il2cpp.fast-dump",
+                    reason = "Validated global-metadata.dat + libil2cpp.so pair",
+                    available = true,
+                )
+                engines += PlannedEngine(
+                    id = "il2cpp.codegen-bind",
+                    scheduleClass = EngineScheduleClass.CONFIRMATION,
+                    availableNow = true,
+                    reason = "Run after metadata image reconstruction to prove token-slot executable bindings",
+                )
+            } else {
+                missing += when {
+                    !metadataReady && !binaryReady ->
+                        "IL2CPP: нет проверенных global-metadata.dat и libil2cpp.so. " +
+                            "Доступен частичный анализ DEX и ELF."
+                    !metadataReady ->
+                        "IL2CPP: global-metadata.dat не найдена или не прошла проверку. " +
+                            "Необходимо исследовать упаковку/состав APK; DEX и ELF доступны отдельно."
+                    !binaryReady ->
+                        "IL2CPP: libil2cpp.so отсутствует или не прошла ELF-проверку. " +
+                            "Проверьте исходный APK и все split-файлы."
+                    else ->
+                        "IL2CPP: признаки движка найдены, но достоверность профиля не подтверждена."
+                }
+            }
         }
         if ("unity_mono" in runtimes || "dotnet_android" in runtimes) {
             targeted(
