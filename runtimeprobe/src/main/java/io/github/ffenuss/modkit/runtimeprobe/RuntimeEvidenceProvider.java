@@ -23,6 +23,7 @@ import java.util.Arrays;
 
 public final class RuntimeEvidenceProvider extends ContentProvider {
     public static final String CALLER_PACKAGE = "io.github.ffenuss.modkit";
+    public static final String DEBUG_CALLER_PACKAGE = "io.github.ffenuss.modkit.test";
     public static final String PATH_EVIDENCE = "evidence";
     public static final String PATH_NATIVE_TRACE = "native-trace";
     public static final String PATH_NATIVE_JNI_TRACE = "native-jni-trace";
@@ -93,6 +94,23 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
             );
             return result;
         }
+        if ("setTestMenuSwitch".equals(method)) {
+            if (extras == null || arg == null) {
+                throw new IllegalArgumentException("Runtime switch id/state missing.");
+            }
+            boolean target = extras.getBoolean("enabled", false);
+            boolean success = RuntimeModMenu.setSwitch(arg, target);
+            Bundle result = baseReply();
+            result.putBoolean("applied", success);
+            result.putBoolean("enabled", RuntimeModMenu.isSwitchEnabled(arg));
+            return result;
+        }
+        if ("testMenuSwitchStatus".equals(method)) {
+            Bundle result = baseReply();
+            result.putBoolean("enabled", RuntimeModMenu.isSwitchEnabled(arg));
+            return result;
+        }
+
         if ("clearTestMenu".equals(method)) {
             RuntimeModMenu.clear(probeContext());
             Bundle result = baseReply();
@@ -485,7 +503,9 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         Context context = probeContext();
         int uid = Binder.getCallingUid();
         String[] packages = context.getPackageManager().getPackagesForUid(uid);
-        if (packages == null || !Arrays.asList(packages).contains(CALLER_PACKAGE)) {
+        if (packages == null ||
+                (!Arrays.asList(packages).contains(CALLER_PACKAGE) &&
+                 !Arrays.asList(packages).contains(DEBUG_CALLER_PACKAGE))) {
             throw new SecurityException("Runtime evidence is available only to ModKit.");
         }
     }
