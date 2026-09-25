@@ -20,6 +20,7 @@ object RoutedEngineScheduler {
         "dex.inventory",
         "elf.universal-inventory",
         "unreal.package-inventory",
+        "flutter.asset-inventory",
         "il2cpp.fast-dump",
         "il2cpp.codegen-bind",
     )
