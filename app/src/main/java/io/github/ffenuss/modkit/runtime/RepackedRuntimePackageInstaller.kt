@@ -468,33 +468,45 @@ object AndroidRepackedRuntimeInstaller {
  * It deliberately does not persist a privileged Parcelable across restarts.
  */
 object RepackedRuntimeInstallConfirmationStore {
-    @Volatile private var pendingSession: Int? = null
+    private val launchGate = InstallConfirmationLaunchGate()
     @Volatile private var pendingIntent: Intent? = null
 
     fun remember(sessionId: Int?, confirmation: Intent) {
-        pendingSession = sessionId
-        pendingIntent = Intent(confirmation)
+        if (launchGate.remember(sessionId)) {
+            pendingIntent = Intent(confirmation)
+        }
     }
 
     fun open(context: Context, sessionId: Int): Boolean {
-        val intent = pendingIntent ?: return false
-        if (pendingSession != sessionId) return false
-        context.startActivity(
-            Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
-        return true
+        // The receiver and the foreground button may race. Android 10 can
+        // present an erroneous package-parse dialog when the same confirmation
+        // activity is opened twice after a session has already been consumed.
+        if (!launchGate.claim(sessionId)) return false
+        val intent = pendingIntent ?: run {
+            launchGate.releaseOnLaunchFailure(sessionId)
+            return false
+        }
+        return try {
+            context.startActivity(
+                Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            true
+        } catch (failure: Exception) {
+            // Background activity restrictions may reject the receiver's
+            // launch. In that case, leave the explicit UI button usable.
+            launchGate.releaseOnLaunchFailure(sessionId)
+            throw failure
+        }
     }
 
     fun clear(sessionId: Int?) {
-        if (pendingSession == sessionId) {
+        if (launchGate.clear(sessionId)) {
             pendingIntent = null
-            pendingSession = null
         }
     }
 
     fun availableFor(sessionId: Int?): Boolean =
-        sessionId != null && pendingSession == sessionId &&
-            pendingIntent != null
+        launchGate.availableFor(sessionId) && pendingIntent != null
 }
 
 object RepackedRuntimeInstallStatusHandler {
@@ -620,16 +632,20 @@ class RepackedInstallStatusReceiver : BroadcastReceiver() {
                 intent = intent,
             )
             if (confirmation != null) {
-                // Newer Android/OEM policies may forbid opening an activity from
-                // a background receiver. The session is still waiting, not failed.
-                try {
-                    context.startActivity(confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                } catch (failure: Exception) {
-                    val pending = RepackedRuntimeInstallStatusStore.status.value
-                    RepackedRuntimeInstallStatusStore.publish(context, pending.copy(
-                        kind = RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED,
-                        message = "Android ждёт подтверждения. Вернитесь в ModKit и нажмите «Подтвердить установку».",
-                    ))
+                // Opening the same one-shot system confirmation both here and
+                // from the UI must not create competing installer activities.
+                // An OEM background-start rejection still permits a manual tap.
+                val sessionId = RepackedRuntimeInstallStatusStore.status.value.sessionId
+                if (sessionId != null) {
+                    try {
+                        RepackedRuntimeInstallConfirmationStore.open(context, sessionId)
+                    } catch (failure: Exception) {
+                        val pending = RepackedRuntimeInstallStatusStore.status.value
+                        RepackedRuntimeInstallStatusStore.publish(context, pending.copy(
+                            kind = RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED,
+                            message = "Android ждёт подтверждения. Вернитесь в ModKit и нажмите «Подтвердить установку».",
+                        ))
+                    }
                 }
             }
         } catch (failure: Exception) {
