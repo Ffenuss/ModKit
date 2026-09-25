@@ -67,7 +67,8 @@ class ModKitRuntimeOverlayService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (activeSha == sha && root != null) return START_NOT_STICKY
+        // A new launch reconfigures the injected menu and resets native patches.
+        // Rebuild the visible switches too, even if the same APK was launched again.
 
         createChannel()
         startForeground(
