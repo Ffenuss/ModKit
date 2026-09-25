@@ -49,11 +49,11 @@ object NativeRecipeCatalog {
                         // window is not proof that a multi-instruction patch fits.
                         val patchCapacity = if (span.nextOffset == null) minOf(4, window.byteLength) else window.byteLength
                         val proof = AArch64ReadOnlyBody.inspect(code)
-                        val shape = AArch64MethodAnalyzer.analyze(AArch64Disassembler.disassemble(code,
-                            window.binaryVirtualAddress ?: window.fileOffset, 256)).shape
+                        val bodyAnalysis = AArch64MethodAnalyzer.analyze(AArch64Disassembler.disassemble(code,
+                            window.binaryVirtualAddress ?: window.fileOffset, 256))
                         if (binding.returnKind == Il2CppNativeReturnKind.VOID) {
                             require(candidate.action == GameplayMutationAction.SKIP_METHOD &&
-                                shape == AArch64MethodShape.INSTANCE_FIELD_SETTER) {
+                                bodyAnalysis.shape == AArch64MethodShape.INSTANCE_FIELD_SETTER) {
                                 "Метод меняет состояние. Пока поддерживается только доказанная одиночная запись поля без вызовов."
                             }
                         } else require(proof.supported) { proof.reason }
@@ -104,7 +104,16 @@ object NativeRecipeCatalog {
                             require(bytes.size <= patchCapacity) {
                                 "Безопасная граница патча не доказана."
                             }
-                            require(!bytes.contentEquals(code.copyOf(bytes.size))) { "Метод уже возвращает выбранное значение; изменение не требуется." }
+                            val booleanValue = when (candidate.action) {
+                                GameplayMutationAction.FORCE_TRUE -> 1L
+                                GameplayMutationAction.FORCE_FALSE -> 0L
+                                else -> null
+                            }
+                            val sameBoolean = binding.returnKind == Il2CppNativeReturnKind.BOOLEAN &&
+                                booleanValue != null && bodyAnalysis.constantBits == booleanValue
+                            require(!sameBoolean && !bytes.contentEquals(code.copyOf(bytes.size))) {
+                                "Метод уже возвращает выбранное значение; изменение не требуется."
+                            }
                             effective = candidate.copy(replacementHex = replacement)
                         }
                         reason = null
