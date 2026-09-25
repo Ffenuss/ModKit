@@ -105,7 +105,18 @@ object EngineRouter {
                 missingText = ".NET metadata can be migrated, but CIL/CFG/calls remain incomplete in legacy code",
             )
         }
-        if ("flutter" in runtimes) targeted("flutter.dart-aot", "Flutter evidence", missingText = "Flutter AOT deep backend pending review")
+        if ("flutter" in runtimes) {
+            targeted(
+                "flutter.asset-inventory",
+                "Validated Flutter AssetManifest.bin/JSON and AOT ELF component inventory",
+                available = true,
+            )
+            targeted(
+                "flutter.dart-aot",
+                "Flutter evidence",
+                missingText = "Dart AOT gameplay decoder and reversible mod backend unavailable; resource inventory supported",
+            )
+        }
         if ("react_native_hermes" in runtimes) targeted("hermes.bytecode", "Hermes evidence", missingText = "Hermes deep backend pending review")
         if ("react_native_jsc" in runtimes) targeted("jsc.bytecode", "JavaScriptCore evidence", missingText = "JSC version-specific bytecode decoder remains incomplete")
         if ("unreal" in runtimes) {

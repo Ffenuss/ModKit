@@ -214,6 +214,20 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                         Text("Готовые рецепты не найдены", style = MaterialTheme.typography.titleMedium)
                         val missingIl2Cpp = result.routingPlan.missingCapabilities
                             .firstOrNull { it.startsWith("IL2CPP:") }
+                        result.flutterAssetInventory?.let { inventory ->
+                            Text(
+                                "Flutter: манифестов прочитано: " +
+                                    inventory.validatedManifestCount +
+                                    "; ресурсов в манифестах: " + inventory.listedAssetCount +
+                                    "; обнаружено файлов: " + inventory.packagedAssetCount + ".",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                "Проверены ресурсы и нативные компоненты. " +
+                                    "Анализ игровой логики Dart AOT пока недоступен.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         result.unrealAssetInventory?.let { inventory ->
                             Text(
                                 "Unreal: изучено контейнеров и пакетов: " +

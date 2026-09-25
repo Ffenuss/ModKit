@@ -20,6 +20,7 @@ object RoutedEngineScheduler {
         "dex.inventory",
         "elf.universal-inventory",
         "unreal.package-inventory",
+        "flutter.asset-inventory",
         "il2cpp.fast-dump",
         "il2cpp.codegen-bind",
     )
@@ -116,6 +117,22 @@ object RoutedEngineScheduler {
                                         engine.id + ": " + it
                                     }
                                 ).distinct(),
+                        )
+                    }
+
+                    "flutter.asset-inventory" -> {
+                        val inventory = withContext(Dispatchers.IO) {
+                            FlutterAssetInventoryEngine.analyze(
+                                workspace, engineCancellation, progress,
+                            )
+                        }
+                        result.copy(
+                            flutterAssetInventory = inventory,
+                            engineWarnings = (
+                                result.engineWarnings + inventory.warnings.map {
+                                    engine.id + ": " + it
+                                }
+                            ).distinct(),
                         )
                     }
 

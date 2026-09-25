@@ -112,6 +112,7 @@ object PatchLabDiagnosticReportWriter {
                 writeMetadataTables(zip, result)
                 writeBindings(zip, result)
                 writeUnrealInventory(zip, result)
+                writeFlutterInventory(zip, result)
                 writeEvidenceTargets(zip, result)
                 writeSharedBodies(zip, result)
                 writeCurrentAutoModSnapshot(
@@ -271,6 +272,15 @@ object PatchLabDiagnosticReportWriter {
                 "exactIl2CppMethodTargets: " +
                     targets,
             )
+            result.flutterAssetInventory?.let { inventory ->
+                writer.line()
+                writer.line("FLUTTER")
+                writer.line("validatedManifestCount: " + inventory.validatedManifestCount)
+                writer.line("listedAssetCount: " + inventory.listedAssetCount)
+                writer.line("packagedAssetEntries: " + inventory.packagedAssetCount)
+                writer.line("aotGameLogicDecoder: NOT_IMPLEMENTED")
+                inventory.warnings.forEach { writer.line("warning: " + it) }
+            }
             result.unrealAssetInventory?.let { inventory ->
                 writer.line()
                 writer.line("UNREAL")
@@ -519,6 +529,33 @@ object PatchLabDiagnosticReportWriter {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    private fun writeFlutterInventory(
+        zip: ZipOutputStream,
+        result: FastAnalysisResult,
+    ) {
+        writeTextEntry(zip, "flutter/asset-inventory.tsv") { writer ->
+            writer.line("container\tpath\tstatus\tassetCount\tsampledAssets\tnote")
+            result.flutterAssetInventory?.manifests.orEmpty().forEach { item ->
+                writer.line(
+                    listOf(
+                        item.container, item.path, item.status,
+                        item.assetCount, item.sampledAssets.joinToString(";"), item.note ?: "",
+                    ).joinToString("\t") { tsv(it) },
+                )
+            }
+        }
+        writeTextEntry(zip, "flutter/runtime-libraries.tsv") { writer ->
+            writer.line("container\tpath\tabi\tcomponent\telfValidated")
+            result.flutterAssetInventory?.runtimeLibraries.orEmpty().forEach { item ->
+                writer.line(
+                    listOf(
+                        item.container, item.path, item.abi ?: "", item.component, item.validatedElf,
+                    ).joinToString("\t") { tsv(it) },
+                )
             }
         }
     }
