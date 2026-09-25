@@ -533,6 +533,33 @@ object PatchLabDiagnosticReportWriter {
         }
     }
 
+    private fun writeFlutterInventory(
+        zip: ZipOutputStream,
+        result: FastAnalysisResult,
+    ) {
+        writeTextEntry(zip, "flutter/asset-inventory.tsv") { writer ->
+            writer.line("container\tpath\tstatus\tassetCount\tsampledAssets\tnote")
+            result.flutterAssetInventory?.manifests.orEmpty().forEach { item ->
+                writer.line(
+                    listOf(
+                        item.container, item.path, item.status,
+                        item.assetCount, item.sampledAssets.joinToString(";"), item.note ?: "",
+                    ).joinToString("\t") { tsv(it) },
+                )
+            }
+        }
+        writeTextEntry(zip, "flutter/runtime-libraries.tsv") { writer ->
+            writer.line("container\tpath\tabi\tcomponent\telfValidated")
+            result.flutterAssetInventory?.runtimeLibraries.orEmpty().forEach { item ->
+                writer.line(
+                    listOf(
+                        item.container, item.path, item.abi ?: "", item.component, item.validatedElf,
+                    ).joinToString("\t") { tsv(it) },
+                )
+            }
+        }
+    }
+
     private fun writeUnrealInventory(
         zip: ZipOutputStream,
         result: FastAnalysisResult,
