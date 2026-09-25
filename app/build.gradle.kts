@@ -26,8 +26,8 @@ android {
         applicationId = "io.github.ffenuss.modkit"
         minSdk = 26
         targetSdk = 36
-        versionCode = 28
-        versionName = "0.0.28"
+        versionCode = 29
+        versionName = "0.0.29"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -83,7 +83,7 @@ val prepareFixtureAssets = tasks.register<Copy>("prepareFixtureAssets") {
     rename { "fixture.apk" }
 }
 tasks.configureEach {
-    if (name == "mergeDebugAndroidTestAssets" || name.contains("AndroidTestLint")) dependsOn(prepareFixtureAssets)
+    if (name == "mergeDebugAndroidTestAssets" || (name.contains("AndroidTest") && name.contains("Lint", ignoreCase = true))) dependsOn(prepareFixtureAssets)
 }
 
 

@@ -10,7 +10,7 @@ import io.github.ffenuss.modkit.analysis.*
 import io.github.ffenuss.modkit.patch.*
 import io.github.ffenuss.modkit.runtime.*
 import java.io.File
-import java.util.zip.ZipFile
+import java.util.regex.Pattern
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -30,6 +30,19 @@ class AutoModDeviceTest {
     private val progress = ProgressSink { android.util.Log.i("ModKitDeviceTest", it.currentTask.orEmpty()) }
     private val fixturePackage = "dev.modkit.fixture"
 
+    private fun evidence(name: String, write: (File) -> Unit) {
+        val temporary = File(context.cacheDir, name)
+        write(temporary)
+        device.executeShellCommand("mkdir -p /data/local/tmp/modkit-device-validation")
+        device.executeShellCommand("run-as ${context.packageName} cat ${temporary.absolutePath} > /data/local/tmp/modkit-device-validation/$name")
+    }
+
+    private fun hit() {
+        val button = device.wait(Until.findObject(By.text(Pattern.compile("take damage", Pattern.CASE_INSENSITIVE))), 10_000)
+        requireNotNull(button) { "Fixture damage button is missing" }.click()
+        device.waitForIdle()
+    }
+
     private fun launchGame() {
         context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(fixturePackage))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
@@ -38,23 +51,22 @@ class AutoModDeviceTest {
 
     @Test fun a_simpleInterfaceSelectsAndBuildsWithoutExpertTools() {
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        val output = File(context.getExternalFilesDir(null), "device-validation").apply { mkdirs() }
         assertTrue(device.wait(Until.hasObject(By.text("Выбрать игру")), 15_000))
-        device.takeScreenshot(File(output, "home.png"))
+        evidence("home.png") { device.takeScreenshot(it) }
         device.findObject(By.text("Выбрать игру")).click()
         assertTrue(device.wait(Until.hasObject(By.text("ModKit Test Game")), 15_000))
         device.findObject(By.text("Анализ")).click()
         assertTrue(device.wait(Until.hasObject(By.text("Настройте свой мод")), 90_000))
         val health = device.wait(Until.findObject(By.text("Здоровье · значение 9999")), 90_000)
         assertNotNull("Actual selectable recipe must appear", health)
-        device.takeScreenshot(File(output, "modifications.png"))
+        evidence("modifications.png") { device.takeScreenshot(it) }
         health.click()
         val build = device.wait(Until.findObject(By.text("Создать мод · 1")), 5_000)
         assertNotNull(build)
         build.click()
         assertTrue("Build must reach result screen", device.wait(Until.hasObject(By.text("Сборка создана")), 120_000))
-        device.takeScreenshot(File(output, "result.png"))
-        assertTrue(device.hasObject(By.text("Установить")))
+        assertTrue(device.wait(Until.hasObject(By.text("Установить")), 30_000))
+        evidence("result.png") { device.takeScreenshot(it) }
         // Rotation must retain the successful build and its install action.
         device.setOrientationLeft()
         assertTrue(device.wait(Until.hasObject(By.text("Установить")), 15_000))
@@ -65,7 +77,7 @@ class AutoModDeviceTest {
     @Test fun b_discoversRewritesSignsInstallsAndChangesTheRunningGame() = runBlocking {
         launchGame()
         assertTrue(device.hasObject(By.text("ALIVE | Health: 20")))
-        repeat(3) { device.findObject(By.text("Take damage")).click(); device.waitForIdle() }
+        repeat(3) { hit() }
         assertTrue("Unmodified death rule must execute", device.hasObject(By.text("GAME OVER | Health: 0")))
 
         val installed = io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(fixturePackage)!!
@@ -121,11 +133,10 @@ class AutoModDeviceTest {
         assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, RepackedRuntimeInstallStatusStore.status.value.kind)
         launchGame()
         assertTrue(device.hasObject(By.text("ALIVE | Health: 9999")))
-        repeat(3) { device.findObject(By.text("Take damage")).click(); device.waitForIdle() }
+        repeat(3) { hit() }
         assertTrue("Patched getter must feed the real death rule", device.hasObject(By.text("ALIVE | Health: 9999")))
-        val output = File(context.getExternalFilesDir(null), "device-validation").apply { mkdirs() }
-        device.takeScreenshot(File(output, "modified-game.png"))
-        File(output, "metrics.json").writeText(JSONObject()
+        evidence("modified-game.png") { device.takeScreenshot(it) }
+        evidence("metrics.json") { file -> file.writeText(JSONObject()
             .put("device", android.os.Build.MODEL).put("api", android.os.Build.VERSION.SDK_INT)
             .put("methodsExamined", scan.methodsExamined).put("candidates", scan.opportunities.size)
             .put("selectableMethods", scan.opportunities.count { it.selectable })
@@ -133,6 +144,6 @@ class AutoModDeviceTest {
             .put("signedApks", built.files.size).put("runtimeConfirmedRecipes", 1)
             .put("baselineAfterThreeHits", "GAME OVER | Health: 0")
             .put("modifiedAfterThreeHits", "ALIVE | Health: 9999")
-            .put("outputSha256", org.json.JSONArray(built.files.map { it.sha256 })).toString(2))
+            .put("outputSha256", org.json.JSONArray(built.files.map { it.sha256 })).toString(2)) }
     }
 }

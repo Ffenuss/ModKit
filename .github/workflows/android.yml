@@ -76,8 +76,8 @@ jobs:
             grep -aFq "RuntimeNativeBridge_nativePatchCode" "$NATIVE"
           done
           "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
-          cp "$APK" ModKit-v0.0.28-debug.apk
-          sha256sum ModKit-v0.0.28-debug.apk > ModKit-v0.0.28-debug.apk.sha256
+          cp "$APK" ModKit-v0.0.29-debug.apk
+          sha256sum ModKit-v0.0.29-debug.apk > ModKit-v0.0.29-debug.apk.sha256
 
       - name: Upload test and lint reports
         if: always()
@@ -92,10 +92,10 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ModKit-v0.0.28-debug
+          name: ModKit-v0.0.29-debug
           path: |
-            ModKit-v0.0.28-debug.apk
-            ModKit-v0.0.28-debug.apk.sha256
+            ModKit-v0.0.29-debug.apk
+            ModKit-v0.0.29-debug.apk.sha256
           if-no-files-found: error
 
   device:
@@ -142,7 +142,7 @@ jobs:
           script: |
             bash tools/install_device_fixture.sh ${{ matrix.fixture }}
             adb logcat -c
-            set +e; gradle --no-daemon :app:connectedDebugAndroidTest; RESULT=$?; adb logcat -d > device-logcat.txt; adb pull /sdcard/Android/data/io.github.ffenuss.modkit/files/device-validation device-validation || true; exit $RESULT
+            set +e; gradle --no-daemon :app:connectedDebugAndroidTest; RESULT=$?; adb logcat -d > device-logcat.txt; adb pull /data/local/tmp/modkit-device-validation device-validation || true; exit $RESULT
       - name: Upload device evidence
         if: always()
         uses: actions/upload-artifact@v4
