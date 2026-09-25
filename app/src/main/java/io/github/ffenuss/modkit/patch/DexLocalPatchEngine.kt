@@ -695,7 +695,7 @@ object DexLocalPatchEngine {
         // Only exclude framework namespaces when they are a prefix.
         // Game packages such as Lcom/example/android/game/ must be kept.
         val framework = listOf(
-            "landroid/", "landroidx/", "lkotlin/",
+            "landroid/", "landroidx/", "lkotlin/", "lkotlinx/",
             "ljava/", "lcom/google/", "lorg/junit/",
             "lcom/unity3d/",
         )
