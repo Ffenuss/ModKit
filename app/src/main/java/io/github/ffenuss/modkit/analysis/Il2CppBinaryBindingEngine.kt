@@ -17,7 +17,7 @@ data class Il2CppBinaryBindingResult(
 
 object Il2CppBinaryBindingEngine {
     private const val MAX_LIBRARY_BYTES = 2L * 1024L * 1024L * 1024L
-    private const val EXTRACTION_READ_BYTES = 16 * 1024
+    private const val EXTRACTION_READ_BYTES = 128 * 1024
     private const val EXTRACTION_WRITE_BUFFER_BYTES = 256 * 1024
     private const val HEARTBEAT_MS = 1_000L
     private const val LOW_MEMORY_BINDING_LIMIT = 5_000
@@ -105,6 +105,22 @@ object Il2CppBinaryBindingEngine {
                 continue
             }
 
+            // The extraction can finish inside the heartbeat window. Mark the
+            // phase transition explicitly before the potentially long ELF and
+            // method-pointer analysis, rather than leaving the UI at 16 KiB.
+            progress.publish(
+                EngineProgress(
+                    engineId = "il2cpp.codegen-bind",
+                    scheduleClass = EngineScheduleClass.CONFIRMATION,
+                    state = RunState.RUNNING,
+                    currentTask = "IL2CPP: анализ libil2cpp.so",
+                    currentArtifact = candidate.path,
+                    processed = 0,
+                    total = null,
+                    lastHeartbeatEpochMs = System.currentTimeMillis(),
+                ),
+            )
+
             var lowMemoryRetry = false
             val scan =
                 runCatching {
@@ -181,7 +197,9 @@ object Il2CppBinaryBindingEngine {
         )
     }
 
-    private fun extract(
+    // Internal for regression tests: the final extraction event must be
+    // emitted even when the whole library copies faster than HEARTBEAT_MS.
+    internal fun extract(
         archive: File,
         entryName: String,
         output: File,
@@ -191,7 +209,19 @@ object Il2CppBinaryBindingEngine {
     ) {
         require(archive.isFile) { "Archive is unavailable: " + archive.absolutePath }
         var written = 0L
-        var lastHeartbeat = 0L
+        var lastHeartbeat = System.currentTimeMillis()
+        progress.publish(
+            EngineProgress(
+                engineId = "il2cpp.codegen-bind",
+                scheduleClass = EngineScheduleClass.CONFIRMATION,
+                state = RunState.RUNNING,
+                currentTask = "IL2CPP: извлечение libil2cpp.so",
+                currentArtifact = entryName,
+                processed = 0,
+                total = expectedSize.takeIf { it >= 0L },
+                lastHeartbeatEpochMs = lastHeartbeat,
+            ),
+        )
 
         try {
             ZipFile(archive).use { zip ->
@@ -238,6 +268,26 @@ object Il2CppBinaryBindingEngine {
                     }
                 }
             }
+
+            require(expectedSize < 0L || written == expectedSize) {
+                "libil2cpp.so extraction size differs from indexed entry: " +
+                    "$written / $expectedSize"
+            }
+            require(output.length() == written) {
+                "libil2cpp.so extraction was not fully written to disk."
+            }
+            progress.publish(
+                EngineProgress(
+                    engineId = "il2cpp.codegen-bind",
+                    scheduleClass = EngineScheduleClass.CONFIRMATION,
+                    state = RunState.RUNNING,
+                    currentTask = "IL2CPP: libil2cpp.so извлечена",
+                    currentArtifact = entryName,
+                    processed = written,
+                    total = written,
+                    lastHeartbeatEpochMs = System.currentTimeMillis(),
+                ),
+            )
         } catch (failure: Throwable) {
             output.delete()
             throw failure
