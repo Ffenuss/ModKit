@@ -190,7 +190,16 @@ class EngineResultCache(
             engineId = IL2CPP_BINARY_BINDING_ENGINE_ID,
             engineVersion = IL2CPP_BINARY_BINDING_ENGINE_VERSION,
             type = Il2CppBinaryBindingResult::class.java,
-        )
+        )?.takeIf { result ->
+            // A cached Java object alone is not proof that its disk-backed
+            // native indexes survived device cleanup, export or corruption.
+            // Rebuild from the SHA-bound source instead of returning a
+            // deceptively complete 30k-only snapshot with stale sidecars.
+            result.evidence.all { item ->
+                item.bindingIndex?.verify() == true &&
+                    item.functionIndex?.let { it.verify() } != false
+            }
+        }
 
     fun saveIl2CppBinaryBinding(
         artifactSha256: String,
@@ -370,7 +379,7 @@ class EngineResultCache(
         const val IL2CPP_FAST_DUMP_ENGINE_VERSION = "4"
 
         const val IL2CPP_BINARY_BINDING_ENGINE_ID = "il2cpp.codegen-bind"
-        const val IL2CPP_BINARY_BINDING_ENGINE_VERSION = "17"
+        const val IL2CPP_BINARY_BINDING_ENGINE_VERSION = "18"
 
         const val RUNTIME_EVIDENCE_ENGINE_ID = "runtime.evidence"
         const val RUNTIME_EVIDENCE_ENGINE_VERSION = "3"
