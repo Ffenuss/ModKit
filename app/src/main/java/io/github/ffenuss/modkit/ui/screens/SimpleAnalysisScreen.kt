@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLocale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
@@ -14,6 +15,7 @@ fun SimpleAnalysisScreen(title: String, progress: EngineProgress?, result: FastA
     active: Boolean, error: String?, cancelled: Boolean, cancelling: Boolean, stalledAgeMs: Long?,
     canSkipStalled: Boolean, partialNotice: String? = null, onOpenAutoMod: (() -> Unit)? = null,
     onCancel: () -> Unit, onRetry: () -> Unit, onSkip: () -> Unit, onBack: () -> Unit) {
+    val locale = LocalLocale.current.platformLocale
     Scaffold(bottomBar = {
         Surface(tonalElevation = 3.dp) {
             Column(Modifier.navigationBarsPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -57,7 +59,7 @@ fun SimpleAnalysisScreen(title: String, progress: EngineProgress?, result: FastA
                         val display = if (extractionBytes && total != null && total > 0L) {
                             val percent = (count.toDouble() * 100.0 / total).coerceIn(0.0, 100.0)
                             "Извлечено: %.1f / %.1f МиБ (%.0f%%)".format(
-                                java.util.Locale.getDefault(),
+                                locale,
                                 count.toDouble() / 1_048_576.0,
                                 total.toDouble() / 1_048_576.0,
                                 percent,
