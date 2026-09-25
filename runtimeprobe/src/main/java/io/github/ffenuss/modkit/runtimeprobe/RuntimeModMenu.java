@@ -159,6 +159,35 @@ final class RuntimeModMenu {
         requestRefresh();
     }
 
+    /**
+     * The external SYSTEM_ALERT_WINDOW controller and the injected in-game
+     * bubble use the same compare-and-swap native patch path. No static
+     * modification is made before a user enables a toggle.
+     */
+    static boolean setSwitch(String id, boolean enabled) {
+        if (id == null) return false;
+        Item item = null;
+        for (Item candidate : config.items) {
+            if (id.equals(candidate.id)) {
+                item = candidate;
+                break;
+            }
+        }
+        if (item == null || !MODE_PATCH.equals(item.mode)) return false;
+        synchronized (LOCK) {
+            if (Boolean.TRUE.equals(ACTIVE.get(id)) == enabled) return true;
+        }
+        boolean applied = apply(item, enabled);
+        if (applied) requestRefresh();
+        return applied;
+    }
+
+    static boolean isSwitchEnabled(String id) {
+        synchronized (LOCK) {
+            return Boolean.TRUE.equals(ACTIVE.get(id));
+        }
+    }
+
     static int itemCount() {
         return config.items.size();
     }
