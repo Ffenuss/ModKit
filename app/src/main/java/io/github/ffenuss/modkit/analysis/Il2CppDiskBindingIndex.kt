@@ -64,6 +64,36 @@ data class Il2CppDiskBindingIndex(
         }
     }
 
+    /** Stream the entire MethodDef index in order using one file handle. */
+    fun forEachBound(action: (Int, Il2CppIndexedMethod) -> Unit) {
+        require(verify()) { "IL2CPP binding index checksum does not match." }
+        RandomAccessFile(path, "r").use { raf ->
+            for (methodIndex in 0 until methodCount) {
+                val slotPlusOne = raf.readInt()
+                if (slotPlusOne == 0) {
+                    raf.seek((methodIndex + 1L) * RECORD_BYTES)
+                    continue
+                }
+                val moduleIndex = raf.readInt()
+                val va = raf.readLong()
+                val rawOffset = raf.readLong()
+                val kind = raf.readInt()
+                val reserved = raf.readInt()
+                require(slotPlusOne > 0 && moduleIndex >= 0 && va > 0 &&
+                    rawOffset >= -1L && reserved == 0 &&
+                    kind in Il2CppNativeReturnKind.entries.indices
+                ) { "Invalid disk binding at MethodDef $methodIndex." }
+                action(methodIndex, Il2CppIndexedMethod(
+                    slotIndex = slotPlusOne - 1,
+                    moduleIndex = moduleIndex,
+                    functionVirtualAddress = va,
+                    functionFileOffset = rawOffset.takeIf { it >= 0L },
+                    returnKind = Il2CppNativeReturnKind.entries[kind],
+                ))
+            }
+        }
+    }
+
     companion object {
         internal const val RECORD_BYTES = 32L
 
