@@ -246,6 +246,15 @@ object PatchLabDiagnosticReportWriter {
                 "exactBinaryBindings: " +
                     (binding?.exactBindingCount ?: 0),
             )
+            binding?.evidence.orEmpty().forEach { item ->
+                writer.line(
+                    "diskBindingIndex: " + item.libraryEntry +
+                        " methods=" + (item.bindingIndex?.methodCount ?: 0) +
+                        " exact=" + (item.bindingIndex?.boundCount ?: item.bindings.size) +
+                        " shaVerified=" + (item.bindingIndex?.verify() ?: false) +
+                        " memoryPreview=" + item.bindings.size,
+                )
+            }
             val targets =
                 result.evidenceGraph
                     ?.targets
@@ -415,58 +424,92 @@ object PatchLabDiagnosticReportWriter {
         zip: ZipOutputStream,
         result: FastAnalysisResult,
     ) {
-        val bodyCounts =
-            methodBodyCounts(result)
-        writeTextEntry(
-            zip,
-            "il2cpp/bindings.tsv",
-        ) { writer ->
+        val bodyCounts = methodBodyCounts(result)
+        val metadata = result.il2cppFastDump?.metadata
+        writeTextEntry(zip, "il2cpp/bindings.tsv") { writer ->
             writer.line(
-                "library\timage\tmodule\tmanagedIdentity\tmetadataToken\tmethodIndex\tslotIndex\treturnTypeIndex\treturnKind\treturnTypeProof\tfunctionVA\tfileOffset\tsharedBodyCount",
+                "library\timage\tmodule\tmanagedIdentity\tmetadataToken\tmethodIndex\t" +
+                    "slotIndex\treturnTypeIndex\treturnKind\treturnTypeProof\t" +
+                    "functionVA\tfileOffset\tsharedBodyCount",
             )
-            result.il2cppBinaryBinding
-                ?.evidence
-                .orEmpty()
-                .forEach { evidence ->
-                    evidence.bindings.forEach { binding ->
-                        val offset =
-                            binding.functionFileOffset
-                        val shared =
-                            if (offset == null) {
-                                0
-                            } else {
-                                bodyCounts[
-                                    bodyKey(
-                                        evidence.libraryEntry,
-                                        offset,
-                                    )
-                                ] ?: 0
+
+            fun emit(
+                evidence: io.github.ffenuss.modkit.analysis.Il2CppBinaryEvidence,
+                binding: io.github.ffenuss.modkit.analysis.Il2CppMethodBinaryBinding,
+                shared: Int?,
+            ) {
+                writer.line(
+                    listOf(
+                        evidence.libraryEntry,
+                        binding.imageName,
+                        binding.moduleName,
+                        binding.managedIdentity,
+                        hex(binding.metadataToken),
+                        binding.methodIndex,
+                        binding.slotIndex,
+                        binding.returnTypeIndex,
+                        binding.returnKind.name,
+                        binding.returnTypeProof ?: "",
+                        hex(binding.functionVirtualAddress),
+                        binding.functionFileOffset?.let(::hex) ?: "",
+                        shared ?: "",
+                    ).joinToString("\t") { tsv(it) },
+                )
+            }
+
+            result.il2cppBinaryBinding?.evidence.orEmpty().forEach { evidence ->
+                val disk = evidence.bindingIndex
+                if (disk != null && metadata != null && disk.verify()) {
+                    // 156k+ MethodDefs are exported in a bounded-memory stream,
+                    // not silently truncated to the 30k in-memory preview.
+                    val methods = arrayOfNulls<io.github.ffenuss.modkit.analysis.Il2CppMethodDefinition>(
+                        disk.methodCount,
+                    )
+                    metadata.methods.forEach { method ->
+                        if (method.index in methods.indices) methods[method.index] = method
+                    }
+                    val typeSize = (metadata.types.maxOfOrNull { it.index } ?: -1) + 1
+                    val imageByType =
+                        arrayOfNulls<io.github.ffenuss.modkit.analysis.Il2CppImageDefinition>(typeSize)
+                    metadata.images.forEach { image ->
+                        val last = minOf(
+                            typeSize.toLong(),
+                            image.typeStart.toLong() + image.typeCount,
+                        ).toInt()
+                        for (type in maxOf(0, image.typeStart) until last) {
+                            if (imageByType[type] == null) imageByType[type] = image
+                        }
+                    }
+                    val previewMethods = evidence.bindings.mapTo(HashSet()) { it.methodIndex }
+                    disk.forEachBound { methodIndex, indexed ->
+                        val method = methods.getOrNull(methodIndex) ?: return@forEachBound
+                        val image = imageByType.getOrNull(method.declaringTypeIndex)
+                            ?: return@forEachBound
+                        val binding = io.github.ffenuss.modkit.analysis.Il2CppOnDemandBindings
+                            .resolveIndexed(evidence, method, image, indexed)
+                            ?: return@forEachBound
+                        // The existing graph's body counts cover only its
+                        // materialized subset. Never present these sample
+                        // counts as proof of uniqueness for late methods.
+                        val shared = if (methodIndex in previewMethods) {
+                            binding.functionFileOffset?.let {
+                                bodyCounts[bodyKey(evidence.libraryEntry, it)]
                             }
-                        writer.line(
-                            listOf(
-                                evidence.libraryEntry,
-                                binding.imageName,
-                                binding.moduleName,
-                                binding.managedIdentity,
-                                hex(binding.metadataToken),
-                                binding.methodIndex,
-                                binding.slotIndex,
-                                binding.returnTypeIndex,
-                                binding.returnKind.name,
-                                binding.returnTypeProof
-                                    ?: "",
-                                hex(
-                                    binding.functionVirtualAddress,
-                                ),
-                                offset?.let(::hex)
-                                    ?: "",
-                                shared,
-                            ).joinToString("\t") {
-                                tsv(it)
+                        } else null
+                        emit(evidence, binding, shared)
+                    }
+                } else {
+                    // Older persisted analysis results have no full index.
+                    evidence.bindings.forEach { binding ->
+                        emit(
+                            evidence, binding,
+                            binding.functionFileOffset?.let {
+                                bodyCounts[bodyKey(evidence.libraryEntry, it)]
                             },
                         )
                     }
                 }
+            }
         }
     }
 
