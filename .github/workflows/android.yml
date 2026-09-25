@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main, audit/automod-reliability-20260924, fix/api29-packageinstaller-confirmation-20260925, fix/il2cpp-extraction-progress-20260925, feature/native-runtime-overlay-20260925, fix/il2cpp-validated-metadata-routing-20260925, feat/il2cpp-unbounded-disk-bindings-20260925, feat/unreal-asset-inventory-20260925 ]
+    branches: [ main, audit/automod-reliability-20260924, fix/api29-packageinstaller-confirmation-20260925, fix/il2cpp-extraction-progress-20260925, feature/native-runtime-overlay-20260925, fix/il2cpp-validated-metadata-routing-20260925, feat/il2cpp-unbounded-disk-bindings-20260925, feat/unreal-asset-inventory-20260925, feat/flutter-asset-manifest-20260925 ]
   workflow_dispatch:
 
 permissions:
