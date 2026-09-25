@@ -50,6 +50,11 @@ jobs:
       - name: Unit tests, lint, assemble
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 
+      - name: Execute emitted ARM64 recipes independently
+        run: |
+          python -m pip install unicorn==2.1.4
+          python tools/verify_arm64_vectors.py app/build/native-verification.tsv
+
       - name: Verify APK
         shell: bash
         run: |
@@ -76,14 +81,83 @@ jobs:
             grep -aFq "RuntimeNativeBridge_nativePatchCode" "$NATIVE"
           done
           "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
-          cp "$APK" ModKit-v0.0.28-debug.apk
-          sha256sum ModKit-v0.0.28-debug.apk > ModKit-v0.0.28-debug.apk.sha256
+          "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee apk-signature-verification.txt
+          cp "$APK" ModKit-v0.0.30-debug.apk
+          sha256sum ModKit-v0.0.30-debug.apk > ModKit-v0.0.30-debug.apk.sha256
+
+      - name: Upload test and lint reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-jvm
+          path: |
+            app/build/test-results/
+            app/build/reports/tests/
+            app/build/reports/lint-results-debug.*
+            apk-signature-verification.txt
+            app/build/native-verification.*
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ModKit-v0.0.28-debug
+          name: ModKit-v0.0.30-debug
           path: |
-            ModKit-v0.0.28-debug.apk
-            ModKit-v0.0.28-debug.apk.sha256
+            ModKit-v0.0.30-debug.apk
+            ModKit-v0.0.30-debug.apk.sha256
           if-no-files-found: error
+
+  device:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api: 29
+            fixture: single
+          - api: 35
+            fixture: splits
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - name: Install compile SDK and NDK
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-37.0" "build-tools;36.0.0" "ndk;28.2.13676358"
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Build owned fixture and instrumentation
+        run: gradle --no-daemon :testgame:assembleDebug :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Run actual Android workflow
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api }}
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            bash tools/install_device_fixture.sh ${{ matrix.fixture }}
+            adb logcat -c
+            set +e; gradle --no-daemon :app:connectedDebugAndroidTest; RESULT=$?; adb logcat -d > device-logcat.txt; adb pull /sdcard/Download/ModKit-validation device-validation || true; exit $RESULT
+      - name: Upload device evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-device-api${{ matrix.api }}-${{ matrix.fixture }}
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+            device-validation/
+            device-logcat.txt

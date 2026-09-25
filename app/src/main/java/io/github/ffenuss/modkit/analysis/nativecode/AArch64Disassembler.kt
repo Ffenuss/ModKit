@@ -88,6 +88,16 @@ object AArch64Disassembler {
             )
         }
 
+        if (word in setOf(0xD503241FL, 0xD503245FL, 0xD503249FL, 0xD50324DFL)) {
+            return row(address, word, "bti", when (word) { 0xD503245FL -> "c"; 0xD503249FL -> "j"; 0xD50324DFL -> "jc"; else -> "" })
+        }
+        if (word and 0xFFE01FE0L in setOf(0x1E201000L, 0x1E601000L)) {
+            val double = word and 0x00400000L != 0L
+            val bits = AArch64FloatImmediate.bits(((word ushr 13) and 255).toInt(), double)
+            val number = if (double) Double.fromBits(bits).toString() else Float.fromBits(bits.toInt()).toString()
+            return row(address, word, "fmov", (if (double) "d" else "s") + (word and 31) + ", #" + number)
+        }
+
         // RET Xn.
         if (
             (word and 0xFFFFFC1FL) ==

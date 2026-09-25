@@ -107,7 +107,8 @@ object Il2CppNativeMutationDraftBuilder {
             "File offset метода выходит за границы libil2cpp.so."
         }
 
-        val nextMethodOffset =
+        val indexedSpan = indexedSpan(result, artifact, offset)
+        val nextMethodOffset = if (indexedSpan != null) indexedSpan.nextOffset else
             result.evidenceGraph
                 ?.targets
                 .orEmpty()
@@ -199,6 +200,8 @@ object Il2CppNativeMutationDraftBuilder {
         }
         require(offset >= 0L) { "Некорректный file offset." }
 
+        val artifact = requireNotNull(target.artifact) { "Native artifact is missing." }
+        val indexedSpan = indexedSpan(result, artifact, offset)
         val sameExecutableOffset =
             result.evidenceGraph
                 ?.targets
@@ -210,9 +213,10 @@ object Il2CppNativeMutationDraftBuilder {
                         it.artifact == target.artifact &&
                         it.fileOffset == offset
                 }
-        require(sameExecutableOffset.size == 1) {
+        val aliasCount = indexedSpan?.references ?: sameExecutableOffset.size
+        require(aliasCount == 1) {
             "Этот executable offset разделяется " +
-                sameExecutableOffset.size +
+                aliasCount +
                 " IL2CPP-методами. Изменение одной metadata-цели " +
                 "заблокировано, пока общий native target не выбран явно."
         }
@@ -234,7 +238,7 @@ object Il2CppNativeMutationDraftBuilder {
             "Размер in-place patch превышает внутренний лимит."
         }
 
-        val nextMethodOffset =
+        val nextMethodOffset = if (indexedSpan != null) indexedSpan.nextOffset else
             result.evidenceGraph
                 ?.targets
                 .orEmpty()
@@ -326,6 +330,24 @@ object Il2CppNativeMutationDraftBuilder {
             replacementHex = replacementBytes.toDisplayHex(),
             extractedLibraryPath = extracted.absolutePath,
         )
+    }
+
+    private fun indexedSpan(
+        result: FastAnalysisResult,
+        artifact: String,
+        offset: Long,
+    ): io.github.ffenuss.modkit.analysis.NativeFunctionSpan? {
+        val binary = result.il2cppBinaryBinding?.evidence
+            ?.singleOrNull { it.libraryEntry == artifact } ?: return null
+        val index = binary.functionIndex
+        require(index != null || binary.blockers.none {
+            it.startsWith("BINDING_MATERIALIZATION_LIMIT_REACHED")
+        }) { "Полный индекс адресов отсутствует; требуется повторный анализ." }
+        if (index == null) return null
+        require(index.complete && index.verify()) {
+            "Индекс native-адресов неполон или изменён; требуется повторный анализ."
+        }
+        return requireNotNull(index.lookup(offset)) { "Метода нет в полном индексе native-адресов." }
     }
 
     fun parseHex(value: String): ByteArray {

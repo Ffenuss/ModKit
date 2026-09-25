@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 rootProject.name = "ModKit"
 include(":app")
 include(":runtimeprobe")
+include(":testgame")

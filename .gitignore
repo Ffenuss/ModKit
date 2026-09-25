@@ -12,3 +12,4 @@
 *.apks
 *.xapk
 *.log
+.kotlin/

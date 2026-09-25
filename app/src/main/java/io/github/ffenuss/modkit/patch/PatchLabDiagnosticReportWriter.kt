@@ -2,6 +2,9 @@ package io.github.ffenuss.modkit.patch
 
 import io.github.ffenuss.modkit.analysis.EvidenceTargetKind
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
+import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
+import io.github.ffenuss.modkit.analysis.CancellationSignal
+import io.github.ffenuss.modkit.analysis.nativecode.AArch64ReadOnlyBody
 import java.io.BufferedOutputStream
 import java.io.BufferedWriter
 import java.io.File
@@ -17,9 +20,9 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 object PatchLabDiagnosticReportWriter {
-    private const val SCHEMA_VERSION = 1
+    private const val SCHEMA_VERSION = 2
     private const val ENGINE_VERSION =
-        "patch-lab-diagnostic/2"
+        "patch-lab-diagnostic/3"
     private const val COPY_BUFFER_BYTES =
         128 * 1024
 
@@ -28,12 +31,15 @@ object PatchLabDiagnosticReportWriter {
         label: String,
         result: FastAnalysisResult,
         preparation: PatchPreparationPlan?,
+        recipes: List<AutoModRecipe>? = null,
+        analysisRoot: File? = null,
+        cancellation: CancellationSignal? = null,
     ): File {
         outputDir.mkdirs()
         val output =
             File(
                 outputDir,
-                "ModKit-PatchLab-report-" +
+                (if (recipes == null) "ModKit-PatchLab-report-" else "ModKit-AutoMod-report-") +
                     result.index.artifactSha256.take(12) +
                     ".zip",
             )
@@ -67,6 +73,7 @@ object PatchLabDiagnosticReportWriter {
                 output.name + ".fingerprint",
             )
         if (
+            recipes == null &&
             output.isFile &&
             output.length() > 0L &&
             fingerprintFile.isFile &&
@@ -77,43 +84,50 @@ object PatchLabDiagnosticReportWriter {
             return output
         }
 
-        if (output.exists()) {
-            require(output.delete()) {
-                "Не удалось заменить предыдущий diagnostic report."
+        val temporary = File.createTempFile("diagnostic-", ".tmp", outputDir)
+        try {
+            ZipOutputStream(
+                BufferedOutputStream(
+                    object : java.io.FilterOutputStream(FileOutputStream(temporary)) {
+                        override fun write(bytes: ByteArray, offset: Int, length: Int) {
+                            if (cancellation?.isCancelled() == true) throw AnalysisCancelledException()
+                            out.write(bytes, offset, length)
+                        }
+                        override fun write(value: Int) {
+                            if (cancellation?.isCancelled() == true) throw AnalysisCancelledException()
+                            out.write(value)
+                        }
+                    },
+                    COPY_BUFFER_BYTES,
+                ),
+            ).apply {
+                setLevel(Deflater.BEST_SPEED)
+            }.use { zip ->
+                writeSummary(
+                    zip = zip,
+                    label = label,
+                    result = result,
+                    preparation = preparation,
+                )
+                writeMetadataTables(zip, result)
+                writeBindings(zip, result)
+                writeEvidenceTargets(zip, result)
+                writeSharedBodies(zip, result)
+                writeCurrentAutoModSnapshot(
+                    zip = zip,
+                    result = result,
+                    preparation = preparation,
+                )
+                if (recipes != null) writeRecipeSnapshot(zip, result, recipes, analysisRoot, cancellation)
+                writeSemanticNeighborhoods(
+                    zip = zip,
+                    result = result,
+                    preparation = preparation,
+                )
+                writeDump(zip, result)
             }
-        }
-        fingerprintFile.delete()
-
-        ZipOutputStream(
-            BufferedOutputStream(
-                FileOutputStream(output),
-                COPY_BUFFER_BYTES,
-            ),
-        ).apply {
-            setLevel(Deflater.BEST_SPEED)
-        }.use { zip ->
-            writeSummary(
-                zip = zip,
-                label = label,
-                result = result,
-                preparation = preparation,
-            )
-            writeMetadataTables(zip, result)
-            writeBindings(zip, result)
-            writeEvidenceTargets(zip, result)
-            writeSharedBodies(zip, result)
-            writeCurrentAutoModSnapshot(
-                zip = zip,
-                result = result,
-                preparation = preparation,
-            )
-            writeSemanticNeighborhoods(
-                zip = zip,
-                result = result,
-                preparation = preparation,
-            )
-            writeDump(zip, result)
-        }
+            require(temporary.renameTo(output)) { "Не удалось сохранить диагностический отчёт." }
+        } finally { temporary.delete() }
 
         require(output.isFile && output.length() > 0L) {
             "Diagnostic report was not created."
@@ -601,8 +615,6 @@ object PatchLabDiagnosticReportWriter {
                 result = result,
                 preparation = preparation,
                 projectCodeOnly = true,
-                limit = 256,
-                perCategoryLimit = 32,
             ).forEach { opportunity ->
                 writer.line(
                     listOf(
@@ -621,6 +633,51 @@ object PatchLabDiagnosticReportWriter {
                         tsv(it)
                     },
                 )
+            }
+        }
+    }
+
+    /** The actual simple-mode decisions, not a fresh name-only Finder result. */
+    private fun writeRecipeSnapshot(zip: ZipOutputStream, result: FastAnalysisResult,
+        recipes: List<AutoModRecipe>, analysisRoot: File?, cancellation: CancellationSignal?) {
+        writeTextEntry(zip, "automod/recipe-summary.txt") { writer ->
+            writer.line("This snapshot is the current simple AutoMod catalog; candidate purpose is not implied by a ready patch.")
+            writer.line("recipes=${recipes.size}")
+            writer.line("selectable=${recipes.count { it.selectable }}")
+            writer.line("recipePrepared=${recipes.count { it.verification.recipePrepared }}")
+            writer.line("purposeConfirmed=${recipes.count { it.verification.purposeConfirmed }}")
+            writer.line("staticVerified=${recipes.count { it.verification.staticVerified }}")
+            writer.line("apkBuilt=${recipes.count { it.verification.apkBuilt }}")
+            writer.line("runtimeConfirmed=${recipes.count { it.verification.runtimeConfirmed }}")
+            writer.line("Native windows contain up to 1024 bytes per candidate, not complete APKs/libraries or runtime memory.")
+        }
+        writeTextEntry(zip, "automod/recipes.tsv") { writer ->
+            writer.line("id\tcategory\ttitle\ttarget\tselectable\tblocker\tvalue\tchoices\tmethods\tprepared\tstaticVerified\tapkBuilt\truntimeConfirmed\tpurposeConfirmed")
+            recipes.forEach { recipe ->
+                if (cancellation?.isCancelled() == true) throw AnalysisCancelledException()
+                writer.line(listOf(recipe.id, recipe.category, recipe.title, recipe.targetLabel,
+                    recipe.selectable, recipe.blocker, recipe.scalarValue, recipe.scalarValues.joinToString(",") { it.value },
+                    recipe.native?.targetId ?: recipe.dex.joinToString(";") { it.className + "->" + it.methodName + it.signature },
+                    recipe.verification.recipePrepared, recipe.verification.staticVerified, recipe.verification.apkBuilt,
+                    recipe.verification.runtimeConfirmed, recipe.verification.purposeConfirmed).joinToString("\t") { tsv(it) })
+            }
+        }
+        if (analysisRoot == null) return
+        writeTextEntry(zip, "automod/native-windows.tsv") { writer ->
+            writer.line("recipeId\ttargetId\tfileOffset\twindowBytes\tnextMethodOffset\treadOnlyProof\tvisitedInstructions\treturnSites\toriginalHex\treplacementHex\terror")
+            recipes.filter { it.native != null }.forEach { recipe ->
+                if (cancellation?.isCancelled() == true) throw AnalysisCancelledException()
+                val targetId = requireNotNull(recipe.native).targetId
+                try {
+                    val window = Il2CppNativeMutationDraftBuilder.readCodeWindow(result, targetId, analysisRoot, 1024)
+                    val proof = AArch64ReadOnlyBody.inspect(Il2CppNativeMutationDraftBuilder.parseHex(window.originalHex))
+                    writer.line(listOf(recipe.id, targetId, window.fileOffset, window.byteLength, window.nextMethodFileOffset,
+                        proof.reason, proof.visitedInstructions, proof.returnSites, window.originalHex,
+                        recipe.native.replacementHex, "").joinToString("\t") { tsv(it) })
+                } catch (failure: AnalysisCancelledException) { throw failure }
+                catch (failure: Exception) {
+                    writer.line(listOf(recipe.id, targetId, "", "", "", "", "", "", "", "", failure.message).joinToString("\t") { tsv(it) })
+                }
             }
         }
     }

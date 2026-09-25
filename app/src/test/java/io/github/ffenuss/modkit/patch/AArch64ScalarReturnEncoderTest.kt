@@ -65,7 +65,7 @@ class AArch64ScalarReturnEncoderTest {
 
         assertEquals(0, floatBytes.size % 4)
         assertEquals(0, doubleBytes.size % 4)
-        assertTrue(floatBytes.size >= 12)
+        assertEquals(8, floatBytes.size) // 2.5 is exactly representable by FMOV immediate.
         assertTrue(doubleBytes.size >= 12)
     }
 
@@ -83,5 +83,11 @@ class AArch64ScalarReturnEncoderTest {
         assertTrue(
             failure is IllegalStateException,
         )
+    }
+
+    @Test fun shortFloatRecipesFitEightByteGetters() {
+        assertEquals("00 10 20 1E C0 03 5F D6", AArch64ScalarReturnEncoder.encodeHex(Il2CppNativeReturnKind.FLOAT32, "2"))
+        assertEquals("00 10 60 1E C0 03 5F D6", AArch64ScalarReturnEncoder.encodeHex(Il2CppNativeReturnKind.FLOAT64, "2"))
+        assertEquals("E0 03 27 1E C0 03 5F D6", AArch64ScalarReturnEncoder.encodeHex(Il2CppNativeReturnKind.FLOAT32, "0"))
     }
 }

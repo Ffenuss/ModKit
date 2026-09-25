@@ -1,6 +1,7 @@
 package io.github.ffenuss.modkit.patch
 
 import io.github.ffenuss.modkit.analysis.Il2CppNativeReturnKind
+import io.github.ffenuss.modkit.analysis.nativecode.AArch64FloatImmediate
 
 /**
  * Encodes a small, ABI-safe ARM64 function body for proven scalar return
@@ -74,6 +75,7 @@ object AArch64ScalarReturnEncoder {
             value.toRawBits()
                 .toLong()
                 .and(0xffffffffL)
+        AArch64FloatImmediate.encode(raw, false)?.let { return listOf(it, RET).toBytes() }
         return buildList {
             addAll(
                 encodeMoveWide(
@@ -95,6 +97,7 @@ object AArch64ScalarReturnEncoder {
     ): ByteArray {
         val raw =
             value.toRawBits()
+        AArch64FloatImmediate.encode(raw, true)?.let { return listOf(it, RET).toBytes() }
         return buildList {
             addAll(
                 encodeMoveWide(

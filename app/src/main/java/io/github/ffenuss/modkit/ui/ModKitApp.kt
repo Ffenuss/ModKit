@@ -20,8 +20,8 @@ import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.dump.InstalledPackageDumper
-import io.github.ffenuss.modkit.ui.screens.AnalysisScreen
-import io.github.ffenuss.modkit.ui.screens.AutoModScreen
+import io.github.ffenuss.modkit.ui.screens.SimpleAnalysisScreen
+import io.github.ffenuss.modkit.ui.screens.SimpleAutoModScreen
 import io.github.ffenuss.modkit.ui.screens.InstalledAppsScreen
 import io.github.ffenuss.modkit.ui.screens.InstalledTargetKind
 import io.github.ffenuss.modkit.ui.screens.RecoveryScreen
@@ -175,6 +175,17 @@ fun ModKitApp() {
             }
         }
 
+    LaunchedEffect(analysisState) {
+        val completed = analysisState as? AnalysisRunState.Completed ?: return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            autoModSessionStore.save(completed.target, completed.result.index.artifactSha256)
+        }
+        autoModTarget = completed.target
+        autoModResult = completed.result
+        screen = Screen.AUTOMOD
+        AnalysisManager.clearTerminalState()
+    }
+
     when (val state = analysisState) {
         is AnalysisRunState.Interrupted ->
             RecoveryScreen(
@@ -198,7 +209,7 @@ fun ModKitApp() {
             )
 
         is AnalysisRunState.RecoveredPartial ->
-            AnalysisScreen(
+            SimpleAnalysisScreen(
                 title = state.target.label,
                 progress = null,
                 result = state.result,
@@ -221,7 +232,7 @@ fun ModKitApp() {
             )
 
         is AnalysisRunState.Running ->
-            AnalysisScreen(
+            SimpleAnalysisScreen(
                 title = state.target.label,
                 progress = state.progress,
                 result = state.partialResult,
@@ -242,7 +253,7 @@ fun ModKitApp() {
             )
 
         is AnalysisRunState.Cancelling ->
-            AnalysisScreen(
+            SimpleAnalysisScreen(
                 title = state.target.label,
                 progress = state.progress,
                 result = state.partialResult,
@@ -261,7 +272,7 @@ fun ModKitApp() {
             )
 
         is AnalysisRunState.Stalled ->
-            AnalysisScreen(
+            SimpleAnalysisScreen(
                 title = state.target.label,
                 progress = state.progress,
                 result = state.partialResult,
@@ -286,7 +297,7 @@ fun ModKitApp() {
             )
 
         is AnalysisRunState.Completed ->
-            AnalysisScreen(
+            SimpleAnalysisScreen(
                 title = state.target.label,
                 progress = null,
                 result = state.result,
@@ -326,7 +337,7 @@ fun ModKitApp() {
             )
 
         is AnalysisRunState.Cancelled ->
-            AnalysisScreen(
+            SimpleAnalysisScreen(
                 title = state.target.label,
                 progress = null,
                 result = state.partialResult,
@@ -349,7 +360,7 @@ fun ModKitApp() {
             )
 
         is AnalysisRunState.Failed ->
-            AnalysisScreen(
+            SimpleAnalysisScreen(
                 title = state.target.label,
                 progress = null,
                 result = null,
@@ -476,7 +487,7 @@ fun ModKitApp() {
                         target != null &&
                         result != null
                     ) {
-                        AutoModScreen(
+                        SimpleAutoModScreen(
                             target = target,
                             result = result,
                             onBack = {

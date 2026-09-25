@@ -256,6 +256,7 @@ object AndroidRepackedRuntimeInstaller {
         // per-source setting checked by canRequestPackageInstalls() above,
         // not a dangerous runtime permission dialog.
 
+        progress?.invoke(0, plan.totalBytes, "Проверка APK перед установкой")
         plan.apks.forEach {
             verifyApkStillMatches(
                 apk = it,
@@ -300,24 +301,14 @@ object AndroidRepackedRuntimeInstaller {
                             FileInputStream(apk.signedPath),
                             128 * 1024,
                         ).use { input ->
-                            val buffer = ByteArray(128 * 1024)
-                            while (true) {
-                                checkCancelled(cancellation)
-                                val read = input.read(buffer)
-                                if (read < 0) break
-                                if (read > 0) {
-                                    output.write(buffer, 0, read)
-                                    copiedBytes += read
-                                    if (copiedBytes - lastReported >=
-                                        8L * 1024L * 1024L
-                                    ) {
-                                        lastReported = copiedBytes
-                                        progress?.invoke(
-                                            copiedBytes,
-                                            plan.totalBytes,
-                                            apk.sourceDisplayName,
-                                        )
-                                    }
+                            val before = copiedBytes
+                            copiedBytes += VerifiedApkTransfer.copy(
+                                input, output, apk.size, apk.expectedSha256, cancellation,
+                            ) { current ->
+                                val total = before + current
+                                if (current == 0L || total - lastReported >= 1024L * 1024L) {
+                                    lastReported = total
+                                    progress?.invoke(total, plan.totalBytes, apk.sourceDisplayName)
                                 }
                             }
                         }
@@ -629,9 +620,17 @@ class RepackedInstallStatusReceiver : BroadcastReceiver() {
                 intent = intent,
             )
             if (confirmation != null) {
-                context.startActivity(
-                    confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
+                // Newer Android/OEM policies may forbid opening an activity from
+                // a background receiver. The session is still waiting, not failed.
+                try {
+                    context.startActivity(confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                } catch (failure: Exception) {
+                    val pending = RepackedRuntimeInstallStatusStore.status.value
+                    RepackedRuntimeInstallStatusStore.publish(context, pending.copy(
+                        kind = RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED,
+                        message = "Android ждёт подтверждения. Вернитесь в ModKit и нажмите «Подтвердить установку».",
+                    ))
+                }
             }
         } catch (failure: Exception) {
             RepackedRuntimeInstallStatusStore.publish(
