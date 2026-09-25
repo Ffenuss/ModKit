@@ -40,7 +40,6 @@ class ModKitRuntimeOverlayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var manager: WindowManager? = null
     private var root: View? = null
-    private var activePackage: String? = null
     private var activeSha: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -93,7 +92,6 @@ class ModKitRuntimeOverlayService : Service() {
         }
 
         removeOverlay()
-        activePackage = record.plan.packageName
         activeSha = sha
         showOverlay(record, authority)
         val notificationManager = getSystemService(NotificationManager::class.java)
@@ -159,50 +157,7 @@ class ModKitRuntimeOverlayService : Service() {
             }
             panel.addView(toggle)
             panel.addView(text(item.detail, 11f))
-            toggle.setOnCheckedChangeListener { _, checked ->
-                if (!toggle.isEnabled) return@setOnCheckedChangeListener
-                toggle.isEnabled = false
-                scope.launch {
-                    val reply = runCatching {
-                        withContext(Dispatchers.IO) {
-                            transport.setTestMenuSwitch(authority, item.id, checked)
-                        }
-                    }
-                    val ok = reply.getOrDefault(false)
-                    if (!ok) {
-                        toggle.setOnCheckedChangeListener(null)
-                        toggle.isChecked = !checked
-                        toggle.setOnCheckedChangeListener { _, desired ->
-                            // Rebind one-shot listener through the same safe path.
-                            toggle.isEnabled = false
-                            scope.launch {
-                                val accepted = runCatching {
-                                    withContext(Dispatchers.IO) {
-                                        transport.setTestMenuSwitch(authority, item.id, desired)
-                                    }
-                                }.getOrDefault(false)
-                                if (!accepted) {
-                                    toggle.setOnCheckedChangeListener(null)
-                                    toggle.isChecked = !desired
-                                    Toast.makeText(
-                                        this@ModKitRuntimeOverlayService,
-                                        "Изменение не применено: проверьте игру и загруженный модуль.",
-                                        Toast.LENGTH_LONG,
-                                    ).show()
-                                    attachToggleListener(toggle, transport, authority, item.id)
-                                }
-                                toggle.isEnabled = true
-                            }
-                        }
-                        Toast.makeText(
-                            this@ModKitRuntimeOverlayService,
-                            "Мод не применён: исходные байты не совпали или модуль не загружен.",
-                            Toast.LENGTH_LONG,
-                        ).show()
-                    }
-                    toggle.isEnabled = true
-                }
-            }
+            attachToggleListener(toggle, transport, authority, item.id)
         }
 
         val close = Button(this).apply {
@@ -306,7 +261,6 @@ class ModKitRuntimeOverlayService : Service() {
     override fun onDestroy() {
         removeOverlay()
         activeSha = null
-        activePackage = null
         scope.cancel()
         super.onDestroy()
     }
