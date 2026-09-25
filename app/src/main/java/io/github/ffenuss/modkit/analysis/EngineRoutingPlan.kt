@@ -108,7 +108,18 @@ object EngineRouter {
         if ("flutter" in runtimes) targeted("flutter.dart-aot", "Flutter evidence", missingText = "Flutter AOT deep backend pending review")
         if ("react_native_hermes" in runtimes) targeted("hermes.bytecode", "Hermes evidence", missingText = "Hermes deep backend pending review")
         if ("react_native_jsc" in runtimes) targeted("jsc.bytecode", "JavaScriptCore evidence", missingText = "JSC version-specific bytecode decoder remains incomplete")
-        if ("unreal" in runtimes) targeted("unreal.deep", "Unreal evidence", missingText = "Unreal PAK/IoStore/object model remains incomplete")
+        if ("unreal" in runtimes) {
+            targeted(
+                "unreal.package-inventory",
+                "Unreal PAK footer/index SHA1, IoStore pairing, and native asset headers",
+                available = true,
+            )
+            targeted(
+                "unreal.deep",
+                "Unreal evidence",
+                missingText = "Unreal Blueprint/IoStore gameplay decoder not yet supported; container inventory is available",
+            )
+        }
         if ("godot" in runtimes) targeted("godot.deep", "Godot evidence", missingText = "Godot binary PCK/resources remain incomplete")
         if ("defold" in runtimes) targeted("defold.deep", "Defold evidence", missingText = "Defold archive/dependency graph remains incomplete")
         if ("qt_qml" in runtimes) targeted("qt.qml", "Qt/QML evidence", missingText = "Compiled QML cache parser remains incomplete")
