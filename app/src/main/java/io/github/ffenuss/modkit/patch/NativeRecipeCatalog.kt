@@ -45,6 +45,9 @@ object NativeRecipeCatalog {
                         requireNotNull(binding) { "Тип результата не привязан к единственному методу." }
                         val window = Il2CppNativeMutationDraftBuilder.readCodeWindow(result, candidate.targetId, analysisRoot, 1024)
                         val code = Il2CppNativeMutationDraftBuilder.parseHex(window.originalHex)
+                        // Match the draft builder's final-method rule. Reading a large
+                        // window is not proof that a multi-instruction patch fits.
+                        val patchCapacity = if (span.nextOffset == null) minOf(4, window.byteLength) else window.byteLength
                         val proof = AArch64ReadOnlyBody.inspect(code)
                         val shape = AArch64MethodAnalyzer.analyze(AArch64Disassembler.disassemble(code,
                             window.binaryVirtualAddress ?: window.fileOffset, 256)).shape
@@ -72,9 +75,12 @@ object NativeRecipeCatalog {
                                 prefix + AArch64ScalarReturnEncoder.encodeHex(encodedKind, value)) }
                                 .filter {
                                     val bytes = Il2CppNativeMutationDraftBuilder.parseHex(it.replacementHex)
-                                    bytes.size <= window.byteLength && !bytes.contentEquals(code.copyOf(bytes.size))
+                                    bytes.size <= patchCapacity && !bytes.contentEquals(code.copyOf(bytes.size))
                                 }
-                            require(values.isNotEmpty()) { "Нет отличающегося патча, который помещается до следующего метода." }
+                            require(values.isNotEmpty()) {
+                                if (span.nextOffset == null) "Граница следующего метода не доказана; многокомандный патч пока недоступен."
+                                else "Нет отличающегося патча, который помещается до следующего метода."
+                            }
                             val member = target.memberName.orEmpty().removePrefix("get_")
                             val preferred = when {
                                 binding.returnKind == Il2CppNativeReturnKind.BOOLEAN -> if (member.startsWith("Can")) "1" else "0"
@@ -94,9 +100,11 @@ object NativeRecipeCatalog {
                             title = parameterLabel(member) + " · значение ${chosen.value}"
                         } else {
                             val replacement = prefix + requireNotNull(candidate.replacementHex)
-                            require(Il2CppNativeMutationDraftBuilder.parseHex(replacement).size <= window.byteLength) {
-                                "Патч не помещается до следующего метода."
+                            val bytes = Il2CppNativeMutationDraftBuilder.parseHex(replacement)
+                            require(bytes.size <= patchCapacity) {
+                                "Безопасная граница патча не доказана."
                             }
+                            require(!bytes.contentEquals(code.copyOf(bytes.size))) { "Метод уже возвращает выбранное значение; изменение не требуется." }
                             effective = candidate.copy(replacementHex = replacement)
                         }
                         reason = null

@@ -14,6 +14,7 @@ class NativeRecipeCatalogTest {
     private fun withFixture(words: List<Long>, shared: Boolean = false,
         member: String = "get_DamageMultiplier", owner: String = "Game.Player",
         kind: Il2CppNativeReturnKind = Il2CppNativeReturnKind.FLOAT32,
+        nextBoundary: Boolean = true,
         check: (AutoModRecipe, FastAnalysisResult, File) -> Unit) {
         val root = Files.createTempDirectory("native-recipes-").toFile()
         try {
@@ -22,7 +23,8 @@ class NativeRecipeCatalogTest {
             native.parentFile.mkdirs()
             native.writeBytes(ByteArray(16) + code + ByteArray(16))
             val index = NativeFunctionIndexWriter(File(root, "functions.idx"), active).use {
-                it.add(16); if (shared) it.add(16); it.add(16L + code.size); it.finish(if (shared) 3 else 2, true)
+                it.add(16); if (shared) it.add(16); if (nextBoundary) it.add(16L + code.size)
+                it.finish(1L + (if (shared) 1 else 0) + (if (nextBoundary) 1 else 0), true)
             }
             val token = 0x6000001L
             val target = EvidenceTarget("il2cpp:method:Assembly-CSharp.dll:6000001:Assembly-CSharp.dll",
@@ -99,6 +101,19 @@ class NativeRecipeCatalogTest {
         withFixture(listOf(0x1E201000, 0xD65F03C0)) { recipe, _, _ ->
             assertTrue(recipe.blocker, recipe.selectable)
             assertFalse(recipe.scalarValues.any { it.value == "2" })
+        }
+    }
+    @Test fun lastIndexedFunctionCannotPromiseAMultiInstructionDraft() {
+        withFixture(listOf(0xBD401000, 0xD65F03C0), nextBoundary = false) { recipe, _, _ ->
+            assertFalse(recipe.selectable)
+            assertTrue(recipe.blocker.orEmpty().contains("Граница"))
+        }
+    }
+    @Test fun booleanPresetAlreadyPresentIsNotOfferedAsAModification() {
+        withFixture(listOf(0x52800020, 0xD65F03C0), member = "get_IsAlive",
+            kind = Il2CppNativeReturnKind.BOOLEAN) { recipe, _, _ ->
+            assertFalse(recipe.selectable)
+            assertTrue(recipe.blocker.orEmpty().contains("уже возвращает"))
         }
     }
 }
