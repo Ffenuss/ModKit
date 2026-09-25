@@ -194,6 +194,7 @@ object Il2CppCodeGenScanner {
                     progress = progress,
                     libraryEntry = libraryEntry,
                     metadataRegistrationVa = metadataRegistration,
+                    blockers = blockers,
                     indexFile = File(file.parentFile, file.name + ".bindings.idx"),
                     maxMaterializedBindings = maxMaterializedBindings,
                 )
