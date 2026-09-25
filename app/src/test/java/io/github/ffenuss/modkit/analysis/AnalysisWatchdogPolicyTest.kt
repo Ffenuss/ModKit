@@ -55,6 +55,31 @@ class AnalysisWatchdogPolicyTest {
     }
 
     @Test
+    fun realElfFileWorkHasItsOwnThresholdWithoutWeakeningOtherTargets() {
+        assertEquals(
+            AnalysisWatchdogPolicy.ELF_LARGE_FILE_STALLED_AFTER_MS,
+            AnalysisWatchdogPolicy.stalledAfterMs(
+                EngineScheduleClass.TARGETED,
+                "ELF: извлечение файла 7/16",
+            ),
+        )
+        assertEquals(
+            AnalysisWatchdogPolicy.ELF_LARGE_FILE_STALLED_AFTER_MS,
+            AnalysisWatchdogPolicy.stalledAfterMs(
+                EngineScheduleClass.TARGETED,
+                "ELF: разбор заголовков и символов",
+            ),
+        )
+        assertEquals(
+            30_000L,
+            AnalysisWatchdogPolicy.stalledAfterMs(
+                EngineScheduleClass.TARGETED,
+                "DEX: inventory",
+            ),
+        )
+    }
+
+    @Test
     fun largeIl2CppExtractionGetsIoSpecificWindow() {
         assertEquals(
             180_000L,

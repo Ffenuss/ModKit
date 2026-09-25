@@ -7,6 +7,7 @@ object AnalysisWatchdogPolicy {
     const val TARGETED_STALLED_AFTER_MS = 30_000L
     const val CONFIRMATION_STALLED_AFTER_MS = 60_000L
     const val LARGE_LIBRARY_EXTRACTION_STALLED_AFTER_MS = 180_000L
+    const val ELF_LARGE_FILE_STALLED_AFTER_MS = 180_000L
     const val BACKGROUND_STALLED_AFTER_MS = 60_000L
 
     fun stalledAfterMs(
@@ -37,6 +38,14 @@ object AnalysisWatchdogPolicy {
                 ) == true
         ) {
             return LARGE_LIBRARY_EXTRACTION_STALLED_AFTER_MS
+        }
+        // The universal ELF inventory can read a 512 MiB native library.
+        // A genuine per-file copy milestone resets the timer; when ELF symbol
+        // parsing cannot report substeps, give it a bounded specific window.
+        if (scheduleClass == EngineScheduleClass.TARGETED &&
+            currentTask?.startsWith("ELF:") == true
+        ) {
+            return ELF_LARGE_FILE_STALLED_AFTER_MS
         }
         return stalledAfterMs(scheduleClass)
     }
