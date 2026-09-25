@@ -32,6 +32,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            // CI/debug certificates are not the installed release's certificate.
+            // Keep testing possible without deleting the user's existing ModKit.
+            applicationIdSuffix = ".test"
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true

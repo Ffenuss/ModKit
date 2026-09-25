@@ -25,6 +25,12 @@ The user's 160 / approximately 7 / 4 observations are user-reported measurements
 they cannot be independently recomputed from source alone. They must not be used
 as a measured before/after benchmark.
 
+Update, 25 September: the user's archived Patch Lab report was subsequently
+retrieved and analysed. Its 189 rows / 7 selectable entries and exact blocker
+breakdown are recorded in [FLICK_SHOT_DIAGNOSIS.md](FLICK_SHOT_DIAGNOSIS.md).
+It contains reconstructed metadata and bindings, but no native machine code or APK;
+post-change coverage of that game is still unmeasured.
+
 ## Architecture and dependencies
 
 ```mermaid
