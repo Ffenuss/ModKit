@@ -40,3 +40,40 @@ At the inspected PR #10 head, GitHub Actions run `36171761279` attempt 2 finishe
 The previous PR #9 forced IL2CPP **extraction** terminal progress. That does not guarantee heartbeats during later long codegen/ELF processing or solve missing metadata for Aniimo.
 
 No repository code is changed by this documentation-only audit; follow-up implementation must use independent focused branches and tests. See the companion implementation plan and acceptance matrix.
+
+
+## Addendum: nine actual exported AutoMod ZIPs received (2026-09-25)
+
+**Evidence status changed:** nine user-supplied, individually parsed schema-v2 ZIP exports are now available. Only the summarizing, non-sensitive findings are recorded here. The exports contain no raw APKs, app installation provenance, full `libil2cpp.so`, process logcat or stage timings. The report writer's `README.txt` serializes runtime **IDs** without confidence/status or per-engine warnings, and includes the same generic FILES inventory even when those files have empty headers: do not mistake listed files for reconstructed metadata.
+
+| Report prefix | Game | Indexed entries | Runtime profiles reported | Simple recipes (selectable) | Report-backed diagnosis |
+|---|---|---:|---|---:|---|
+| `0fe59077d8a1` | Aniimo | 1,726 | DEX, native ELF, IL2CPP, Mono | 0 (0) | `fastDump: unavailable`, no exact IL2CPP binding. A separate UI screenshot shows `Validated global-metadata.dat was not found in ArtifactIndex`. The export alone cannot distinguish missing, packed or invalid metadata. |
+| `e64240494e60` | Delta Force | 957 | DEX, native ELF, **Unreal** | 0 (0) | Unreal is detected but there is no available Unreal gameplay recipe backend. Do not call this a missing-IL2CPP failure. |
+| `497c1b43ae27` | Minecraft | 35,626 | DEX, native ELF | 1 (0) | The only recipe is `Lkotlinx/coroutines/sync/SemaphoreSegment;->getMaxSlots()I`, a false positive for game inventory. The ZIP does **not** establish why ELF inventory appeared stalled at 7/16 and 14/16 in screenshots. |
+| `8254dcd16800` | STAR DIVE | 473 | DEX, native ELF, **Unreal** | 0 (0) | Unreal detected; deep gameplay backend unavailable. |
+| `05c43e1c8145` | TWoM | 363 | DEX, native ELF | 1 (0) | Same exact false-positive `kotlinx.coroutines.sync.SemaphoreSegment.getMaxSlots()I` (in `classes.dex`; Minecraft has it in `classes2.dex`). |
+| `363ff6d07285` | DropTheCat | 11,895 | DEX, native ELF, IL2CPP, Mono | 50 (1) | See detailed breakdown below. |
+| `6a3527213353` | A N I N E T | 793 | DEX, native ELF, **Flutter** | 0 (0) | Flutter engine detected; deep Dart AOT gameplay recipe backend unavailable. |
+| `8db910dac4b8` | Дурак | 2,273 | DEX, native ELF | 0 (0) | DEX/ELF present but no supported recipe. Exact engine/game-code relationship undetermined from this ZIP. |
+| `ac2b15495b0f` | AnyClaw | 1,163 | DEX, native ELF | 0 (0) | DEX/ELF present but no supported recipe. Exact engine/game-code relationship undetermined from this ZIP. |
+
+### DropTheCat: exact breakdown from actual TSVs
+
+- Metadata v31: **21,550** types, **156,734** method definitions, **86,367** fields. Exactly **30,000** token-to-executable bindings are materialized, the scanner's bulk cap (about 19% of method definitions, not a 19% success probability). This is a confirmed coverage ceiling; do not claim that every unmaterialized method has executable code or an available modification.
+- The *raw strict-finder* emitted **1,459** opportunities: **1,377** sensitive/security-surface signals, **32** entitlement candidates, and **50** other candidates. Its **30** selectable raw candidates are **all OWNER_ENTITLEMENT**, intentionally excluded by the public simple `NativeRecipeCatalog`. Raw selectable counts and AutoMod recipe readiness cannot be equated.
+- The **50** simple recipes break down as follows: **25** metadata field signals without proven live object/field offsets; **23** method semantic signals without safe automated recipe (**13** level/progression, **9** currency/resource, **1** collision); **1** currency method with an unsupported/disassembler-unproven AArch64 instruction; and **1** selectable UI-only level getter. Thus **49** are blocked for documented reasons, **1** is syntactically modifiable, and **0** have verified gameplay purpose or runtime effect.
+- The sole selectable recipe is `UI_ProgressBox` level display set to 99 (8 bytes, a two-instruction return sequence); `recipePrepared=true` but `purposeConfirmed=false`, `staticVerified=false`, `apkBuilt=false`, `runtimeConfirmed=false`. Its presentation-only class name is an explicit reason to separate visual-only recipes from gameplay-stat changes.
+- The `native-windows.tsv` contains **25** field-signal errors (`Подтверждённая цель не найдена в Evidence Graph`), independently corroborating the missing-object/field-body blocker; field-name matching must not create fabricated native byte targets.
+- The 30,000 bindings plus no shared-body rows in *this exported selection* do not establish unique executable bodies for all 156,734 methods. Keep the disk-backed function index and exact safety checks.
+
+### Specific corrections to the provisional audit
+
+- A4 (Minecraft/TWoM) is now **confirmed**, not hypothetical: both exact DEX class descriptors and method signatures are present in their `automod/recipes.tsv`.
+- A2 (Delta Force/STAR DIVE) is no longer an unknown-engine hypothesis: both report **Unreal**. A N I N E T explicitly reports **Flutter**.
+- A5/A6 (DropTheCat) are now quantified from `recipes.tsv`, `current-opportunities.tsv` and `native-windows.tsv` as above. Treat sensitive/entitlement findings as separate diagnostics; do not surface them as ordinary game toggles.
+- A3 (Minecraft) **cannot** be confirmed as a deadlock from the snapshot: it lacks timing, individual ELF names, watchdog events, stack traces, heap metrics and device logs. Retain both UI stale-progress and real stall hypotheses.
+- A7 (installer/signature checks) remains **unverified for all nine targets**. The ZIP exporter explicitly omits original APKs and runtime evidence. A static report with no direct evidence cannot assert a Play protection mechanism is present or absent.
+- For the eight non-IL2CPP-dump reports, `PREPARATION sourceShaVerified: false` means **no IL2CPP preparation target was built**, not that the original APK SHA check failed. Do not display that flag as installer/integrity rejection.
+
+**Additional diagnostic-export defect:** these nine ZIPs do not include per-engine routing decisions, `engineWarnings`, DEX counters, individual ELF timing, install source/signature checks, or watchdog traces. Improving this export is necessary before reproducing all reported device failures without raw APKs.
