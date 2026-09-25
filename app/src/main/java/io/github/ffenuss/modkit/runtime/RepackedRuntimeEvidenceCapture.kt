@@ -379,6 +379,34 @@ class AndroidRepackedRuntimeProbeTransport(
         return parseTestMenuStatus(result)
     }
 
+    /** A false result is not a successful toggle; the caller must keep the UI unchanged. */
+    fun setTestMenuSwitch(authority: String, id: String, enabled: Boolean): Boolean {
+        require(id.isNotBlank() && id.length <= 128)
+        val uri = Uri.parse(
+            "content://" + authority + "/" +
+                RuntimeEvidenceProviderContract.PATH_EVIDENCE,
+        )
+        val reply = requireNotNull(
+            context.contentResolver.call(
+                uri, "setTestMenuSwitch", id,
+                Bundle().apply { putBoolean("enabled", enabled) },
+            ),
+        ) { "Runtime probe did not respond to the switch request." }
+        return reply.getBoolean("applied") && reply.getBoolean("enabled") == enabled
+    }
+
+    fun isTestMenuSwitchEnabled(authority: String, id: String): Boolean {
+        require(id.isNotBlank() && id.length <= 128)
+        val uri = Uri.parse(
+            "content://" + authority + "/" +
+                RuntimeEvidenceProviderContract.PATH_EVIDENCE,
+        )
+        val reply = requireNotNull(
+            context.contentResolver.call(uri, "testMenuSwitchStatus", id, null),
+        ) { "Runtime probe did not report switch state." }
+        return reply.getBoolean("enabled")
+    }
+
     override fun testMenuStatus(
         authority: String,
     ): RepackedRuntimeTestMenuStatus =
