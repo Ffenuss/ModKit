@@ -7,6 +7,7 @@ object AnalysisWatchdogPolicy {
     const val TARGETED_STALLED_AFTER_MS = 30_000L
     const val CONFIRMATION_STALLED_AFTER_MS = 60_000L
     const val LARGE_LIBRARY_EXTRACTION_STALLED_AFTER_MS = 180_000L
+    const val ELF_LARGE_FILE_STALLED_AFTER_MS = 180_000L
     const val BACKGROUND_STALLED_AFTER_MS = 60_000L
 
     fun stalledAfterMs(
