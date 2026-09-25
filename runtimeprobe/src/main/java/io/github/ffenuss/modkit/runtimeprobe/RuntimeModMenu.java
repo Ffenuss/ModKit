@@ -135,8 +135,9 @@ final class RuntimeModMenu {
             );
         }
         Config parsed = parseBundle(extras);
-        persist(context.getApplicationContext(), parsed);
         synchronized (LOCK) {
+            restoreAllActive();
+            persist(context.getApplicationContext(), parsed);
             config = parsed;
             ACTIVE.clear();
             APPLYING.clear();
@@ -146,17 +147,60 @@ final class RuntimeModMenu {
     }
 
     static void clear(Context context) {
-        context.getApplicationContext()
-                .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit()
-                .remove(KEY_CONFIG)
-                .apply();
         synchronized (LOCK) {
+            restoreAllActive();
+            context.getApplicationContext()
+                    .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                    .edit()
+                    .remove(KEY_CONFIG)
+                    .apply();
             config = Config.empty();
             ACTIVE.clear();
             APPLYING.clear();
         }
         requestRefresh();
+    }
+
+    /** Reconfiguration cannot silently forget bytes patched by an old menu. */
+    private static void restoreAllActive() {
+        for (Item item : config.items) {
+            if (MODE_PATCH.equals(item.mode) &&
+                    Boolean.TRUE.equals(ACTIVE.get(item.id)) &&
+                    !apply(item, false)) {
+                throw new IllegalStateException(
+                        "Turn off active modifications before replacing their menu."
+                );
+            }
+        }
+    }
+
+    /**
+     * The external SYSTEM_ALERT_WINDOW controller and the injected in-game
+     * bubble use the same compare-and-swap native patch path. No static
+     * modification is made before a user enables a toggle.
+     */
+    static boolean setSwitch(String id, boolean enabled) {
+        if (id == null) return false;
+        Item item = null;
+        for (Item candidate : config.items) {
+            if (id.equals(candidate.id)) {
+                item = candidate;
+                break;
+            }
+        }
+        if (item == null || !MODE_PATCH.equals(item.mode)) return false;
+        synchronized (LOCK) {
+            if (Boolean.TRUE.equals(ACTIVE.get(id)) == enabled) return true;
+        }
+        boolean applied = apply(item, enabled);
+        if (applied) requestRefresh();
+        return applied;
+    }
+
+    static boolean isSwitchEnabled(String id) {
+        synchronized (LOCK) {
+            return Boolean.TRUE.equals(ACTIVE.get(id));
+        }
     }
 
     static int itemCount() {

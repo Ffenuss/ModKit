@@ -40,6 +40,7 @@ object AutoModRuntimeTestMenuCoordinator {
         preparation: PatchPreparationPlan,
         cancellation: CancellationSignal,
         progress: ProgressSink,
+        selected: List<AutoModRecipe>? = null,
     ): AutoModRuntimeTestMenuBuild =
         withContext(Dispatchers.IO) {
             require(preparation.sourceShaVerified) {
@@ -54,21 +55,24 @@ object AutoModRuntimeTestMenuCoordinator {
                 "План подготовки относится к другой версии приложения."
             }
 
-            val menu =
+            val menu = if (selected == null) {
+                // Existing expert test-menu workflow remains available.
                 RuntimeGameplayTestMenuBuilder.build(
                     result = result,
                     preparation = preparation,
-                    analysisResultsRoot =
-                        File(
-                            context.filesDir,
-                            "analysis-results",
-                        ),
-                    stagingRoot =
-                        File(
-                            context.filesDir,
-                            "runtime-menu-staging",
-                        ),
+                    analysisResultsRoot = File(context.filesDir, "analysis-results"),
+                    stagingRoot = File(context.filesDir, "runtime-menu-staging"),
                 )
+            } else {
+                // The simple AutoMod build must include only the user's
+                // selected switches. It must never bake in static changes.
+                SelectedRuntimeMenuBuilder.build(
+                    result = result,
+                    selected = selected,
+                    analysisResultsRoot = File(context.filesDir, "analysis-results"),
+                    cancellation = cancellation,
+                )
+            }
             require(menu.items.isNotEmpty()) {
                 "ModKit пока не нашёл ни одной цели для runtime test menu."
             }
