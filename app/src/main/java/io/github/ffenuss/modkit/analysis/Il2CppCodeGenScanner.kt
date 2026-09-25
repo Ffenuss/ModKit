@@ -57,18 +57,18 @@ data class Il2CppBinaryEvidence(
     val bindings: List<Il2CppMethodBinaryBinding>,
     val blockers: List<String>,
     val functionIndex: NativeFunctionIndex? = null,
+    val bindingIndex: Il2CppDiskBindingIndex? = null,
 ) : java.io.Serializable {
     val exactBindingAvailable: Boolean
-        get() = bindings.isNotEmpty()
+        get() = bindings.isNotEmpty() || (bindingIndex?.boundCount ?: 0) > 0
 }
 
 object Il2CppCodeGenScanner {
     private const val MAX_MODULES = 4_096
     private const val MAX_METHOD_POINTERS = 5_000_000
     private const val MAX_SAMPLED_POINTERS = 32
-    // Keep exact bindings useful on low-memory Android devices. Project/game
-    // assemblies are materialized first; additional libraries fill the
-    // remaining bounded slots.
+    // This bounds only the in-memory preview, never total binding coverage.
+    // Every validated MethodDef is independently indexed on disk.
     private const val MAX_MATERIALIZED_BINDINGS = 30_000
     private const val MAX_FALLBACK_SCAN_BYTES = 256L * 1024L * 1024L
     private const val FALLBACK_WINDOW_BYTES = 128 * 1024
@@ -185,7 +185,7 @@ object Il2CppCodeGenScanner {
                 indexFunctions(image, modules, file, cancellation, progress, libraryEntry)
             } else null
             if (functionIndex?.complete == false) blockers += "NATIVE_POINTER_CENSUS_INCOMPLETE"
-            val bindings = if (modules.isNotEmpty() && metadata.images.isNotEmpty()) {
+            val allBindings = if (modules.isNotEmpty() && metadata.images.isNotEmpty()) {
                 bindMethods(
                     image = image,
                     metadata = metadata,
@@ -194,15 +194,13 @@ object Il2CppCodeGenScanner {
                     progress = progress,
                     libraryEntry = libraryEntry,
                     metadataRegistrationVa = metadataRegistration,
-                    blockers = blockers,
-                    maxMaterializedBindings =
-                        maxMaterializedBindings,
+                    indexFile = File(file.parentFile, file.name + ".bindings.idx"),
+                    maxMaterializedBindings = maxMaterializedBindings,
                 )
-            } else {
-                emptyList()
-            }
-
-            if (modules.isNotEmpty() && bindings.isEmpty()) {
+            } else null
+            val bindings = allBindings?.first.orEmpty()
+            val diskIndex = allBindings?.second
+            if (modules.isNotEmpty() && (diskIndex?.boundCount ?: 0) == 0) {
                 blockers += "NO_METHOD_TOKEN_SLOT_BINDINGS"
             }
 
@@ -220,6 +218,7 @@ object Il2CppCodeGenScanner {
                 bindings = bindings,
                 blockers = blockers.distinct(),
                 functionIndex = functionIndex,
+                bindingIndex = diskIndex,
             )
         }
     }
