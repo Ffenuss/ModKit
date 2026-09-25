@@ -2,6 +2,7 @@ package io.github.ffenuss.modkit.ui
 
 import android.app.Application
 import android.net.Uri
+import android.provider.Settings
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import io.github.ffenuss.modkit.analysis.*
@@ -98,28 +99,130 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
 
     fun build() = operate("Создаём мод") {
         val selected = state.value.recipes.filter { it.id in state.value.selected }
-        val built = AutoModBuildCoordinator.build(context, target, analysis, preparation, selected, signal, sink) {
-            mutable.update { current -> current.copy(recipes = current.recipes.map {
-                if (it.id in current.selected) it.copy(verification = it.verification.copy(staticVerified = true)) else it
-            }) }
+        require(selected.isNotEmpty()) { "Сначала выберите изменения." }
+
+        val record: AutoModBuildRecord
+        val nativeSelected = selected.any { it.native != null }
+        if (nativeSelected) {
+            // No selected native change is written into the output APK.
+            // Runtime patches are initially OFF and only toggled with consent.
+            require(selected.all(RuntimeRecipeSelectionPolicy::supports)) {
+                "Часть выбранных модов пока не поддерживает отключение в игре. Уберите их из выбора."
+            }
+            val result = AutoModRuntimeTestMenuCoordinator.build(
+                context = context,
+                target = target,
+                result = analysis,
+                preparation = preparation,
+                cancellation = signal,
+                progress = sink,
+                selected = selected,
+            )
+            val plan = withContext(Dispatchers.IO) {
+                RepackedRuntimeInstallPlanner.plan(result.build, signal)
+            }
+            require(plan.ready) { plan.blockers.joinToString("; ") }
+            record = AutoModBuildRecord(
+                plan = plan,
+                builtAt = result.build.completedAtEpochMs,
+                changes = selected.map { it.title + " · " + it.targetLabel },
+                reportPath = result.build.reportPath,
+                runtimeMenuItems = result.menu.items,
+            )
+        } else {
+            // Preserve the pre-existing DEX workflow while its reversible
+            // runtime backend is developed. The UI labels it as static.
+            val built = AutoModBuildCoordinator.build(
+                context, target, analysis, preparation, selected, signal, sink,
+            ) {
+                mutable.update { current -> current.copy(recipes = current.recipes.map {
+                    if (it.id in current.selected) it.copy(
+                        verification = it.verification.copy(staticVerified = true),
+                    ) else it
+                }) }
+            }
+            val plan = withContext(Dispatchers.IO) {
+                RepackedRuntimeInstallPlanner.plan(built, signal)
+            }
+            require(plan.ready) { plan.blockers.joinToString("; ") }
+            record = AutoModBuildRecord(
+                plan, built.builtAtEpochMs,
+                selected.map { it.title + " · " + it.targetLabel },
+                built.reportFile.absolutePath,
+            )
         }
-        val plan = withContext(Dispatchers.IO) { RepackedRuntimeInstallPlanner.plan(built, signal) }
-        require(plan.ready) { plan.blockers.joinToString("; ") }
-        val record = AutoModBuildRecord(plan, built.builtAtEpochMs,
-            selected.map { it.title + " · " + it.targetLabel }, built.reportFile.absolutePath)
         withContext(Dispatchers.IO) { record.save(context) }
-        mutable.update { current -> current.copy(built = record, showingResult = true, installSession = null, notice = null,
+        mutable.update { current -> current.copy(
+            built = record,
+            showingResult = true,
+            installSession = null,
+            notice = if (record.runtimeMenuItems.isNotEmpty()) {
+                "Создан APK с ${record.runtimeMenuItems.size} переключателями. Все моды изначально выключены."
+            } else {
+                "Это статическая DEX-сборка: переключатели для неё пока не поддерживаются."
+            },
             recipes = current.recipes.map { recipe ->
-                if (recipe.id in current.selected) recipe.copy(verification = recipe.verification.copy(apkBuilt = true)) else recipe
-            }) }
+                if (recipe.id in current.selected) recipe.copy(
+                    verification = recipe.verification.copy(apkBuilt = true),
+                ) else recipe
+            },
+        ) }
         if (Build.VERSION.SDK_INT >= 29) {
             try {
-                val saved = withContext(Dispatchers.IO) { BuildArtifactExporter.saveApkFilesToDownloads(context, plan, record.builtAt) }
-                mutable.update { it.copy(notice = "APK сохранены: ${saved.destinationDirectory}") }
+                val saved = withContext(Dispatchers.IO) {
+                    BuildArtifactExporter.saveApkFilesToDownloads(context, record.plan, record.builtAt)
+                }
+                mutable.update { it.copy(
+                    notice = (it.notice.orEmpty() + " APK: " + saved.destinationDirectory).take(360),
+                ) }
             } catch (failure: Exception) {
-                mutable.update { it.copy(notice = "Сборка сохранена в ModKit. Экспорт в Загрузки не выполнен: ${failure.message}") }
+                mutable.update { it.copy(
+                    notice = "Сборка сохранена в ModKit. Экспорт в Загрузки не выполнен: ${failure.message}",
+                ) }
             }
         }
+    }
+
+    fun launchWithOverlay() = operate("Запускаем с переключателями") {
+        val record = requireNotNull(state.value.built)
+        require(record.runtimeMenuItems.isNotEmpty()) {
+            "В этой сборке нет переключателей. Создайте сборку с нативными модами."
+        }
+        require(Settings.canDrawOverlays(context)) {
+            "Разрешите ModKit показывать окна поверх игр."
+        }
+        val install = RepackedRuntimeInstallStatusStore.status.value
+        require(install.kind == RepackedRuntimeInstallStatusKind.SUCCESS &&
+            install.packageName == record.plan.packageName &&
+            install.updatedAtEpochMs >= record.builtAt
+        ) {
+            "Сначала установите и подтвердите эту сборку в Android."
+        }
+        val authority = record.plan.packageName +
+            BinaryAndroidManifestProbeInjector.AUTHORITY_SUFFIX
+        val transport = AndroidRepackedRuntimeProbeTransport(context)
+        val installed = withContext(Dispatchers.IO) {
+            transport.inspectInstalled(record.plan.packageName, authority)
+        } ?: error("Установленная сборка не содержит проверенный runtime probe.")
+        require(installed.providerClassName == BinaryAndroidManifestProbeInjector.PROVIDER_CLASS &&
+            installed.exported && installed.enabled &&
+            installed.signerCertificateSha256.map(String::lowercase).toSet() ==
+                record.plan.signerCertificateSha256.map(String::lowercase).toSet()
+        ) { "Сертификат или runtime-компонент установленной сборки не соответствует собранному APK." }
+
+        val configured = withContext(Dispatchers.IO) {
+            transport.configureTestMenu(authority, record.runtimeMenuItems)
+        }
+        require(configured.packageName == record.plan.packageName &&
+            configured.patchItemCount == record.runtimeMenuItems.size
+        ) { "Установленная игра не подтвердила конфигурацию переключателей." }
+        val launch = context.packageManager.getLaunchIntentForPackage(record.plan.packageName)
+            ?: error("Установленная сборка не имеет доступного экрана запуска.")
+        // Start while the ModKit activity is visible; Android 12+ disallows
+        // arbitrary starts of foreground services from the background.
+        ModKitRuntimeOverlayService.start(context, record.plan.artifactSha256)
+        context.startActivity(launch.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        mutable.update { it.copy(notice = "Игра запущена. Нажмите MK для переключения модов.") }
     }
 
     fun install() = operate("Готовим установку") {
