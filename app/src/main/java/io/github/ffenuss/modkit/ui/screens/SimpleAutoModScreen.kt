@@ -184,8 +184,8 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("Проверка в приложении", style = MaterialTheme.typography.titleMedium)
                             Text(if (runtimeBuild)
-                                "1. Установите сборку.\\n2. Разрешите показ поверх других приложений.\\n3. Запустите с мод-меню и включайте нужные изменения кнопкой MK."
-                            else "1. Установите сборку.\\n2. Запустите приложение и проверьте выбранное действие.\\n3. Сохраните наблюдение.")
+                                "1. Установите сборку.\n2. Разрешите показ поверх других приложений.\n3. Запустите с мод-меню и включайте нужные изменения кнопкой MK."
+                            else "1. Установите сборку.\n2. Запустите приложение и проверьте выбранное действие.\n3. Сохраните наблюдение.")
                             record.userObservation?.let { Text("Ваше наблюдение: $it\nАвтоматическим подтверждением не является.", style = MaterialTheme.typography.bodySmall) }
                             if (!runtimeBuild) OutlinedButton(onClick = {
                                 runCatching {
