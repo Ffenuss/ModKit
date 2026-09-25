@@ -2,6 +2,8 @@ package io.github.ffenuss.modkit.ui.screens
 
 import android.content.Intent
 import android.os.Build
+import android.provider.Settings
+import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -22,6 +24,7 @@ import androidx.lifecycle.ViewModelProvider
 import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.patch.AutoModRecipe
+import io.github.ffenuss.modkit.patch.RuntimeRecipeSelectionPolicy
 import io.github.ffenuss.modkit.runtime.*
 import io.github.ffenuss.modkit.ui.AutoModViewModel
 
@@ -38,6 +41,12 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
     var testDialog by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { model.permissionReturned() }
+    var overlayGranted by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    val overlaySettings = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        overlayGranted = Settings.canDrawOverlays(context)
+        if (overlayGranted) model.launchWithOverlay()
+        else model.showError("Разрешение на показ поверх других приложений не выдано.")
+    }
     val folder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) model.save(uri) }
     LaunchedEffect(result.index.artifactSha256) { model.initialize(target, result) }
     LaunchedEffect(state.needsInstallPermission, state.busy) {
@@ -56,6 +65,7 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
     }
     val record = state.built
     val resultVisible = state.showingResult && record != null
+    val runtimeBuild = record?.runtimeMenuItems?.isNotEmpty() == true
     val status = installStatus.takeIf { record != null && it.packageName == record.plan.packageName && it.updatedAtEpochMs >= record.builtAt }
     Scaffold(
         topBar = {
@@ -116,6 +126,26 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                                 else -> it.message ?: "Ожидаем ответ Android"
                             }, style = MaterialTheme.typography.bodySmall) }
                         }
+                        if (runtimeBuild && status?.kind == RepackedRuntimeInstallStatusKind.SUCCESS) {
+                            Button(onClick = {
+                                overlayGranted = Settings.canDrawOverlays(context)
+                                if (overlayGranted) model.launchWithOverlay()
+                                else {
+                                    val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                                    if (Build.VERSION.SDK_INT < 30) {
+                                        intent.data = Uri.parse("package:" + context.packageName)
+                                    }
+                                    runCatching { overlaySettings.launch(intent) }
+                                        .onFailure { model.showError(it.message ?: "Настройки разрешения недоступны.") }
+                                }
+                            }, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (overlayGranted) "Запустить с мод-меню" else "Разрешить окно поверх игры")
+                            }
+                            if (!overlayGranted) Text(
+                                "В системных настройках выберите ModKit и разрешите показ поверх других приложений.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Button(onClick = model::install, modifier = Modifier.weight(1f)) { Text("Установить") }
                             OutlinedButton(onClick = {
@@ -139,19 +169,25 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Сборка создана", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                             Text(if (record!!.plan.apks.size == 1) "Один подписанный APK" else "Комплект из ${record.plan.apks.size} APK — установка вместе")
-                            Text("Патчи и подпись проверены. Игровой эффект пока не подтверждён.", style = MaterialTheme.typography.bodyMedium)
+                            Text(if (runtimeBuild)
+                                "Создан APK с ${record.runtimeMenuItems.size} переключателями. Моды выключены до вашего нажатия в меню MK."
+                            else "Статические DEX-патчи и подпись проверены. Переключателей в игре нет.",
+                                style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }
-                item { Text("Применено", style = MaterialTheme.typography.titleMedium) }
+                item { Text(if (runtimeBuild) "Добавлено в меню (изначально выключено)" else "Применено статически",
+                    style = MaterialTheme.typography.titleMedium) }
                 items(record!!.changes) { Text("✓  $it", style = MaterialTheme.typography.bodyMedium) }
                 item {
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("Проверка в приложении", style = MaterialTheme.typography.titleMedium)
-                            Text("1. Установите сборку.\n2. Запустите приложение и проверьте выбранное действие.\n3. Сохраните наблюдение.")
+                            Text(if (runtimeBuild)
+                                "1. Установите сборку.\\n2. Разрешите показ поверх других приложений.\\n3. Запустите с мод-меню и включайте нужные изменения кнопкой MK."
+                            else "1. Установите сборку.\\n2. Запустите приложение и проверьте выбранное действие.\\n3. Сохраните наблюдение.")
                             record.userObservation?.let { Text("Ваше наблюдение: $it\nАвтоматическим подтверждением не является.", style = MaterialTheme.typography.bodySmall) }
-                            OutlinedButton(onClick = {
+                            if (!runtimeBuild) OutlinedButton(onClick = {
                                 runCatching {
                                     val launch = context.packageManager.getLaunchIntentForPackage(record.plan.packageName)
                                         ?: error("Сначала установите сборку.")
@@ -167,8 +203,10 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                 item {
                     Text("Настройте свой мод", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
-                    Text("Доступно рецептов: ${state.recipes.count { it.selectable }}. Эффект каждого нужно проверить после установки.",
+                    Text("Нативные ARM64-рецепты будут выключены до включения в мод-меню. DEX-рецепты пока статические. Эффект проверяйте в игре.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Доступно переключателей: ${state.recipes.count(RuntimeRecipeSelectionPolicy::supports)}",
+                        style = MaterialTheme.typography.labelMedium)
                 }
                 if (state.built != null) item { TextButton(onClick = model::showPreviousResult) { Text("Открыть предыдущую сборку") } }
                 if (state.recipes.isEmpty() && !state.busy) item {
@@ -224,7 +262,10 @@ private fun RecipeCard(recipe: AutoModRecipe, selected: Boolean, enabled: Boolea
                             onClick = { valuesOpen = false; setValue(choice.value) }) }
                     }
                 }
-                Text(if (recipe.selectable) "Рецепт доступен · Эффект не проверен" else "Нужен дополнительный анализ",
+                Text(if (RuntimeRecipeSelectionPolicy.supports(recipe)) "Переключатель в игре · Эффект не проверен"
+                    else if (recipe.selectable && recipe.dex.isNotEmpty()) "Статический DEX-патч · Отключение не поддерживается"
+                    else if (recipe.selectable) "Нет поддержки runtime-переключателя"
+                    else "Нужен дополнительный анализ",
                     style = MaterialTheme.typography.labelSmall, color = if (recipe.selectable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
