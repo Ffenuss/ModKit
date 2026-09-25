@@ -109,20 +109,12 @@ object Il2CppPatchTargetBrowser {
         val token = target.metadataToken ?: return null
         val artifact = target.artifact ?: return null
         val targetImage = imageName(target) ?: return null
-        return result.il2cppBinaryBinding
-            ?.evidence
-            .orEmpty()
-            .asSequence()
-            .filter { it.libraryEntry == artifact }
-            .flatMap { it.bindings.asSequence() }
-            .filter {
-                it.metadataToken == token &&
-                    it.imageName.equals(
-                        targetImage,
-                        ignoreCase = true,
-                    )
-            }
-            .singleOrNull()
+        return io.github.ffenuss.modkit.analysis.Il2CppOnDemandBindings.find(
+            result = result,
+            token = token,
+            imageName = targetImage,
+            libraryEntry = artifact,
+        )
     }
 
     fun returnKindLabel(

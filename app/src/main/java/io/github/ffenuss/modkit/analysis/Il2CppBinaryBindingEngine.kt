@@ -185,7 +185,7 @@ object Il2CppBinaryBindingEngine {
             }
         }
 
-        val exactCount = evidence.sumOf { it.bindings.size }
+        val exactCount = evidence.sumOf { it.bindingIndex?.boundCount ?: it.bindings.size }
         if (exactCount == 0) {
             warnings += "No exact metadata-token → executable method-pointer binding was proven."
         }
