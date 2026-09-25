@@ -5,6 +5,7 @@ import io.github.ffenuss.modkit.domain.EngineScheduleClass
 import io.github.ffenuss.modkit.domain.RunState
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.io.Serializable
 import java.util.zip.ZipFile
 
@@ -64,6 +65,20 @@ object UniversalElfInventoryEngine {
         try {
             candidates.forEachIndexed { index, entry ->
                 checkCancelled(cancellation)
+                val artifact = entry.container + ":" + entry.path
+                // Distinguish a genuinely slow file from a stale 7/16 counter:
+                // begin each file with an explicit byte progress event.
+                progress.publish(EngineProgress(
+                    engineId = ID,
+                    scheduleClass = EngineScheduleClass.TARGETED,
+                    state = RunState.RUNNING,
+                    currentTask = "ELF: извлечение или открытие файла " +
+                        (index + 1) + "/" + candidates.size,
+                    currentArtifact = artifact,
+                    processed = 0,
+                    total = entry.size.takeIf { it > 0L },
+                    lastHeartbeatEpochMs = System.currentTimeMillis(),
+                ))
                 if (entry.size !in 1..MAX_ELF_BYTES) {
                     warnings += entry.container + ":" + entry.path +
                         ": ELF size is outside inventory limit"
@@ -85,6 +100,19 @@ object UniversalElfInventoryEngine {
                         entry = entry,
                         tempRoot = tempRoot,
                         cancellation = cancellation,
+                        onCopiedBytes = { copied ->
+                            progress.publish(EngineProgress(
+                                engineId = ID,
+                                scheduleClass = EngineScheduleClass.TARGETED,
+                                state = RunState.RUNNING,
+                                currentTask = "ELF: извлечение файла " +
+                                    (index + 1) + "/" + candidates.size,
+                                currentArtifact = artifact,
+                                processed = copied,
+                                total = entry.size,
+                                lastHeartbeatEpochMs = System.currentTimeMillis(),
+                            ))
+                        },
                     )
                 }.getOrElse { failure ->
                     if (failure is AnalysisCancelledException) throw failure
@@ -94,6 +122,18 @@ object UniversalElfInventoryEngine {
                 }
 
                 try {
+                    // After extraction finishes the byte counter is no longer
+                    // applicable. Label the actual ELF parser separately.
+                    progress.publish(EngineProgress(
+                        engineId = ID,
+                        scheduleClass = EngineScheduleClass.TARGETED,
+                        state = RunState.RUNNING,
+                        currentTask = "ELF: разбор заголовков и символов",
+                        currentArtifact = artifact,
+                        processed = index.toLong(),
+                        total = candidates.size.toLong(),
+                        lastHeartbeatEpochMs = System.currentTimeMillis(),
+                    ))
                     val record = runCatching {
                         ElfImage.open(materialized.file, cancellation).use { elf ->
                             val architecture = architectureForMachine(
@@ -198,6 +238,7 @@ object UniversalElfInventoryEngine {
         entry: ArtifactEntry,
         tempRoot: File,
         cancellation: CancellationSignal,
+        onCopiedBytes: (Long) -> Unit,
     ): MaterializedElf {
         if (
             entry.path == source.file.name &&
@@ -221,26 +262,63 @@ object UniversalElfInventoryEngine {
             }
 
             zip.getInputStream(zipEntry).use { input ->
-                FileOutputStream(target).use { output ->
-                    val buffer = ByteArray(BUFFER_BYTES)
-                    var total = 0L
-                    while (true) {
-                        checkCancelled(cancellation)
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        total += read
-                        require(total <= MAX_ELF_BYTES) {
-                            "ELF extraction exceeded inventory limit"
-                        }
-                        output.write(buffer, 0, read)
-                    }
-                    require(total == zipEntry.size) {
-                        "ELF extraction size mismatch"
-                    }
-                }
+                copyBounded(
+                    input = input, output = target, expectedSize = zipEntry.size,
+                    cancellation = cancellation, onProgress = onCopiedBytes,
+                )
             }
         }
         return MaterializedElf(target, true)
+    }
+
+    /**
+     * Testable bounded copy with authentic byte progress and a mandatory final
+     * update even when a large ELF finishes within one heartbeat interval.
+     * Partial files are removed on I/O failure, cancellation or size mismatch.
+     */
+    internal fun copyBounded(
+        input: InputStream,
+        output: File,
+        expectedSize: Long,
+        cancellation: CancellationSignal,
+        onProgress: (Long) -> Unit,
+    ) {
+        require(expectedSize in 1..MAX_ELF_BYTES)
+        var total = 0L
+        var lastTime = System.currentTimeMillis()
+        var lastReported = 0L
+        try {
+            onProgress(0)
+            FileOutputStream(output).use { sink ->
+                val buffer = ByteArray(BUFFER_BYTES)
+                while (true) {
+                    checkCancelled(cancellation)
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    if (n == 0) continue
+                    total += n
+                    require(total <= MAX_ELF_BYTES && total <= expectedSize) {
+                        "ELF extraction exceeded indexed/bounded size"
+                    }
+                    sink.write(buffer, 0, n)
+                    val now = System.currentTimeMillis()
+                    if (now - lastTime >= 1_000L ||
+                        total - lastReported >= 1L * 1024L * 1024L
+                    ) {
+                        lastTime = now
+                        lastReported = total
+                        onProgress(total)
+                    }
+                }
+            }
+            require(total == expectedSize && output.length() == expectedSize) {
+                "ELF extraction size mismatch"
+            }
+            onProgress(total)
+        } catch (failure: Throwable) {
+            output.delete()
+            throw failure
+        }
     }
 
     private fun architectureForMachine(
