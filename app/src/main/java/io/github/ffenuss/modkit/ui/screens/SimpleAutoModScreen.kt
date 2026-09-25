@@ -212,7 +212,9 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                 if (state.recipes.isEmpty() && !state.busy) item {
                     Card { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Готовые рецепты не найдены", style = MaterialTheme.typography.titleMedium)
-                        Text("Доступный анализ не подтвердил поддерживаемые изменения. Подробности и ручные инструменты есть в экспертном режиме.")
+                        val missingIl2Cpp = result.routingPlan.missingCapabilities
+                            .firstOrNull { it.startsWith("IL2CPP:") }
+                        Text(missingIl2Cpp ?: "Доступный анализ не подтвердил поддерживаемые изменения. Подробности и ручные инструменты есть в экспертном режиме.")
                         TextButton(onClick = model::discover) { Text("Повторить проверку") }
                     } }
                 }
