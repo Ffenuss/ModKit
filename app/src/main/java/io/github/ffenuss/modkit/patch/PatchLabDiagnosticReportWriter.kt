@@ -112,6 +112,7 @@ object PatchLabDiagnosticReportWriter {
                 writeMetadataTables(zip, result)
                 writeBindings(zip, result)
                 writeUnrealInventory(zip, result)
+                writeFlutterInventory(zip, result)
                 writeEvidenceTargets(zip, result)
                 writeSharedBodies(zip, result)
                 writeCurrentAutoModSnapshot(
