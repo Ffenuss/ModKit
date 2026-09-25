@@ -11,6 +11,10 @@ import io.github.ffenuss.modkit.patch.*
 import io.github.ffenuss.modkit.runtime.*
 import java.io.File
 import java.util.regex.Pattern
+import java.util.zip.ZipFile
+import org.jf.dexlib2.Opcodes
+import org.jf.dexlib2.dexbacked.DexBackedDexFile
+import org.jf.dexlib2.iface.instruction.NarrowLiteralInstruction
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.Assert.*
@@ -99,10 +103,18 @@ class AutoModDeviceTest {
         assertEquals(installed.apkFiles.size, built.files.size)
         assertTrue(built.files.all { it.signature.verified })
         assertTrue(built.mutationDiffVerification.verified)
-        val signedScan = DexLocalPatchEngine.scanApks(built.files.map { it.file }, false, signal)
-        val patched = signedScan.opportunities.filter { it.id in health.dex.map { d -> d.id } }
-        assertEquals(health.dex.size, patched.size)
-        assertTrue(patched.all { it.bodyKind == DexMethodBodyKind.CONSTANT_RETURN })
+        // A patched obfuscated getter no longer reads a named field. Re-running
+        // semantic discovery is not a byte-level oracle: inspect exact identities.
+        health.dex.forEach { selected ->
+            val apk = built.files.single { it.file.name == analysis.index.sources[selected.apkIndex].displayName }.file
+            val bytes = ZipFile(apk).use { zip -> zip.getInputStream(zip.getEntry(selected.dexEntry)).use { it.readBytes() } }
+            val dex = DexBackedDexFile(Opcodes.getDefault(), bytes)
+            val method = dex.classes.single { it.type == selected.className }.methods.single {
+                it.name == selected.methodName && it.parameterTypes.isEmpty() && "()" + it.returnType == selected.signature
+            }
+            assertEquals(DexMethodBodyKind.CONSTANT_RETURN, DexMethodBodyInspector.inspect(method).kind)
+            assertEquals(9999, (method.implementation!!.instructions.first() as NarrowLiteralInstruction).narrowLiteral)
+        }
         val plan = RepackedRuntimeInstallPlanner.plan(built, signal)
 
         device.executeShellCommand("appops set ${context.packageName} REQUEST_INSTALL_PACKAGES allow")

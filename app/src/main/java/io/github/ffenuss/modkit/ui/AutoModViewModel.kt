@@ -98,7 +98,10 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
         val record = AutoModBuildRecord(plan, built.builtAtEpochMs,
             selected.map { it.title + " · " + it.targetLabel }, built.reportFile.absolutePath)
         withContext(Dispatchers.IO) { record.save(context) }
-        mutable.update { it.copy(built = record, showingResult = true, installSession = null, notice = null) }
+        mutable.update { current -> current.copy(built = record, showingResult = true, installSession = null, notice = null,
+            recipes = current.recipes.map { recipe ->
+                if (recipe.id in current.selected) recipe.copy(verification = recipe.verification.copy(apkBuilt = true)) else recipe
+            }) }
         if (Build.VERSION.SDK_INT >= 29) {
             try {
                 val saved = withContext(Dispatchers.IO) { BuildArtifactExporter.saveApkFilesToDownloads(context, plan, record.builtAt) }
@@ -140,10 +143,9 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
         val record = requireNotNull(state.value.built)
         val saved = withContext(Dispatchers.IO) {
             if (tree != null) BuildArtifactExporter.writeApkFilesToTree(context, record.plan, record.builtAt, tree)
-            else {
-                require(Build.VERSION.SDK_INT >= 29)
+            else if (Build.VERSION.SDK_INT >= 29) {
                 BuildArtifactExporter.saveApkFilesToDownloads(context, record.plan, record.builtAt)
-            }
+            } else error("Для Android 8/9 выберите папку сохранения.")
         }
         mutable.update { it.copy(notice = "Сохранено APK: ${saved.files.size} · ${saved.destinationDirectory}") }
     }
