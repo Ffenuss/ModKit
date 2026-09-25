@@ -10,6 +10,7 @@ object NativeRecipeCatalog {
         analysisRoot: File, cancellation: CancellationSignal): List<AutoModRecipe> {
         val evidence = result.il2cppBinaryBinding?.evidence.orEmpty().associateBy { it.libraryEntry }
         val verifiedIndices = evidence.mapValues { (_, e) -> e.functionIndex?.let { it.complete && it.verify() } == true }
+        val verifiedDiskBindings = evidence.mapValues { (_, e) -> e.bindingIndex?.verify() == true }
         val targets = result.evidenceGraph?.targets.orEmpty().associateBy { it.id }
         return GameplayModificationFinder.find(result, preparation)
             .filter { it.category !in setOf(GameplayModificationCategory.OWNER_ENTITLEMENT,
@@ -24,8 +25,22 @@ object NativeRecipeCatalog {
                 var values = emptyList<ScalarRecipeValue>()
                 val target = targets[candidate.targetId]
                 val library = evidence[target?.artifact]
-                val binding = library?.bindings?.singleOrNull { it.metadataToken == target?.metadataToken &&
-                    it.imageName == target?.let(Il2CppPatchTargetBrowser::imageName) }
+                val binding = if (target == null || library == null) null else {
+                    val token = target.metadataToken
+                    val imageName = Il2CppPatchTargetBrowser.imageName(target)
+                    if (token == null || imageName == null) null
+                    else if (verifiedDiskBindings[target.artifact] == true) {
+                        io.github.ffenuss.modkit.analysis.Il2CppOnDemandBindings.find(
+                            result, token, imageName, requireNotNull(target.artifact),
+                            indexVerified = true,
+                        )
+                    } else {
+                        library.bindings.filter {
+                            it.metadataToken == token &&
+                                it.imageName.equals(imageName, ignoreCase = true)
+                        }.singleOrNull()
+                    }
+                }
                 val presentation = target?.declaringType.orEmpty().let { owner ->
                     Regex("(?i)(InfoBox|Display|Tooltip|(^|[._])UI([._]|$)|HUD|HealthBar|TextView)").containsMatchIn(owner)
                 }
