@@ -95,8 +95,10 @@ class ModKitRuntimeOverlayService : Service() {
         removeOverlay()
         activeSha = sha
         showOverlay(record, authority)
-        val notificationManager = getSystemService(NotificationManager::class.java)
-        notificationManager.notify(
+        // Android 13+ permits foreground-service notifications without
+        // POST_NOTIFICATIONS consent. Update it through startForeground rather
+        // than posting a separate notification that would require that grant.
+        startForeground(
             NOTIFICATION_ID,
             notification("Меню доступно поверх игры · все моды сначала выключены"),
         )
