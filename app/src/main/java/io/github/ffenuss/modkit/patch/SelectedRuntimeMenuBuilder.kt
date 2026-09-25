@@ -33,7 +33,7 @@ object RuntimeRecipeSelectionPolicy {
     )
 
     fun supports(recipe: AutoModRecipe): Boolean =
-        recipe.selectable && recipe.dex.isEmpty &&
+        recipe.selectable && recipe.dex.isEmpty() &&
             recipe.native?.let {
                 it.category in allowedCategories && !it.replacementHex.isNullOrBlank()
             } == true
