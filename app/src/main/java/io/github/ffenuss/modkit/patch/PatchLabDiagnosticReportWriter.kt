@@ -272,6 +272,15 @@ object PatchLabDiagnosticReportWriter {
                 "exactIl2CppMethodTargets: " +
                     targets,
             )
+            result.flutterAssetInventory?.let { inventory ->
+                writer.line()
+                writer.line("FLUTTER")
+                writer.line("validatedManifestCount: " + inventory.validatedManifestCount)
+                writer.line("listedAssetCount: " + inventory.listedAssetCount)
+                writer.line("packagedAssetEntries: " + inventory.packagedAssetCount)
+                writer.line("aotGameLogicDecoder: NOT_IMPLEMENTED")
+                inventory.warnings.forEach { writer.line("warning: " + it) }
+            }
             result.unrealAssetInventory?.let { inventory ->
                 writer.line()
                 writer.line("UNREAL")
