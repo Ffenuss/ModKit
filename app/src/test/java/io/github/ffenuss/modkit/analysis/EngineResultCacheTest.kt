@@ -115,11 +115,19 @@ class EngineResultCacheTest {
             )
             val cache = EngineResultCache(File(root, "cache"))
 
-            assertTrue(cache.saveIl2CppBinaryBinding("artifact-sha", binding))
+            val indexed = withVerifiedDiskIndex(root, binding)
+            assertTrue(cache.saveIl2CppBinaryBinding("artifact-sha", indexed))
             val restored = cache.loadIl2CppBinaryBinding("artifact-sha")
-            assertEquals(binding, restored)
+            assertEquals(indexed, restored)
             assertTrue(restored?.exactBindingAvailable == true)
             assertNull(cache.loadIl2CppBinaryBinding("other-artifact"))
+            requireNotNull(indexed.evidence.single().bindingIndex).let {
+                File(it.path).delete()
+            }
+            assertNull(
+                "A deleted disk binding index must force a fresh analysis",
+                cache.loadIl2CppBinaryBinding("artifact-sha"),
+            )
         } finally {
             root.deleteRecursively()
         }
@@ -242,7 +250,9 @@ class EngineResultCacheTest {
 
             assertTrue(cache.saveArtifactIndex(artifactSha, index))
             assertTrue(cache.saveIl2CppFastDump(artifactSha, dump))
-            assertTrue(cache.saveIl2CppBinaryBinding(artifactSha, binary))
+            assertTrue(cache.saveIl2CppBinaryBinding(
+                artifactSha, withVerifiedDiskIndex(root, binary),
+            ))
 
             val restored = requireNotNull(cache.restorePartialResult(artifactSha))
             assertEquals(artifactSha, restored.index.artifactSha256)
@@ -263,6 +273,31 @@ class EngineResultCacheTest {
         } finally {
             root.deleteRecursively()
         }
+    }
+
+    private fun withVerifiedDiskIndex(
+        root: File,
+        result: Il2CppBinaryBindingResult,
+    ): Il2CppBinaryBindingResult {
+        val live = object : CancellationSignal {
+            override fun isCancelled() = false
+        }
+        return result.copy(evidence = result.evidence.mapIndexed { i, item ->
+            val index = Il2CppDiskBindingIndexWriter(
+                File(root, "exact-binding-$i.idx"), 1, live,
+            ).use { writer ->
+                writer.add(
+                    methodIndex = 0,
+                    slotIndex = 0,
+                    moduleIndex = 0,
+                    functionVa = 0x6000,
+                    fileOffset = 0x800,
+                    returnKind = Il2CppNativeReturnKind.UNKNOWN,
+                )
+                writer.finish()
+            }
+            item.copy(bindingIndex = index)
+        })
     }
 
     private fun metadataModel() = Il2CppMetadataModel(
