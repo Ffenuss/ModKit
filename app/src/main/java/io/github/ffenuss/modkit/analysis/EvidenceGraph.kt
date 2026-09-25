@@ -116,7 +116,7 @@ object EvidenceGraphBuilder {
         val binary = result.il2cppBinaryBinding
         val binaryItems = binary?.evidence.orEmpty()
         val exactBindingCount =
-            binaryItems.sumOf { it.bindings.size }
+            binaryItems.sumOf { it.bindingIndex?.boundCount ?: it.bindings.size }
 
         if (exactBindingCount > 0) {
             val targets =
@@ -129,8 +129,20 @@ object EvidenceGraphBuilder {
                 binaryItem.bindings.forEach { binding ->
                     targets += methodTarget(
                         binding = binding,
-                        libraryEntry =
-                            binaryItem.libraryEntry,
+                        libraryEntry = binaryItem.libraryEntry,
+                        evidence = evidence,
+                    )
+                }
+                // The persistent index contains all exact MethodDefs, even
+                // after the 30k in-memory UI window. Materialize only
+                // semantically relevant late targets; every other token
+                // remains accessible through on-demand verified lookup.
+                Il2CppOnDemandBindings.lateGameplayBindings(
+                    dump.metadata, binaryItem,
+                ).forEach { binding ->
+                    targets += methodTarget(
+                        binding = binding,
+                        libraryEntry = binaryItem.libraryEntry,
                         evidence = evidence,
                     )
                 }
