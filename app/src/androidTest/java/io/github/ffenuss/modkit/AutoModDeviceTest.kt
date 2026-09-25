@@ -1,6 +1,10 @@
 package io.github.ffenuss.modkit
 
 import android.content.Intent
+import android.content.ContentValues
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -38,11 +42,23 @@ class AutoModDeviceTest {
         val temporary = File(context.cacheDir, name)
         write(temporary)
         assertTrue("Evidence must not be empty: $name", temporary.length() > 0)
-        device.executeShellCommand("mkdir -p /data/local/tmp/modkit-device-validation")
-        // UiAutomation executes argv directly; redirection requires an explicit shell.
-        val destination = "/data/local/tmp/modkit-device-validation/$name"
-        val copied = device.executeShellCommand("sh -c 'run-as ${context.packageName} cat ${temporary.absolutePath} > $destination && wc -c < $destination'").trim()
-        assertEquals("Evidence must survive test-app cleanup", temporary.length(), copied.toLongOrNull())
+        // Public Downloads survive UTP uninstalling the target app after the run.
+        if (Build.VERSION.SDK_INT >= 29) {
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                put(MediaStore.MediaColumns.MIME_TYPE, if (name.endsWith(".png")) "image/png" else "application/json")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/ModKit-validation")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+            val uri = requireNotNull(resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values))
+            requireNotNull(resolver.openOutputStream(uri)).use { output -> temporary.inputStream().use { it.copyTo(output) } }
+            resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+            val size = requireNotNull(resolver.query(uri, arrayOf(MediaStore.MediaColumns.SIZE), null, null, null)).use {
+                assertTrue(it.moveToFirst()); it.getLong(0)
+            }
+            assertEquals("Evidence must survive test-app cleanup", temporary.length(), size)
+        } else error("This emulator evidence suite requires API 29 or newer")
     }
 
     private fun hit() {
@@ -80,6 +96,20 @@ class AutoModDeviceTest {
         assertTrue(device.wait(Until.hasObject(By.text("Установить")), 15_000))
         device.setOrientationNatural()
         device.unfreezeRotation()
+        // Request from the initial ungranted state. Revoking an already granted
+        // app-op can kill the instrumented process on newer Android versions.
+        assertFalse(context.packageManager.canRequestPackageInstalls())
+        device.findObject(By.text("Установить")).click()
+        assertTrue("Install button must open unknown-source settings",
+            device.wait(Until.hasObject(By.pkg("com.android.settings")), 15_000))
+        val permissionSwitch = device.wait(Until.findObject(By.checkable(true)), 10_000)
+        assertNotNull("Android must expose the install permission switch", permissionSwitch)
+        if (!permissionSwitch.isChecked) permissionSwitch.click()
+        evidence("install-permission.png") { device.takeScreenshot(it) }
+        device.pressBack()
+        assertTrue("Returning from settings must continue to the actual certificate check",
+            device.wait(Until.hasObject(By.textContains("Установленная версия подписана другим ключом")), 15_000))
+        evidence("certificate-conflict.png") { device.takeScreenshot(it) }
     }
 
     @Test fun b_discoversRewritesSignsInstallsAndChangesTheRunningGame() = runBlocking {
@@ -163,24 +193,15 @@ class AutoModDeviceTest {
             .put("outputSha256", org.json.JSONArray(built.files.map { it.sha256 })).toString(2)) }
     }
 
-    @Test fun c_installButtonReturnsFromPermissionSettingsAndInstallsTheUiBuild() {
+    @Test fun c_installButtonInstallsTheUiBuildAfterTheOriginalConflictIsResolved() {
         // The original certificate conflict was checked in b. The app produced by a
         // uses the same persistent ModKit key and can now update our owned fixture.
-        device.executeShellCommand("appops set ${context.packageName} REQUEST_INSTALL_PACKAGES deny")
-        assertFalse(context.packageManager.canRequestPackageInstalls())
+        assertTrue(context.packageManager.canRequestPackageInstalls())
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val installButton = device.wait(Until.findObject(By.text("Установить")), 15_000)
         assertNotNull("Retained UI build must remain installable", installButton)
         val attemptedAt = System.currentTimeMillis()
         installButton.click()
-        assertTrue("Install button must open unknown-source settings",
-            device.wait(Until.hasObject(By.pkg("com.android.settings")), 15_000))
-        val permissionSwitch = device.wait(Until.findObject(By.checkable(true)), 10_000)
-        assertNotNull("Android must expose the install permission switch", permissionSwitch)
-        if (!permissionSwitch.isChecked) permissionSwitch.click()
-        evidence("install-permission.png") { device.takeScreenshot(it) }
-        device.pressBack()
-
         val deadline = System.currentTimeMillis() + 45_000
         while (System.currentTimeMillis() < deadline) {
             val status = RepackedRuntimeInstallStatusStore.status.value
@@ -199,7 +220,7 @@ class AutoModDeviceTest {
             device.wait(Until.hasObject(By.text("Приложение установлено")), 500)
         }
         val completed = RepackedRuntimeInstallStatusStore.status.value
-        assertTrue("A new installation must complete after returning from settings", completed.updatedAtEpochMs >= attemptedAt)
+        assertTrue("A new installation must complete from the retained UI build", completed.updatedAtEpochMs >= attemptedAt)
         assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, completed.kind)
         launchGame()
         repeat(3) { hit() }

@@ -144,7 +144,7 @@ jobs:
           script: |
             bash tools/install_device_fixture.sh ${{ matrix.fixture }}
             adb logcat -c
-            set +e; gradle --no-daemon :app:connectedDebugAndroidTest; RESULT=$?; adb logcat -d > device-logcat.txt; adb pull /data/local/tmp/modkit-device-validation device-validation || true; exit $RESULT
+            set +e; gradle --no-daemon :app:connectedDebugAndroidTest; RESULT=$?; adb logcat -d > device-logcat.txt; adb pull /sdcard/Download/ModKit-validation device-validation || true; exit $RESULT
       - name: Upload device evidence
         if: always()
         uses: actions/upload-artifact@v4

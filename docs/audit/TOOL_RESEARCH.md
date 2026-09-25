@@ -52,3 +52,10 @@ source must pin a revision and carry the actual source license/notice, including
 transitive native dependencies. Frida components and optional Cpp2IL plugins need
 their own review before distribution. No paid feature or external service is
 required by these changes.
+
+The added build wrapper is the unmodified official Gradle wrapper from
+[`gradle/gradle`, tag v9.5.0](https://github.com/gradle/gradle/tree/v9.5.0).
+Apache-2.0 headers in the launch scripts and `META-INF/LICENSE` in the wrapper JAR
+are preserved. The JAR SHA-256 was checked against the official distribution
+checksum: `497c8c2a7e5031f6aa847f88104aa80a93532ec32ee17bdb8d1d2f67a194a9c7`.
+`gradle-wrapper.properties` pins the Gradle distribution SHA-256 as well.

@@ -19,7 +19,7 @@ for name in sources:
 output = ROOT / "docs/audit/source-inventory.csv"
 output.parent.mkdir(parents=True, exist_ok=True)
 with output.open("w", newline="") as sink:
-    writer = csv.writer(sink)
+    writer = csv.writer(sink, lineterminator="\n")
     writer.writerow(["path", "lines", "sha256", "declarations", "internal_imports", "test_annotations"])
     writer.writerows(rows)
 print(f"Inventoried {len(rows)} tracked text files; {sum(r[-1] for r in rows)} @Test annotations")
