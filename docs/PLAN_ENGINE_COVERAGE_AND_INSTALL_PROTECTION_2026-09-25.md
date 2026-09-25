@@ -107,3 +107,13 @@ Stop ship if a build success is reported without APK verification; a selected si
 For each new app, user can export diagnostics locally via **Ещё → Экспорт диагностики**. The minimum helpful set is **Aniimo**, **Minecraft** and **DropTheCat**: one ZIP per app, plus whether installed as base+splits or single APK and the Android version. Ask for logcat/ANR only after the progress report identifies a truly stalled stage. **Never request the user's game account credentials, payment receipts, private certificates or an automatic dump of personal files.**
 
 Reports from **Delta Force, STAR DIVE and TWoM** help classify non-IL2CPP coverage, but screenshots alone do not justify labeling their engines or enabling more mods.
+
+
+## Independently validated follow-up draft PRs (2026-09-25)
+
+| Change | Draft PR / commit | CI verification | Still unverified |
+|---|---|---|---|
+| Exclude coroutine framework `Lkotlinx/` from gameplay DEX name suggestions; retain genuine game `getMaxSlots` via synthetic regression. | [#12](https://github.com/Ffenuss/ModKit/pull/12), `56956c5f371de68ac7729aaf69146503b6fffde2` | [run 36180849062](https://github.com/Ffenuss/ModKit/actions/runs/36180849062): build, JVM and lint SUCCESS; Android API 29 **3/3** and API 35 **3/3**, no skipped/failed fixture tests. | A fresh scan of the actual Minecraft/TWoM installed APKs and all other false-positive sources. |
+| Gate full IL2CPP fast-dump/codegen stages on a CONFIRMED runtime profile plus both validated ELF and metadata entries; expose missing metadata in the simple UI. | [#13](https://github.com/Ffenuss/ModKit/pull/13), `ab9b055eb68a30f2f526cc11b8fb3b98e3951034` | [run 36181037872](https://github.com/Ffenuss/ModKit/actions/runs/36181037872): build, JVM and lint SUCCESS; Android API 29 **3/3** and API 35 **3/3**, no skipped/failed fixture tests. | Real Aniimo APK classification, obtaining valid metadata when absent/packed, and full gameplay recipe support. |
+
+These two PRs branch **independently** from #10; their downloadable APK artifacts do **not** include both fixes simultaneously. Neither PR has been merged into #10, #11 or main. The existing emulator fixture suites do not demonstrate a real native overlay ON/OFF transition or actual gameplay effects.
