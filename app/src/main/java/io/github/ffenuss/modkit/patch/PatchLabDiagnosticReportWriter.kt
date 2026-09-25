@@ -111,6 +111,7 @@ object PatchLabDiagnosticReportWriter {
                 )
                 writeMetadataTables(zip, result)
                 writeBindings(zip, result)
+                writeUnrealInventory(zip, result)
                 writeEvidenceTargets(zip, result)
                 writeSharedBodies(zip, result)
                 writeCurrentAutoModSnapshot(
@@ -270,6 +271,15 @@ object PatchLabDiagnosticReportWriter {
                 "exactIl2CppMethodTargets: " +
                     targets,
             )
+            result.unrealAssetInventory?.let { inventory ->
+                writer.line()
+                writer.line("UNREAL")
+                writer.line("indexedPakAndAssetEntries: " + inventory.records.size)
+                writer.line("pakIndexSha1Verified: " + inventory.verifiedPakCount)
+                writer.line("cookAssetHeadersSeen: " + inventory.packagedContentCount)
+                writer.line("blueprintGameplayDecoder: NOT_IMPLEMENTED")
+                inventory.warnings.forEach { writer.line("warning: " + it) }
+            }
             writer.line()
             writer.line("PREPARATION")
             if (preparation == null) {
@@ -509,6 +519,28 @@ object PatchLabDiagnosticReportWriter {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    private fun writeUnrealInventory(
+        zip: ZipOutputStream,
+        result: FastAnalysisResult,
+    ) {
+        writeTextEntry(zip, "unreal/asset-inventory.tsv") { writer ->
+            writer.line(
+                "container\tpath\tsize\tkind\tstatus\tpakVersion\tindexOffset\t" +
+                    "indexSize\tindexSha1Verified\tencryptedIndex\tnote",
+            )
+            result.unrealAssetInventory?.records.orEmpty().forEach { item ->
+                writer.line(
+                    listOf(
+                        item.container, item.path, item.size, item.kind,
+                        item.status, item.pakVersion ?: "", item.pakIndexOffset ?: "",
+                        item.pakIndexSize ?: "", item.pakIndexSha1Verified ?: "",
+                        item.encryptedIndex ?: "", item.note ?: "",
+                    ).joinToString("\t") { tsv(it) },
+                )
             }
         }
     }
