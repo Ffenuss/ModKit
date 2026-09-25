@@ -98,6 +98,9 @@ object UnrealAssetInventoryEngine {
         val selected = candidates.take(MAX_ENTRIES)
         val out = ArrayList<UnrealAssetRecord>(selected.size)
         val warnings = mutableListOf<String>()
+        if (candidates.isEmpty()) warnings +=
+            "Unreal runtime detected, but no PAK, IoStore or loose cooked assets " +
+                "are present in the selected APK/splits. Check external game downloads."
         if (candidates.size > selected.size) {
             warnings += "Unreal inventory: first $MAX_ENTRIES entries only; " +
                 (candidates.size - selected.size) + " entries deferred."
