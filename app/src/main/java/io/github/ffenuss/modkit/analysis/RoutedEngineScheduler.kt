@@ -120,6 +120,22 @@ object RoutedEngineScheduler {
                         )
                     }
 
+                    "flutter.asset-inventory" -> {
+                        val inventory = withContext(Dispatchers.IO) {
+                            FlutterAssetInventoryEngine.analyze(
+                                workspace, engineCancellation, progress,
+                            )
+                        }
+                        result.copy(
+                            flutterAssetInventory = inventory,
+                            engineWarnings = (
+                                result.engineWarnings + inventory.warnings.map {
+                                    engine.id + ": " + it
+                                }
+                            ).distinct(),
+                        )
+                    }
+
                     "unreal.package-inventory" -> {
                         val inventory = withContext(Dispatchers.IO) {
                             UnrealAssetInventoryEngine.analyze(
