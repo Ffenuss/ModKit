@@ -37,8 +37,12 @@ class AutoModDeviceTest {
     private fun evidence(name: String, write: (File) -> Unit) {
         val temporary = File(context.cacheDir, name)
         write(temporary)
+        assertTrue("Evidence must not be empty: $name", temporary.length() > 0)
         device.executeShellCommand("mkdir -p /data/local/tmp/modkit-device-validation")
-        device.executeShellCommand("run-as ${context.packageName} cat ${temporary.absolutePath} > /data/local/tmp/modkit-device-validation/$name")
+        // UiAutomation executes argv directly; redirection requires an explicit shell.
+        val destination = "/data/local/tmp/modkit-device-validation/$name"
+        val copied = device.executeShellCommand("sh -c 'run-as ${context.packageName} cat ${temporary.absolutePath} > $destination && wc -c < $destination'").trim()
+        assertEquals("Evidence must survive test-app cleanup", temporary.length(), copied.toLongOrNull())
     }
 
     private fun hit() {
@@ -157,5 +161,50 @@ class AutoModDeviceTest {
             .put("baselineAfterThreeHits", "GAME OVER | Health: 0")
             .put("modifiedAfterThreeHits", "ALIVE | Health: 9999")
             .put("outputSha256", org.json.JSONArray(built.files.map { it.sha256 })).toString(2)) }
+    }
+
+    @Test fun c_installButtonReturnsFromPermissionSettingsAndInstallsTheUiBuild() {
+        // The original certificate conflict was checked in b. The app produced by a
+        // uses the same persistent ModKit key and can now update our owned fixture.
+        device.executeShellCommand("appops set ${context.packageName} REQUEST_INSTALL_PACKAGES deny")
+        assertFalse(context.packageManager.canRequestPackageInstalls())
+        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val installButton = device.wait(Until.findObject(By.text("Установить")), 15_000)
+        assertNotNull("Retained UI build must remain installable", installButton)
+        val attemptedAt = System.currentTimeMillis()
+        installButton.click()
+        assertTrue("Install button must open unknown-source settings",
+            device.wait(Until.hasObject(By.pkg("com.android.settings")), 15_000))
+        val permissionSwitch = device.wait(Until.findObject(By.checkable(true)), 10_000)
+        assertNotNull("Android must expose the install permission switch", permissionSwitch)
+        if (!permissionSwitch.isChecked) permissionSwitch.click()
+        evidence("install-permission.png") { device.takeScreenshot(it) }
+        device.pressBack()
+
+        val deadline = System.currentTimeMillis() + 45_000
+        while (System.currentTimeMillis() < deadline) {
+            val status = RepackedRuntimeInstallStatusStore.status.value
+            if (status.updatedAtEpochMs >= attemptedAt) {
+                if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) break
+                assertNotEquals(status.message, RepackedRuntimeInstallStatusKind.FAILURE, status.kind)
+                device.findObject(By.text("Подтвердить установку"))?.click()
+                val systemInstall = device.findObject(By.res("com.android.packageinstaller", "ok_button"))
+                    ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
+                    ?: device.findObject(By.text("Install"))
+                    ?: device.findObject(By.text("INSTALL"))
+                    ?: device.findObject(By.text("Update"))
+                    ?: device.findObject(By.text("UPDATE"))
+                systemInstall?.click()
+            }
+            device.wait(Until.hasObject(By.text("Приложение установлено")), 500)
+        }
+        val completed = RepackedRuntimeInstallStatusStore.status.value
+        assertTrue("A new installation must complete after returning from settings", completed.updatedAtEpochMs >= attemptedAt)
+        assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, completed.kind)
+        launchGame()
+        repeat(3) { hit() }
+        assertTrue("The APK selected and installed through the UI must change gameplay",
+            device.hasObject(By.text("ALIVE | Health: 9999")))
+        evidence("ui-installed-game.png") { device.takeScreenshot(it) }
     }
 }

@@ -76,6 +76,7 @@ jobs:
             grep -aFq "RuntimeNativeBridge_nativePatchCode" "$NATIVE"
           done
           "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee apk-signature-verification.txt
           cp "$APK" ModKit-v0.0.29-debug.apk
           sha256sum ModKit-v0.0.29-debug.apk > ModKit-v0.0.29-debug.apk.sha256
 
@@ -88,6 +89,7 @@ jobs:
             app/build/test-results/
             app/build/reports/tests/
             app/build/reports/lint-results-debug.*
+            apk-signature-verification.txt
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
