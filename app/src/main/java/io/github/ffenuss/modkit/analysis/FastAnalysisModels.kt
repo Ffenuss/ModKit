@@ -53,4 +53,5 @@ data class FastAnalysisResult(
     val runtimeStageAttempts: List<RuntimeStageAttempt> = emptyList(),
     val engineCacheHits: Set<String> = emptySet(),
     val engineWarnings: List<String> = emptyList(),
+    val unrealAssetInventory: UnrealAssetInventoryResult? = null,
 )
