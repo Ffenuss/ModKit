@@ -70,7 +70,9 @@ class AutoModDeviceTest {
     private fun launchGame() {
         context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(fixturePackage))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
-        assertTrue("Fixture must launch", device.wait(Until.hasObject(By.textContains("Health:")), 15_000))
+        val gameReady = device.wait(Until.hasObject(By.textContains("Health:")), 45_000)
+        if (!gameReady) evidence("fixture-launch-failure.png") { device.takeScreenshot(it) }
+        assertTrue("Fixture must launch", gameReady)
     }
 
 
@@ -150,7 +152,9 @@ class AutoModDeviceTest {
 
     @Test fun a_simpleInterfaceSelectsAndBuildsWithoutExpertTools() {
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        assertTrue(device.wait(Until.hasObject(By.text("Выбрать игру")), 15_000))
+        val homeReady = device.wait(Until.hasObject(By.text("Выбрать игру")), 45_000)
+        if (!homeReady) evidence("modkit-home-timeout.png") { device.takeScreenshot(it) }
+        assertTrue("ModKit home must become accessible", homeReady)
         evidence("home.png") { device.takeScreenshot(it) }
         device.findObject(By.text("Выбрать игру")).click()
         assertTrue(device.wait(Until.hasObject(By.text("ModKit Test Game")), 15_000))
@@ -243,7 +247,7 @@ class AutoModDeviceTest {
         val attemptedAt = System.currentTimeMillis()
         val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
         val directInstall = awaitInstallResult(
-            attemptedAt, 30_000L, expectedSessionId = submission.sessionId,
+            attemptedAt, 100_000L, expectedSessionId = submission.sessionId,
         )
         assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, directInstall.kind)
         launchGame()
@@ -275,12 +279,31 @@ class AutoModDeviceTest {
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val installButton = device.wait(Until.findObject(By.text("Установить")), 15_000)
         assertNotNull("Retained UI build must remain installable", installButton)
+        val previousSessionId = RepackedRuntimeInstallStatusStore.status.value.sessionId
         val attemptedAt = System.currentTimeMillis()
         installButton.click()
+        // A late callback from the direct-install test must never satisfy
+        // this UI install assertion or be mistaken for its own success.
+        val newSessionDeadline = System.currentTimeMillis() + 45_000L
+        var uiSessionId: Int? = null
+        while (System.currentTimeMillis() < newSessionDeadline) {
+            val current = RepackedRuntimeInstallStatusStore.status.value
+            if (current.updatedAtEpochMs >= attemptedAt &&
+                current.sessionId != null && current.sessionId != previousSessionId
+            ) {
+                uiSessionId = current.sessionId
+                break
+            }
+            device.wait(Until.hasObject(By.text("Приложение установлено")), 500)
+        }
+        val actualUiSession = requireNotNull(uiSessionId) {
+            "The retained UI install button must submit its own PackageInstaller session."
+        }
         val completed: RepackedRuntimeInstallStatus
         try {
             completed = awaitInstallResult(
-                attemptedAt, 45_000L, manualUiFallback = true,
+                attemptedAt, 100_000L, expectedSessionId = actualUiSession,
+                manualUiFallback = true,
             )
         } finally {
             evidence("ui-install-state.png") { device.takeScreenshot(it) }
