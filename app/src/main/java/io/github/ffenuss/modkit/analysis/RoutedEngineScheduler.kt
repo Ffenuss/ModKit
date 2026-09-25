@@ -19,6 +19,7 @@ object RoutedEngineScheduler {
     private val registeredEngineIds = setOf(
         "dex.inventory",
         "elf.universal-inventory",
+        "unreal.package-inventory",
         "il2cpp.fast-dump",
         "il2cpp.codegen-bind",
     )
@@ -115,6 +116,22 @@ object RoutedEngineScheduler {
                                         engine.id + ": " + it
                                     }
                                 ).distinct(),
+                        )
+                    }
+
+                    "unreal.package-inventory" -> {
+                        val inventory = withContext(Dispatchers.IO) {
+                            UnrealAssetInventoryEngine.analyze(
+                                workspace, engineCancellation, progress,
+                            )
+                        }
+                        result.copy(
+                            unrealAssetInventory = inventory,
+                            engineWarnings = (
+                                result.engineWarnings + inventory.warnings.map {
+                                    engine.id + ": " + it
+                                }
+                            ).distinct(),
                         )
                     }
 
