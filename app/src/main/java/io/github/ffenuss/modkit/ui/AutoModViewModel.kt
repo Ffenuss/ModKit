@@ -160,6 +160,17 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
         mutable.update { it.copy(notice = "Сохранено APK: ${saved.files.size} · ${saved.destinationDirectory}") }
     }
 
+    fun exportDiagnostics() = operate("Подготавливаем диагностику") {
+        val recipes = state.value.recipes
+        val report = withContext(Dispatchers.IO) {
+            PatchLabDiagnosticReportWriter.write(File(context.filesDir, "expert-lab-export"), target.label,
+                analysis, if (::preparation.isInitialized) preparation else null, recipes,
+                File(context.filesDir, "analysis-results"), signal)
+        }
+        PatchLabDiagnosticReportExporter.share(context, report)
+        mutable.update { it.copy(notice = "Отчёт содержит доступные рецепты и точные причины блокировки.") }
+    }
+
     fun recordObservation(observation: String) = operate("Сохраняем результат проверки") {
         val record = requireNotNull(state.value.built).copy(userObservation = observation)
         withContext(Dispatchers.IO) { record.save(context) }

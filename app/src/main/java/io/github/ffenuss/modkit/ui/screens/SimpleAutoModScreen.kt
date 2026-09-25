@@ -36,6 +36,7 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
     var query by rememberSaveable(result.index.artifactSha256) { mutableStateOf("") }
     var showUnavailable by rememberSaveable { mutableStateOf(false) }
     var testDialog by remember { mutableStateOf(false) }
+    var menuOpen by remember { mutableStateOf(false) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { model.permissionReturned() }
     val folder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) model.save(uri) }
     LaunchedEffect(result.index.artifactSha256) { model.initialize(target, result) }
@@ -63,7 +64,15 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         TextButton(onClick = onBack, enabled = !state.busy) { Text("Назад") }
                         Spacer(Modifier.weight(1f))
-                        TextButton(onClick = { expert = true }, enabled = !state.busy) { Text("Экспертный режим") }
+                        Box {
+                            TextButton(onClick = { menuOpen = true }, enabled = !state.busy) { Text("Ещё") }
+                            DropdownMenu(menuOpen, { menuOpen = false }) {
+                                DropdownMenuItem(text = { Text("Экспертный режим") }, onClick = { menuOpen = false; expert = true })
+                                DropdownMenuItem(text = { Text("Экспорт диагностики") }, onClick = {
+                                    menuOpen = false; model.exportDiagnostics()
+                                })
+                            }
+                        }
                     }
                     Text(target.label, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     Text(if (resultVisible) "3 / 3  •  Результат" else "2 / 3  •  Выберите изменения",

@@ -23,6 +23,37 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PatchLabDiagnosticReportWriterTest {
+    @Test fun currentRecipeReasonsAndChangedValuesAreNotHiddenByTheFinderCache() {
+        val root = Files.createTempDirectory("recipe-report-").toFile()
+        try {
+            val result = FastAnalysisResult(ArtifactIndex(SHA, emptyList(), emptyList()),
+                EngineRoutingPlan(emptyList(), emptyList()), elapsedMs = 1)
+            val recipe = AutoModRecipe("candidate", "Здоровье", "Предел", "", "Player",
+                blocker = "Выполняется вызов другой функции", scalarValue = "2")
+            val report = PatchLabDiagnosticReportWriter.write(root, "fixture", result, null, listOf(recipe))
+            ZipFile(report).use {
+                assertTrue(read(it, "automod/recipes.tsv").contains(recipe.blocker!!))
+                assertTrue(read(it, "automod/recipe-summary.txt").contains("runtimeConfirmed=0"))
+            }
+            PatchLabDiagnosticReportWriter.write(root, "fixture", result, null, listOf(recipe.copy(scalarValue = "5")))
+            ZipFile(report).use { assertTrue(read(it, "automod/recipes.tsv").contains("\t5\t")) }
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun cancellingExportPreservesThePreviousCompletedReport() {
+        val root = Files.createTempDirectory("cancel-report-").toFile()
+        try {
+            val result = FastAnalysisResult(ArtifactIndex(SHA, emptyList(), emptyList()),
+                EngineRoutingPlan(emptyList(), emptyList()), elapsedMs = 1)
+            val previous = PatchLabDiagnosticReportWriter.write(root, "fixture", result, null, emptyList()).readBytes()
+            val signal = object : io.github.ffenuss.modkit.analysis.CancellationSignal { override fun isCancelled() = true }
+            val failed = runCatching { PatchLabDiagnosticReportWriter.write(root, "fixture", result, null, emptyList(), cancellation = signal) }
+            assertTrue(failed.exceptionOrNull() is io.github.ffenuss.modkit.analysis.AnalysisCancelledException)
+            org.junit.Assert.assertArrayEquals(previous, root.listFiles()!!.single { it.extension == "zip" }.readBytes())
+            assertFalse(root.listFiles()!!.any { it.extension == "tmp" })
+        } finally { root.deleteRecursively() }
+    }
+
     @Test
     fun exportsDumpMetadataBindingsAndSharedBodyEvidence() {
         val root =

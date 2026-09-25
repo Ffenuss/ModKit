@@ -22,18 +22,26 @@ object NativeRecipeCatalog {
                 var selectedValue: String? = null
                 var description = "Назначение предполагается по метаданным; игровой эффект ещё не проверен."
                 var values = emptyList<ScalarRecipeValue>()
+                val target = targets[candidate.targetId]
+                val library = evidence[target?.artifact]
+                val binding = library?.bindings?.singleOrNull { it.metadataToken == target?.metadataToken &&
+                    it.imageName == target?.let(Il2CppPatchTargetBrowser::imageName) }
+                val presentation = target?.declaringType.orEmpty().let { owner ->
+                    Regex("(?i)(InfoBox|Display|Tooltip|(^|[._])UI([._]|$)|HUD|HealthBar|TextView)").containsMatchIn(owner)
+                }
                 val numeric = candidate.confidence == GameplayModificationConfidence.STRONG_NUMERIC_CANDIDATE ||
-                    candidate.action in setOf(GameplayMutationAction.FORCE_TWO, GameplayMutationAction.FORCE_SCALAR_DEFAULT)
+                    candidate.action in setOf(GameplayMutationAction.FORCE_TWO, GameplayMutationAction.FORCE_SCALAR_DEFAULT) ||
+                    candidate.confidence == GameplayModificationConfidence.SEMANTIC_METHOD_SIGNAL &&
+                    binding?.returnKind in setOf(Il2CppNativeReturnKind.INTEGER, Il2CppNativeReturnKind.FLOAT32,
+                        Il2CppNativeReturnKind.FLOAT64, Il2CppNativeReturnKind.BOOLEAN)
                 if (candidate.selectable || numeric) {
                     try {
-                        val target = requireNotNull(targets[candidate.targetId])
+                        requireNotNull(target) { "Нет точной привязки к телу метода." }
                         require(target.abi == "arm64-v8a") { "Автоматический рецепт поддерживает только ARM64." }
-                        val library = requireNotNull(evidence[target.artifact])
+                        requireNotNull(library) { "Нет подтверждённой нативной библиотеки." }
                         require(verifiedIndices[target.artifact] == true) { "Нужен полный проверенный индекс адресов. Повторите анализ." }
                         val span = requireNotNull(library.functionIndex?.lookup(requireNotNull(target.fileOffset)))
                         require(span.references == 1) { "Это тело используют ${span.references} методов. Нужен согласованный рецепт для всех." }
-                        val binding = library.bindings.singleOrNull { it.metadataToken == target.metadataToken &&
-                            it.imageName == Il2CppPatchTargetBrowser.imageName(target) }
                         requireNotNull(binding) { "Тип результата не привязан к единственному методу." }
                         val window = Il2CppNativeMutationDraftBuilder.readCodeWindow(result, candidate.targetId, analysisRoot, 1024)
                         val code = Il2CppNativeMutationDraftBuilder.parseHex(window.originalHex)
@@ -51,27 +59,39 @@ object NativeRecipeCatalog {
                         }.orEmpty()
                         if (numeric) {
                             require(binding.returnKind in setOf(Il2CppNativeReturnKind.INTEGER,
-                                Il2CppNativeReturnKind.FLOAT32, Il2CppNativeReturnKind.FLOAT64)) { "Ширина числового результата не доказана." }
-                            val choices = if (binding.returnKind == Il2CppNativeReturnKind.INTEGER)
-                                listOf("0", "1", "2", "5", "99", "999", "9999")
-                            else listOf("0", "0.5", "1", "2", "3", "5", "99", "999")
+                                Il2CppNativeReturnKind.FLOAT32, Il2CppNativeReturnKind.FLOAT64,
+                                Il2CppNativeReturnKind.BOOLEAN)) { "Ширина скалярного результата не доказана." }
+                            val choices = when (binding.returnKind) {
+                                Il2CppNativeReturnKind.BOOLEAN -> listOf("0", "1")
+                                Il2CppNativeReturnKind.INTEGER -> listOf("0", "1", "2", "5", "99", "999", "9999")
+                                else -> listOf("0", "0.5", "1", "2", "3", "5", "99", "999")
+                            }
+                            val encodedKind = if (binding.returnKind == Il2CppNativeReturnKind.BOOLEAN)
+                                Il2CppNativeReturnKind.INTEGER else binding.returnKind
                             values = choices.map { value -> ScalarRecipeValue(value,
-                                prefix + AArch64ScalarReturnEncoder.encodeHex(binding.returnKind, value)) }
-                                .filter { Il2CppNativeMutationDraftBuilder.parseHex(it.replacementHex).size <= window.byteLength }
-                            require(values.isNotEmpty()) { "Патч не помещается до следующего метода." }
-                            val preferred = when (candidate.category) {
+                                prefix + AArch64ScalarReturnEncoder.encodeHex(encodedKind, value)) }
+                                .filter {
+                                    val bytes = Il2CppNativeMutationDraftBuilder.parseHex(it.replacementHex)
+                                    bytes.size <= window.byteLength && !bytes.contentEquals(code.copyOf(bytes.size))
+                                }
+                            require(values.isNotEmpty()) { "Нет отличающегося патча, который помещается до следующего метода." }
+                            val member = target.memberName.orEmpty().removePrefix("get_")
+                            val preferred = when {
+                                binding.returnKind == Il2CppNativeReturnKind.BOOLEAN -> if (member.startsWith("Can")) "1" else "0"
+                                member.contains("Cost") || member.startsWith("GetNeeded") -> "0"
+                                else -> when (candidate.category) {
                                 GameplayModificationCategory.SURVIVABILITY, GameplayModificationCategory.STAMINA,
                                 GameplayModificationCategory.ECONOMY -> "999"
                                 GameplayModificationCategory.COOLDOWN -> "0"
                                 GameplayModificationCategory.INVENTORY, GameplayModificationCategory.PROGRESSION -> "99"
                                 else -> "2"
+                                }
                             }
                             val chosen = values.firstOrNull { it.value == preferred } ?: values.first()
                             selectedValue = chosen.value
                             effective = candidate.copy(selectable = true, blocker = null,
                                 action = GameplayMutationAction.FORCE_SCALAR_DEFAULT, replacementHex = chosen.replacementHex)
-                            title = candidate.category.title.substringBefore(" /") + ": " +
-                                target.memberName.orEmpty().removePrefix("get_") + " · значение ${chosen.value}"
+                            title = parameterLabel(member) + " · значение ${chosen.value}"
                         } else {
                             val replacement = prefix + requireNotNull(candidate.replacementHex)
                             require(Il2CppNativeMutationDraftBuilder.parseHex(replacement).size <= window.byteLength) {
@@ -83,13 +103,33 @@ object NativeRecipeCatalog {
                         description = if (binding.returnKind == Il2CppNativeReturnKind.VOID)
                             "Отключает единственную запись поля в этом методе. Проверяйте, каких игровых объектов это касается."
                         else "Меняет результат вычисления без удаления вызовов и записи состояния. Проверьте эффект в игре."
+                        if (binding.returnKind == Il2CppNativeReturnKind.BOOLEAN && numeric)
+                            description += " 1 — да, 0 — нет."
+                        if (presentation) description = "По контексту это элемент отображения. Изменение показателя на экране не доказывает изменение игровой механики."
                     } catch (failure: AnalysisCancelledException) { throw failure }
                     catch (failure: Exception) { reason = failure.message ?: "Тело метода не подтверждено." }
                 } else if (reason == null) reason = "Нет проверенного рецепта для этой цели."
-                AutoModRecipe(candidate.id, candidate.category.title.substringBefore(" /"),
+                AutoModRecipe(candidate.id, if (presentation) "Визуальные изменения" else candidate.category.title.substringBefore(" /"),
                     title, description, targets[candidate.targetId]?.declaringType?.substringAfterLast('.').orEmpty(),
                     native = effective, blocker = reason, scalarValues = values, scalarValue = selectedValue,
                     verification = ModificationVerification(recipePrepared = reason == null))
             }
+    }
+
+    private fun parameterLabel(member: String): String = when (member.removePrefix("Get")) {
+        "MaxHealth" -> "Максимальное здоровье"
+        "MaxHealthRaw" -> "Базовый предел здоровья"
+        "Damage" -> "Значение урона"
+        "TotalDamage" -> "Суммарный урон"
+        "DamageMultiplier" -> "Множитель урона"
+        "CurrentEnergy" -> "Текущая энергия"
+        "NeededEnergy" -> "Расход энергии"
+        "ItemCount" -> "Количество предметов"
+        "LevelUpCost" -> "Стоимость повышения уровня"
+        "Level" -> "Уровень"
+        "CanLevelUp" -> "Возможность повышения уровня"
+        "ReachedMaxLevel" -> "Проверка максимального уровня"
+        "Zoom" -> "Масштаб камеры"
+        else -> member.replace(Regex("([a-z0-9])([A-Z])"), "$1 $2").replace('_', ' ').trim()
     }
 }
