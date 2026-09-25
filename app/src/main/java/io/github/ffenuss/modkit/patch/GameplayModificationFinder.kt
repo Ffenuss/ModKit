@@ -223,6 +223,35 @@ object GameplayModificationFinder {
                 }
             }
 
+        // The initial bindings list is just the 30k RAM preview. For every
+        // plausible late game method, resolve the full SHA-verified on-disk
+        // index before deciding that its native return type is unknown.
+        val verifiedDiskLibraries = result.il2cppBinaryBinding
+            ?.evidence.orEmpty()
+            .filter { it.bindingIndex?.verify() == true }
+            .mapTo(HashSet()) { it.libraryEntry }
+        candidates.forEach { candidate ->
+            val key = bindingKey(
+                artifact = candidate.artifact,
+                imageName = candidate.imageName,
+                token = candidate.token,
+            )
+            if (key !in bindingByArtifactImageToken &&
+                candidate.artifact in verifiedDiskLibraries
+            ) {
+                val binding = io.github.ffenuss.modkit.analysis.Il2CppOnDemandBindings.find(
+                    result = result,
+                    token = candidate.token,
+                    imageName = candidate.imageName,
+                    libraryEntry = candidate.artifact,
+                    indexVerified = true,
+                )
+                if (binding != null) {
+                    bindingByArtifactImageToken[key] = mutableListOf(binding)
+                }
+            }
+        }
+
         val candidateBodyKeys =
             candidates
                 .asSequence()
