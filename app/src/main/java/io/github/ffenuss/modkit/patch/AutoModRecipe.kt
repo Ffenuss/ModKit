@@ -11,6 +11,8 @@ data class ModificationVerification(
     val runtimeEvidence: String? = null,
 )
 
+data class ScalarRecipeValue(val value: String, val replacementHex: String)
+
 data class AutoModRecipe(
     val id: String,
     val category: String,
@@ -21,8 +23,16 @@ data class AutoModRecipe(
     val native: GameplayModificationOpportunity? = null,
     val blocker: String? = null,
     val verification: ModificationVerification = ModificationVerification(),
+    val scalarValues: List<ScalarRecipeValue> = emptyList(),
+    val scalarValue: String? = null,
 ) {
     val selectable: Boolean get() = blocker == null && (dex.isNotEmpty() || native != null)
+
+    fun withScalarValue(value: String): AutoModRecipe {
+        val choice = scalarValues.singleOrNull { it.value == value } ?: return this
+        return copy(scalarValue = value, native = native?.copy(replacementHex = choice.replacementHex),
+            title = title.substringBefore(" · значение ") + " · значение $value")
+    }
 }
 
 object DexRecipeCatalog {

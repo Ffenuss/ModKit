@@ -8,7 +8,7 @@ import org.jf.dexlib2.iface.instruction.ReferenceInstruction
 import org.jf.dexlib2.iface.instruction.TwoRegisterInstruction
 import org.jf.dexlib2.iface.reference.FieldReference
 
-enum class DexMethodBodyKind { CONSTANT_RETURN, INSTANCE_FIELD_GETTER, STATIC_FIELD_GETTER, UNSUPPORTED }
+enum class DexMethodBodyKind { CONSTANT_RETURN, INSTANCE_FIELD_GETTER, STATIC_FIELD_GETTER, READ_ONLY_COMPUTATION, UNSUPPORTED }
 
 data class DexMethodBodyEvidence(
     val kind: DexMethodBodyKind,
@@ -31,7 +31,7 @@ object DexMethodBodyInspector {
         // Read at most three instructions; never materialize a large method merely to reject it.
         val code = body.instructions.take(3)
         if (code.size != 2 || code[1].opcode != Opcode.RETURN) {
-            return unsupported("Логика сложнее прямого возврата: нужен анализ вызовов и побочных эффектов.")
+            return DexReadOnlyBody.inspect(method)
         }
         val source = code[0] as? OneRegisterInstruction ?: return unsupported("Источник результата не доказан.")
         val result = code[1] as? OneRegisterInstruction ?: return unsupported("Регистр результата не доказан.")

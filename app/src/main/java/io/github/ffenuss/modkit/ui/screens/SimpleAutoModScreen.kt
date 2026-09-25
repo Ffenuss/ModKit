@@ -178,7 +178,8 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                     visible.groupBy { it.category }.forEach { (category, recipes) ->
                         item(key = "category:$category") { Text(category, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                         items(recipes, key = { it.id }) { recipe ->
-                            RecipeCard(recipe, recipe.id in state.selected, !state.busy) { model.toggle(recipe.id) }
+                            RecipeCard(recipe, recipe.id in state.selected, !state.busy,
+                                { model.setScalarValue(recipe.id, it) }) { model.toggle(recipe.id) }
                         }
                     }
                 }
@@ -192,7 +193,8 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
 }
 
 @Composable
-private fun RecipeCard(recipe: AutoModRecipe, selected: Boolean, enabled: Boolean, toggle: () -> Unit) {
+private fun RecipeCard(recipe: AutoModRecipe, selected: Boolean, enabled: Boolean, setValue: (String) -> Unit, toggle: () -> Unit) {
+    var valuesOpen by remember { mutableStateOf(false) }
     Card(Modifier.fillMaxWidth().clickable(enabled && recipe.selectable, onClick = toggle),
         colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
@@ -201,6 +203,13 @@ private fun RecipeCard(recipe: AutoModRecipe, selected: Boolean, enabled: Boolea
                 Text(recipe.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Text(recipe.targetLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(recipe.blocker ?: recipe.description, style = MaterialTheme.typography.bodySmall)
+                if (recipe.selectable && recipe.scalarValues.isNotEmpty()) Box {
+                    TextButton(onClick = { valuesOpen = true }, enabled = enabled) { Text("Значение: ${recipe.scalarValue}") }
+                    DropdownMenu(valuesOpen, { valuesOpen = false }) {
+                        recipe.scalarValues.forEach { choice -> DropdownMenuItem(text = { Text(choice.value) },
+                            onClick = { valuesOpen = false; setValue(choice.value) }) }
+                    }
+                }
                 Text(if (recipe.selectable) "Рецепт доступен · Эффект не проверен" else "Нужен дополнительный анализ",
                     style = MaterialTheme.typography.labelSmall, color = if (recipe.selectable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
             }

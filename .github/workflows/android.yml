@@ -50,6 +50,11 @@ jobs:
       - name: Unit tests, lint, assemble
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 
+      - name: Execute emitted ARM64 recipes independently
+        run: |
+          python -m pip install unicorn==2.1.4
+          python tools/verify_arm64_vectors.py app/build/native-verification.tsv
+
       - name: Verify APK
         shell: bash
         run: |
@@ -77,8 +82,8 @@ jobs:
           done
           "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
           "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee apk-signature-verification.txt
-          cp "$APK" ModKit-v0.0.29-debug.apk
-          sha256sum ModKit-v0.0.29-debug.apk > ModKit-v0.0.29-debug.apk.sha256
+          cp "$APK" ModKit-v0.0.30-debug.apk
+          sha256sum ModKit-v0.0.30-debug.apk > ModKit-v0.0.30-debug.apk.sha256
 
       - name: Upload test and lint reports
         if: always()
@@ -90,14 +95,15 @@ jobs:
             app/build/reports/tests/
             app/build/reports/lint-results-debug.*
             apk-signature-verification.txt
+            app/build/native-verification.*
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ModKit-v0.0.29-debug
+          name: ModKit-v0.0.30-debug
           path: |
-            ModKit-v0.0.29-debug.apk
-            ModKit-v0.0.29-debug.apk.sha256
+            ModKit-v0.0.30-debug.apk
+            ModKit-v0.0.30-debug.apk.sha256
           if-no-files-found: error
 
   device:

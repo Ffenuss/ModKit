@@ -99,7 +99,7 @@ class AutoModDeviceTest {
         // Request from the initial ungranted state. Revoking an already granted
         // app-op can kill the instrumented process on newer Android versions.
         assertFalse(context.packageManager.canRequestPackageInstalls())
-        device.findObject(By.text("Установить")).click()
+        requireNotNull(device.wait(Until.findObject(By.text("Установить")), 15_000)).click()
         assertTrue("Install button must open unknown-source settings",
             device.wait(Until.hasObject(By.pkg("com.android.settings")), 15_000))
         val permissionSwitch = device.wait(Until.findObject(By.checkable(true)), 10_000)
@@ -115,6 +115,11 @@ class AutoModDeviceTest {
     @Test fun b_discoversRewritesSignsInstallsAndChangesTheRunningGame() = runBlocking {
         launchGame()
         assertTrue(device.hasObject(By.text("ALIVE | Health: 20")))
+        repeat(3) {
+            device.findObject(By.text(Pattern.compile("sprint", Pattern.CASE_INSENSITIVE))).click()
+            device.waitForIdle()
+        }
+        assertTrue("Unmodified stamina gate must stop the third sprint", device.hasObject(By.text("Distance: 2")))
         repeat(3) { hit() }
         assertTrue("Unmodified death rule must execute", device.hasObject(By.text("GAME OVER | Health: 0")))
 
@@ -130,10 +135,12 @@ class AutoModDeviceTest {
         assertTrue("Side-effecting namesake must be blocked", scan.opportunities.any {
             it.className.endsWith("/AuditStats;") && !it.selectable
         })
+        val sprint = DexRecipeCatalog.create(scan).single { it.selectable && it.dex.any { d -> d.methodName == "canSprint" } }
+        assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, sprint.dex.single().bodyKind)
         val preparation = PatchPreparationPlan(analysis.index.artifactSha256, true,
             System.currentTimeMillis(), emptyList(), emptyList())
         val built = AutoModBuildCoordinator.build(context, target, analysis, preparation,
-            listOf(health), signal, progress)
+            listOf(health, sprint), signal, progress)
         assertEquals(installed.apkFiles.size, built.files.size)
         assertTrue(built.files.all { it.signature.verified })
         assertTrue(built.mutationDiffVerification.verified)
@@ -181,13 +188,19 @@ class AutoModDeviceTest {
         assertTrue(device.hasObject(By.text("ALIVE | Health: 9999")))
         repeat(3) { hit() }
         assertTrue("Patched getter must feed the real death rule", device.hasObject(By.text("ALIVE | Health: 9999")))
+        repeat(3) {
+            device.findObject(By.text(Pattern.compile("sprint", Pattern.CASE_INSENSITIVE))).click()
+            device.waitForIdle()
+        }
+        assertTrue("The patched conditional getter must allow sprinting with empty stamina", device.hasObject(By.text("Distance: 3")))
         evidence("modified-game.png") { device.takeScreenshot(it) }
         evidence("metrics.json") { file -> file.writeText(JSONObject()
             .put("device", android.os.Build.MODEL).put("api", android.os.Build.VERSION.SDK_INT)
             .put("methodsExamined", scan.methodsExamined).put("candidates", scan.opportunities.size)
             .put("selectableMethods", scan.opportunities.count { it.selectable })
-            .put("selectedRecipes", 1).put("patchedMethods", health.dex.size)
-            .put("signedApks", built.files.size).put("runtimeConfirmedRecipes", 1)
+            .put("selectedRecipes", 2).put("patchedMethods", health.dex.size + sprint.dex.size)
+            .put("signedApks", built.files.size).put("runtimeConfirmedRecipes", 2)
+            .put("baselineAfterThreeSprints", 2).put("modifiedAfterThreeSprints", 3)
             .put("baselineAfterThreeHits", "GAME OVER | Health: 0")
             .put("modifiedAfterThreeHits", "ALIVE | Health: 9999")
             .put("outputSha256", org.json.JSONArray(built.files.map { it.sha256 })).toString(2)) }
@@ -220,6 +233,8 @@ class AutoModDeviceTest {
             device.wait(Until.hasObject(By.text("Приложение установлено")), 500)
         }
         val completed = RepackedRuntimeInstallStatusStore.status.value
+        evidence("ui-install-state.png") { device.takeScreenshot(it) }
+        evidence("ui-install-hierarchy.xml") { device.dumpWindowHierarchy(it) }
         assertTrue("A new installation must complete from the retained UI build", completed.updatedAtEpochMs >= attemptedAt)
         assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, completed.kind)
         launchGame()

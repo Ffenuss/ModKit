@@ -139,6 +139,19 @@ object AArch64MethodAnalyzer {
 
         val beforeRet =
             instructions.take(retIndex)
+        if (beforeRet.size == 1) {
+            val word = beforeRet.single().word
+            val immediateKind = word and 0xFFE01FE0L
+            val double = immediateKind == 0x1E601000L || word == 0x9E6703E0L
+            if ((word and 31L == 0L && immediateKind in setOf(0x1E201000L, 0x1E601000L)) ||
+                word in setOf(0x1E2703E0L, 0x9E6703E0L)) {
+                val bits = if (word in setOf(0x1E2703E0L, 0x9E6703E0L)) 0L
+                    else AArch64FloatImmediate.bits(((word ushr 13) and 255L).toInt(), double)
+                return AArch64MethodAnalysis(AArch64MethodShape.RETURN_CONSTANT, "высокая",
+                    "return " + (if (double) Double.fromBits(bits).toString() else Float.fromBits(bits.toInt()).toString() + "f") + ";",
+                    listOf("Скалярная FP-константа формируется одной FMOV и сразу возвращается."), constantBits = bits)
+            }
+        }
         val integerSequence =
             beforeRet.all {
                 it.mnemonic == "movz" ||

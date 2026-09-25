@@ -10,6 +10,7 @@ import android.widget.TextView;
 public final class GameActivity extends Activity {
     private PlayerStats player;
     private TextView state;
+    private TextView distance;
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         player = new PlayerStats();
@@ -20,10 +21,17 @@ public final class GameActivity extends Activity {
         state = new TextView(this);
         state.setTextSize(24);
         layout.addView(state);
+        distance = new TextView(this);
+        distance.setTextSize(24);
+        layout.addView(distance);
         Button hit = new Button(this);
         hit.setText("Take damage");
         hit.setOnClickListener(v -> { player.hit(); showState(); });
         layout.addView(hit);
+        Button sprint = new Button(this);
+        sprint.setText("Sprint");
+        sprint.setOnClickListener(v -> { player.sprint(); showState(); });
+        layout.addView(sprint);
         Button reset = new Button(this);
         reset.setText("Reset");
         reset.setOnClickListener(v -> { player = new PlayerStats(); showState(); });
@@ -33,5 +41,6 @@ public final class GameActivity extends Activity {
     }
     private void showState() {
         state.setText((player.isDead() ? "GAME OVER" : "ALIVE") + " | Health: " + player.getHealth());
+        distance.setText("Distance: " + player.distance());
     }
 }

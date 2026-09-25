@@ -70,9 +70,12 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
                 System.currentTimeMillis(), emptyList(), emptyList())
             emptyList()
         }
-        val recipes = DexRecipeCatalog.create(dex) + native
-        val saved = context.getSharedPreferences("automod-selection", 0)
-            .getStringSet(analysis.index.artifactSha256, emptySet()).orEmpty()
+        val preferences = context.getSharedPreferences("automod-selection", 0)
+        val recipes = (DexRecipeCatalog.create(dex) + native).map { recipe ->
+            preferences.getString(analysis.index.artifactSha256 + ":value:" + recipe.id, null)
+                ?.let(recipe::withScalarValue) ?: recipe
+        }
+        val saved = preferences.getStringSet(analysis.index.artifactSha256, emptySet()).orEmpty()
         mutable.update { it.copy(recipes = recipes, methodsExamined = dex.methodsExamined,
             selected = saved.intersect(recipes.filter { r -> r.selectable }.map { r -> r.id }.toSet()),
             built = it.built ?: restored, showingResult = restored != null,
@@ -84,6 +87,13 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
         mutable.update { it.copy(selected = if (id in it.selected) it.selected - id else it.selected + id) }
         context.getSharedPreferences("automod-selection", 0).edit()
             .putStringSet(analysis.index.artifactSha256, state.value.selected).apply()
+    }
+
+    fun setScalarValue(id: String, value: String) {
+        if (state.value.busy) return
+        mutable.update { it.copy(recipes = it.recipes.map { r -> if (r.id == id) r.withScalarValue(value) else r }) }
+        context.getSharedPreferences("automod-selection", 0).edit()
+            .putString(analysis.index.artifactSha256 + ":value:" + id, value).apply()
     }
 
     fun build() = operate("Создаём мод") {
