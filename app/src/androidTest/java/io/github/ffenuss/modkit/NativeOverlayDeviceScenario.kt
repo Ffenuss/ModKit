@@ -147,6 +147,7 @@ class NativeOverlayDeviceScenario(private val instrumentation: Instrumentation, 
             readValue(7, "cleared-restores-code")
             stage = "complete"
         } finally {
+            evidence("native-overlay-hierarchy.xml") { device.dumpWindowHierarchy(it) }
             evidence("native-overlay-final.png") { device.takeScreenshot(it) }
             evidence("native-overlay-metrics.json") { it.writeText(JSONObject()
                 .put("stage", stage).put("abi", abi).put("api", Build.VERSION.SDK_INT)
@@ -177,8 +178,14 @@ class NativeOverlayDeviceScenario(private val instrumentation: Instrumentation, 
     }
 
     private fun assertSwitch(label: String, enabled: Boolean) {
-        assertTrue("$label must be acknowledged as $enabled", device.wait(
-            Until.hasObject(By.desc("Мод: $label").enabled(true).checked(enabled)), 15_000))
+        val acknowledged = device.wait(
+            Until.hasObject(By.desc("Мод: $label").enabled(true).checked(enabled)), 15_000)
+        if (!acknowledged) {
+            val node = device.findObject(By.desc("Мод: $label"))
+            val actual = node?.let { "enabled=${it.isEnabled}, checked=${it.isChecked}" } ?: "missing node"
+            val remote = runCatching { transport.testMenuSwitchSnapshot(authority) }.toString()
+            fail("$label must be acknowledged as $enabled; UI: $actual; target: $remote")
+        }
     }
 
     private fun readValue(expected: Int, event: String) {

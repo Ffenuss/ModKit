@@ -16,6 +16,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -40,7 +41,7 @@ import kotlinx.coroutines.withContext
 /**
  * Explicitly user-started overlay. The window itself cannot change another
  * process; each switch is acknowledged by the verified injected game probe.
- * A missing module, stale APK or failed byte comparison leaves the switch OFF.
+ * A rejected command keeps the last state acknowledged by the target process.
  */
 class ModKitRuntimeOverlayService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -169,10 +170,18 @@ class ModKitRuntimeOverlayService : Service() {
         var busy = false
         var snapshot: RepackedRuntimeSwitchSnapshot? = null
 
+        fun announceSwitches() {
+            host.sendAccessibilityEventUnchecked(AccessibilityEvent.obtain(
+                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+            ).apply { contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE })
+        }
+
         fun disconnected(message: String) {
             if (generation != overlayGeneration) return
+            val changed = toggles.values.any { it.isEnabled }
             toggles.values.forEach { it.isEnabled = false }
             stateMessage.text = "Состояния не подтверждены: $message"
+            if (changed) announceSwitches()
         }
 
         fun render(current: RepackedRuntimeSwitchSnapshot) {
@@ -182,15 +191,22 @@ class ModKitRuntimeOverlayService : Service() {
             if (generation != overlayGeneration) return
             val restarted = snapshot?.pid?.let { it != current.pid } == true
             snapshot = current
+            var changed = false
             internalChange = true
             try {
                 toggles.forEach { (id, toggle) ->
-                    toggle.isChecked = current.enabledById.getValue(id)
-                    toggle.isEnabled = !busy
+                    val checked = current.enabledById.getValue(id)
+                    val enabled = !busy
+                    if (toggle.isChecked != checked) { toggle.isChecked = checked; changed = true }
+                    if (toggle.isEnabled != enabled) { toggle.isEnabled = enabled; changed = true }
                 }
             } finally { internalChange = false }
             stateMessage.text = if (restarted) "Игра перезапущена. Состояния обновлены."
                 else "Включено изменений: ${current.enabledById.values.count { it }}"
+            // The command briefly disables and restores the same view. Announce
+            // the settled subtree so accessibility clients do not retain its
+            // intermediate disabled/OFF node on older Android releases.
+            if (changed) announceSwitches()
         }
 
         for (item in record.runtimeMenuItems) {
