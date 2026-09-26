@@ -1,62 +1,81 @@
-# ModKit Test — continuation / 2026-09-26
+# ModKit Test 0.0.31 — проверенная тестовая сборка
 
-## Build available to test now
+Дата: 26 сентября 2026. Пакет: `io.github.ffenuss.modkit.test`, версия 0.0.31 (31).
 
-**0.0.30, PR17**, commit `5b2abfe443217e04110236f4c1b2f2fe835b69e5`.
+- [PR18](https://github.com/Ffenuss/ModKit/pull/18), черновик, main не изменён.
+- [Коммит собранного и проверенного кода](https://github.com/Ffenuss/ModKit/commit/e44f97a87439da199b99c55be2327ed8c7d433ae).
+- [Полностью успешный CI, запуск 36222900843](https://github.com/Ffenuss/ModKit/actions/runs/36222900843).
+- Последующее изменение этого документа не меняет код APK и не является новой сборкой.
 
-- [Source PR17](https://github.com/Ffenuss/ModKit/pull/17)
-- [Exact build/test run 36186557915](https://github.com/Ffenuss/ModKit/actions/runs/36186557915)
-- APK artifact 10886995710, verified against its published ZIP digest and APK checksum.
-- 383 JVM tests, zero failures/errors/skips; 3/3 API29 single-APK and 3/3 API35 split-APK fixture tests.
-- Lint finished without errors, with existing warnings; this is not a warning-free claim.
-- Three generated ARM64 vectors independently executed in Unicorn 2.1.4 locally: integer 27→999,
-  conditional 1→0, floating 3→5; preserved checked machine state.
-- Distributed as `ModKit-Test-0.0.30-PR17.apk`, 14,782,405 bytes, package `io.github.ffenuss.modkit.test`.
-- Signed locally with the pre-existing private test key; v2/v3 verified. All 135 ZIP entry payloads
-  match the CI APK; stored-entry alignment checked. Signing material remains outside Git.
-- APK SHA-256: `a27cfabaa2b40c477dc8577c42e2145a6397c66ccddd7ff30d479dcfb917715e`.
-- Signer SHA-256: `c0029212552bb7b9f250c586a5ff7b3670d732e23751f04d3c7251f4ac0f2715`.
+## Изменения
 
-This build contains PRs #8–#10 and #13–#17: installation confirmation, IL2CPP extraction,
-experimental native overlay, validated-metadata routing, disk bindings beyond the 30k preview,
-Unreal/Flutter structural inventories, cache restoration, and ELF progress/watchdog fixes.
-**It does not contain PR12's kotlinx exclusion or the new changes described below.**
-Version shown inside the application remains 0.0.30; PR17 identifies this later build.
+В одной сборке объединены полный файловый индекс IL2CPP, структурные анализаторы
+Unreal/Flutter, проверка наличия метадаты, исправление прогресса ELF, установка через
+однократное системное подтверждение и исключение ложного kotlinx-рецепта из PR12.
 
-## Prepared locally: 0.0.31, NOT built or published
+30 000 ограничивает только предпросмотр привязок в памяти. Все поддерживаемые
+MethodDef обрабатываются и сохраняются в SHA-проверенном файловом индексе;
+поздние цели доступны поиску, а bindings.tsv экспортирует весь индекс. Отдельная
+граница парсера метаданных 300 000 сохраняется, неполный результат отмечается.
 
-Branch: `release/0.0.31-integrated-analyzers-20260926`.
+В простой интерфейс добавлен охват IL2CPP: прочитанные методы, точные привязки и
+размер предпросмотра. Эти числа не означают число работающих модификаций.
 
-| Commit | Change | Verification in this session |
-|---|---|---|
-| `8406c68` | Bring PR12's kotlinx exclusion into the integrated release | Source review; prior PR12 CI is not verification of this combined branch |
-| `d661b42` | Include the corresponding framework-vs-game DEX regression | Not run on this branch |
-| `6f08c90` | Real 30,005-slot ELF scanner regression, complete streaming and shared-body census | Added, not executed |
-| `988971a` | Current engine/source/coverage diagnostic tables; remove stale report reuse | Regression added, not executed |
-| `1871778` | Version 0.0.31/31, IL2CPP coverage UI, release/CI naming | `git diff --check` passed; compilation pending |
+Отчёт схемы 3 включает исходные APK/splits и SHA, профили движков, решения
+маршрутизатора, входные файлы, все предупреждения и охват анализа. Явный экспорт
+всегда формирует текущий снимок; устаревший ZIP больше не скрывает новый сбой.
+Время каждого отдельного движка пока не записывается и обозначено NOT_RECORDED.
 
-Automatic approval review rejected pushing the new branch to the user's public `Ffenuss/ModKit`
-repository, stating that explicit authorization to publish modified source was missing.
-The exact repository URL, owner and changed-file list were checked; a second attempt was also
-rejected. No alternate write channel, source upload or PR creation was used to bypass that decision.
-The branch and commits remain local; main and all existing remote branches remain unchanged.
+## Подтверждено
 
-Local Gradle fallback failed before compilation: distribution download from services.gradle.org
-returned `Network is unreachable`. No local or new remote test/build success is claimed.
-Next required action: user authorization to publish this exact branch and create a draft PR,
-then run fresh JVM/lint/APK/native/API29/API35 checks, fix failures, and sign the actual 0.0.31 APK.
+| Проверка | Результат |
+|---|---|
+| Модульные JVM-тесты | 386 / 386, без ошибок и пропусков |
+| Сканер на реальном формате ELF с 30 005 слотами | Последняя привязка, полная потоковая выгрузка и учёт общих тел проверены |
+| kotlinx SemaphoreSegment / настоящий игровой getMaxSlots | Ложная находка исключается; игровой метод остаётся |
+| Экспорт после изменения результата движка | Новый сбой попадает в ZIP того же APK |
+| Lint | Нет ошибок; 42 существующих предупреждения/подсказки |
+| Android 10 / API29, одиночный APK | 3 / 3 теста, без ошибок и пропусков |
+| Android 15 / API35, комплект из пяти APK | 3 / 3 теста, без ошибок и пропусков |
+| Три ARM64-рецепта в Unicorn 2.1.4 | Integer 27→999, conditional 1→0, float 3→5; проверенное состояние сохранено |
+| Переподпись выдаваемого APK | V2/V3, прежний постоянный тестовый сертификат |
+| Содержимое выдаваемого APK | Все 135 ZIP-записей совпадают с CI APK; выравнивание проверено |
 
-## Phone test for the available PR17 APK
+В собственной тестовой игре на обеих версиях Android проверен реальный эффект:
+до патча три удара приводят к GAME OVER / Health: 0; после установки патча
+персонаж остаётся ALIVE / Health: 9999. Число успешных спринтов при истощении
+выносливости меняется с 2 на 3. Это подтверждение двух рецептов на конкретной
+тестовой игре, а не универсальное подтверждение чужих игр.
 
-1. Install ModKit Test. This uses its own package alongside original ModKit; retain existing app data.
-2. Re-analyze DropTheCat and export diagnostics. `README.txt` should distinguish total disk bindings
-   from the memory preview, and `il2cpp/bindings.tsv` should contain every proven indexed binding.
-   The exact new count on that game has not been measured here.
-3. Analyze Aniimo: missing/invalid metadata should be explained instead of starting an impossible dump.
-4. Analyze an authorized Unreal/Flutter target: expect actual resource inventory or a specific missing-input
-   result. Blueprint/Dart AOT game-logic decoding and gameplay patch generation are not implemented.
-5. During large ELF processing, record the library name and byte progress; export the resulting ZIP.
+## Выдаваемый APK
 
-The 30k limit remains only a memory preview, while the separate metadata parser bound is 300k.
-Fixture success does not prove effects in the nine submitted applications or physical ARM64 overlay
-ON/OFF/restore. Their reports contain no full input APKs, so those device checks remain pending.
+Имя: `ModKit-Test-0.0.31.apk`; размер: 14 798 789 байт.
+
+SHA-256: `807d8b0a7f34c220066605b82cdcc1f253dd8b29a56042d51848ae8d5826f703`.
+
+Сертификат SHA-256:
+`c0029212552bb7b9f250c586a5ff7b3670d732e23751f04d3c7251f4ac0f2715`.
+
+Исходный CI APK SHA-256:
+`3d6bd4efa42d17896a6e95799806a611526a267594f005cc4ca2a32bb5ce8b89`.
+
+Ключ сохранён вне Git; он совпадает с предыдущей выдачей ModKit Test.
+Пакет остаётся отдельным от оригинального ModKit. Пользовательские данные и
+исходные приложения ModKit автоматически не удаляет.
+
+## Границы результата и проверка на телефоне
+
+- Критерий пользователя для обычных приложений — Premium-функции. Разблокировка
+  сторонних подписок/лицензий в этой сборке не реализована; изменения оформления
+  не добавлялись как замена этому требованию.
+- Unreal/Flutter реально проверяют ресурсы и компоненты. Blueprint/Dart AOT,
+  генерация игровых патчей для этих движков и зашифрованные контейнеры не поддерживаются.
+- Эффекты в девяти присланных приложениях и ON/OFF нативного меню на физическом
+  ARM64-телефоне не проверены: исходных APK в диагностических архивах нет.
+- Для полезной проверки: повторить анализ DropTheCat, Aniimo и одного Unreal/Flutter
+  приложения; сохранить ZIP через «Ещё → Экспорт диагностики». Новый ZIP покажет
+  охват, отсутствующие входы и предупреждения. Количество новых рабочих рецептов
+  на этих целях заранее не обещается.
+
+Разрешение пользователя на публикацию веток и черновых PR получено 26 сентября.
+Блокер публикации прошлого сеанса снят. Объединение с main не выполнялось.
