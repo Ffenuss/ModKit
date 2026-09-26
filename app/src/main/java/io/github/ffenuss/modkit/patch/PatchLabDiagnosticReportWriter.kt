@@ -20,9 +20,9 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 object PatchLabDiagnosticReportWriter {
-    private const val SCHEMA_VERSION = 2
+    private const val SCHEMA_VERSION = 3
     private const val ENGINE_VERSION =
-        "patch-lab-diagnostic/3"
+        "patch-lab-diagnostic/4"
     private const val COPY_BUFFER_BYTES =
         128 * 1024
 
@@ -43,47 +43,8 @@ object PatchLabDiagnosticReportWriter {
                     result.index.artifactSha256.take(12) +
                     ".zip",
             )
-        val fingerprint =
-            buildString {
-                append(ENGINE_VERSION)
-                append('|')
-                append(result.index.artifactSha256)
-                append('|')
-                append(
-                    preparation
-                        ?.preparedAtEpochMs
-                        ?: -1L,
-                )
-                append('|')
-                append(
-                    result.il2cppBinaryBinding
-                        ?.exactBindingCount
-                        ?: 0,
-                )
-                append('|')
-                append(
-                    result.il2cppFastDump
-                        ?.dumpFilePath
-                        .orEmpty(),
-                )
-            }
-        val fingerprintFile =
-            File(
-                outputDir,
-                output.name + ".fingerprint",
-            )
-        if (
-            recipes == null &&
-            output.isFile &&
-            output.length() > 0L &&
-            fingerprintFile.isFile &&
-            fingerprintFile.readText(
-                StandardCharsets.UTF_8,
-            ) == fingerprint
-        ) {
-            return output
-        }
-
+        // Each explicit export reflects the current engines and warnings.
+        // Reusing an old ZIP by binding count hid failures and newly run engines.
         val temporary = File.createTempFile("diagnostic-", ".tmp", outputDir)
         try {
             ZipOutputStream(
@@ -109,6 +70,7 @@ object PatchLabDiagnosticReportWriter {
                     result = result,
                     preparation = preparation,
                 )
+                writeAnalysisContext(zip, result)
                 writeMetadataTables(zip, result)
                 writeBindings(zip, result)
                 writeUnrealInventory(zip, result)
@@ -134,11 +96,87 @@ object PatchLabDiagnosticReportWriter {
         require(output.isFile && output.length() > 0L) {
             "Diagnostic report was not created."
         }
-        fingerprintFile.writeText(
-            fingerprint,
-            StandardCharsets.UTF_8,
-        )
         return output
+    }
+
+    private fun writeAnalysisContext(zip: ZipOutputStream, result: FastAnalysisResult) {
+        writeTextEntry(zip, "analysis/sources.tsv") { writer ->
+            writer.line("container\tsize\tsha256")
+            result.index.sources.forEach { source ->
+                writer.line(listOf(source.displayName, source.size, source.sha256)
+                    .joinToString("\t") { tsv(it) })
+            }
+        }
+        writeTextEntry(zip, "analysis/runtime-profiles.tsv") { writer ->
+            writer.line("runtime\tstatus\tconfidence\tevidence")
+            result.index.runtimeProfiles.forEach { profile ->
+                writer.line(listOf(profile.runtimeId, profile.status, profile.confidence,
+                    profile.evidence.joinToString(" | ")).joinToString("\t") { tsv(it) })
+            }
+        }
+        writeTextEntry(zip, "analysis/engines.tsv") { writer ->
+            writer.line("engine\tschedule\tavailable\tcacheHit\toutputPresent\treason")
+            result.routingPlan.engines.forEach { engine ->
+                // Output presence is separate from successful/complete execution.
+                // A partial inventory may still include parser warnings.
+                val output: Boolean? = when (engine.id) {
+                    "artifact.fast-index" -> true
+                    "dex.inventory" -> result.dexInventory != null
+                    "elf.universal-inventory" -> result.elfInventory != null
+                    "il2cpp.fast-dump" -> result.il2cppFastDump != null
+                    "il2cpp.codegen-bind" -> result.il2cppBinaryBinding != null
+                    "unreal.package-inventory" -> result.unrealAssetInventory != null
+                    "flutter.asset-inventory" -> result.flutterAssetInventory != null
+                    else -> null
+                }
+                writer.line(listOf(engine.id, engine.scheduleClass, engine.availableNow,
+                    engine.id in result.engineCacheHits, output, engine.reason)
+                    .joinToString("\t") { tsv(it) })
+            }
+        }
+        writeTextEntry(zip, "analysis/warnings.tsv") { writer ->
+            writer.line("stage\tdetail")
+            fun warnings(stage: String, values: List<String>) {
+                values.forEach { writer.line(tsv(stage) + "\t" + tsv(it)) }
+            }
+            warnings("artifact.fast-index", result.index.warnings)
+            warnings("routing.missing-capability", result.routingPlan.missingCapabilities)
+            warnings("scheduler", result.engineWarnings)
+            warnings("dex.inventory", result.dexInventory?.warnings.orEmpty())
+            warnings("elf.universal-inventory", result.elfInventory?.warnings.orEmpty())
+            warnings("il2cpp.fast-dump", result.il2cppFastDump?.warnings.orEmpty())
+            warnings("il2cpp.codegen-bind", result.il2cppBinaryBinding?.warnings.orEmpty())
+            warnings("unreal.package-inventory", result.unrealAssetInventory?.warnings.orEmpty())
+            warnings("flutter.asset-inventory", result.flutterAssetInventory?.warnings.orEmpty())
+        }
+        writeTextEntry(zip, "analysis/coverage.tsv") { writer ->
+            writer.line("metric\tvalue")
+            fun metric(name: String, value: Any?) { writer.line(name + "\t" + tsv(value)) }
+            metric("analysisElapsedMs", result.elapsedMs)
+            metric("artifactIndexTruncated", result.index.truncated)
+            metric("indexedEntries", result.index.entries.size)
+            metric("dexInventoriedFiles", result.dexInventory?.records?.size)
+            // DEX method ID references are not executable method implementations.
+            metric("dexDeclaredMethodIds", result.dexInventory?.records?.sumOf { it.methodIdsCount ?: 0L })
+            metric("elfInventoriedFiles", result.elfInventory?.records?.size)
+            metric("il2cppDeclaredMethods", result.il2cppFastDump?.metadata?.declaredMethodCount)
+            metric("il2cppParsedMethods", result.il2cppFastDump?.metadata?.methods?.size)
+            metric("il2cppMetadataTruncated", result.il2cppFastDump?.metadata?.truncated)
+            metric("il2cppExactBindings", result.il2cppBinaryBinding?.exactBindingCount)
+            metric("il2cppMemoryPreview", result.il2cppBinaryBinding?.evidence?.sumOf { it.bindings.size })
+            metric("perEngineTiming", "NOT_RECORDED")
+        }
+        writeTextEntry(zip, "analysis/validated-inputs.tsv") { writer ->
+            writer.line("container\tpath\tsize\tformat\tabi\ttags")
+            result.index.entries.filter { entry ->
+                entry.format != io.github.ffenuss.modkit.analysis.BinaryFormat.UNKNOWN ||
+                    entry.tags.any { it.startsWith("il2cpp") }
+            }.forEach { entry ->
+                writer.line(listOf(entry.container, entry.path, entry.size, entry.format,
+                    entry.abi, entry.tags.sorted().joinToString(","))
+                    .joinToString("\t") { tsv(it) })
+            }
+        }
     }
 
     private fun writeSummary(

@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main, audit/automod-reliability-20260924, fix/api29-packageinstaller-confirmation-20260925, fix/il2cpp-extraction-progress-20260925, feature/native-runtime-overlay-20260925, fix/il2cpp-validated-metadata-routing-20260925, feat/il2cpp-unbounded-disk-bindings-20260925, feat/unreal-asset-inventory-20260925, feat/flutter-asset-manifest-20260925 ]
+    branches: [ main, audit/automod-reliability-20260924, fix/api29-packageinstaller-confirmation-20260925, fix/il2cpp-extraction-progress-20260925, feature/native-runtime-overlay-20260925, fix/il2cpp-validated-metadata-routing-20260925, feat/il2cpp-unbounded-disk-bindings-20260925, feat/unreal-asset-inventory-20260925, feat/flutter-asset-manifest-20260925, fix/elf-progress-watchdog-20260925 ]
   workflow_dispatch:
 
 permissions:
@@ -82,8 +82,8 @@ jobs:
           done
           "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
           "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee apk-signature-verification.txt
-          cp "$APK" ModKit-v0.0.30-debug.apk
-          sha256sum ModKit-v0.0.30-debug.apk > ModKit-v0.0.30-debug.apk.sha256
+          cp "$APK" ModKit-v0.0.31-debug.apk
+          sha256sum ModKit-v0.0.31-debug.apk > ModKit-v0.0.31-debug.apk.sha256
 
       - name: Upload test and lint reports
         if: always()
@@ -100,10 +100,10 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ModKit-v0.0.30-debug
+          name: ModKit-v0.0.31-debug
           path: |
-            ModKit-v0.0.30-debug.apk
-            ModKit-v0.0.30-debug.apk.sha256
+            ModKit-v0.0.31-debug.apk
+            ModKit-v0.0.31-debug.apk.sha256
           if-no-files-found: error
 
   device:

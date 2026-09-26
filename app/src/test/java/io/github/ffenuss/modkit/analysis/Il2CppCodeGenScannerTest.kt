@@ -10,6 +10,55 @@ import org.junit.Test
 
 class Il2CppCodeGenScannerTest {
     @Test
+    fun actualElfScanIndexesEveryMethodAfterTheThirtyThousandPreviewFills() {
+        val root = Files.createTempDirectory("modkit-full-codegen-").toFile()
+        try {
+            val count = 30_005
+            val tableOffset = 0x3000
+            val bytes = elfFixture(true, false, false, false, false, false, false, 1)
+                .copyOf(tableOffset + count * 8)
+            val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            // Extend the actual ELF data segment and supply one pointer slot
+            // for every unique metadata token. Shared bodies are intentional:
+            // full coverage must not weaken the native uniqueness blocker.
+            val dataSize = bytes.size.toLong() - 0x1000
+            buffer.putLong(64 + 56 + 32, dataSize)
+            buffer.putLong(64 + 56 + 40, dataSize)
+            buffer.putInt(0x1258, count)
+            buffer.putLong(0x1260, 0x202000)
+            repeat(count) { buffer.putLong(tableOffset + it * 8, 0x100900) }
+            val file = root.resolve("libil2cpp.so").apply { writeBytes(bytes) }
+            val base = metadataFixture()
+            val metadata = base.copy(
+                declaredMethodCount = count,
+                types = listOf(base.types.single().copy(methodCount = count)),
+                methods = List(count) { i -> base.methods.single().copy(
+                    index = i, token = 0x06000001L + i,
+                    name = if (i == count - 1) "getHealth" else "Method$i",
+                ) },
+            )
+            val result = Il2CppCodeGenScanner.scan(
+                file, "lib/arm64-v8a/libil2cpp.so", metadata,
+                neverCancelled(), ProgressSink { },
+            )
+            assertEquals(30_000, result.bindings.size)
+            val disk = requireNotNull(result.bindingIndex)
+            assertTrue(disk.verify())
+            assertEquals(count, disk.methodCount)
+            assertEquals(count, disk.boundCount)
+            val last = requireNotNull(disk.lookup(count - 1))
+            assertEquals(count - 1, last.slotIndex)
+            assertEquals(0x900L, last.functionFileOffset)
+            var streamed = 0
+            disk.forEachBound { _, _ -> streamed++ }
+            assertEquals(count, streamed)
+            assertEquals(count, Il2CppOnDemandBindings.lateGameplayBindings(metadata, result)
+                .single().methodIndex + 1)
+            assertEquals(count, result.functionIndex?.lookup(0x900)?.references)
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test
     fun bindsMetadataTokenThroughCodeRegistrationSymbol() {
         val result = scanFixture(includeCodeRegistrationSymbol = true)
 

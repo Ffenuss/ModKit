@@ -189,6 +189,37 @@ class DexLocalPatchEngineTest {
         }
     }
 
+    /**
+     * Real Minecraft and TWoM diagnostic exports both matched getMaxSlots()I
+     * in kotlinx.coroutines.sync.SemaphoreSegment, not their game code.
+     */
+    @Test
+    fun excludesKotlinxSemaphoreSegmentWithoutHidingRealGameInventory() {
+        val framework = DexLocalPatchEngine.scanDex(
+            syntheticDex(
+                "Lkotlinx/coroutines/sync/SemaphoreSegment;",
+                "getMaxSlots", "I",
+            ),
+            0, "classes2.dex", false, signal,
+        )
+        assertTrue("Coroutine slot capacity is not game inventory", framework.opportunities.isEmpty())
+        assertEquals(1, framework.classesInspected)
+        assertEquals(1, framework.classesExcluded)
+        assertEquals(0, framework.methodsExamined)
+
+        val game = DexLocalPatchEngine.scanDex(
+            syntheticDex(
+                "Lcom/example/android/game/PlayerInventory;",
+                "getMaxSlots", "I",
+            ),
+            0, "classes.dex", false, signal,
+        )
+        assertEquals(1, game.methodsExamined)
+        assertEquals(0, game.classesExcluded)
+        assertEquals(1, game.opportunities.size)
+        assertEquals(DexLocalCategory.INVENTORY, game.opportunities.single().category)
+    }
+
     @Test
     fun gameNamespaceAloneDoesNotMakeHudLevelGetterARealPlayerStat() {
         val scan = DexLocalPatchEngine.scanDex(
