@@ -181,20 +181,34 @@ final class RuntimeModMenu {
      */
     static boolean setSwitch(String id, boolean enabled) {
         if (id == null) return false;
-        Item item = null;
-        for (Item candidate : config.items) {
-            if (id.equals(candidate.id)) {
-                item = candidate;
-                break;
+        boolean applied = false;
+        synchronized (LOCK) {
+            for (Item item : config.items) {
+                if (id.equals(item.id) && MODE_PATCH.equals(item.mode)) {
+                    applied = apply(item, enabled);
+                    break;
+                }
             }
         }
-        if (item == null || !MODE_PATCH.equals(item.mode)) return false;
-        synchronized (LOCK) {
-            if (Boolean.TRUE.equals(ACTIVE.get(id)) == enabled) return true;
-        }
-        boolean applied = apply(item, enabled);
         if (applied) requestRefresh();
         return applied;
+    }
+
+    /** One atomic snapshot; unknown ids must not be mistaken for disabled switches. */
+    static void putSwitchSnapshot(Bundle reply) {
+        synchronized (LOCK) {
+            ArrayList<String> ids = new ArrayList<>();
+            ArrayList<Boolean> states = new ArrayList<>();
+            for (Item item : config.items) {
+                if (!MODE_PATCH.equals(item.mode)) continue;
+                ids.add(item.id);
+                states.add(Boolean.TRUE.equals(ACTIVE.get(item.id)));
+            }
+            boolean[] enabled = new boolean[states.size()];
+            for (int i = 0; i < enabled.length; i++) enabled[i] = states.get(i);
+            reply.putStringArrayList("ids", ids);
+            reply.putBooleanArray("enabledStates", enabled);
+        }
     }
 
     static boolean isSwitchEnabled(String id) {
@@ -451,28 +465,28 @@ final class RuntimeModMenu {
             boolean enable
     ) {
         synchronized (LOCK) {
+            // Serialize native writes with configure/clear. A detached old checkbox
+            // cannot patch a recipe that has already been replaced by another menu.
+            if (!config.items.contains(item)) return false;
+            if (Boolean.TRUE.equals(ACTIVE.get(item.id)) == enable) return true;
             if (APPLYING.contains(item.id)) {
                 return false;
             }
             APPLYING.add(item.id);
-        }
-        try {
-            byte[] original = parseHex(item.originalHex);
-            byte[] replacement = parseHex(item.replacementHex);
-            boolean ok = RuntimeNativeBridge.patchCode(
-                    item.moduleName,
-                    item.binaryVirtualAddress,
-                    enable ? original : replacement,
-                    enable ? replacement : original
-            );
-            if (ok) {
-                synchronized (LOCK) {
+            try {
+                byte[] original = parseHex(item.originalHex);
+                byte[] replacement = parseHex(item.replacementHex);
+                boolean ok = RuntimeNativeBridge.patchCode(
+                        item.moduleName,
+                        item.binaryVirtualAddress,
+                        enable ? original : replacement,
+                        enable ? replacement : original
+                );
+                if (ok) {
                     ACTIVE.put(item.id, enable);
                 }
-            }
-            return ok;
-        } finally {
-            synchronized (LOCK) {
+                return ok;
+            } finally {
                 APPLYING.remove(item.id);
             }
         }

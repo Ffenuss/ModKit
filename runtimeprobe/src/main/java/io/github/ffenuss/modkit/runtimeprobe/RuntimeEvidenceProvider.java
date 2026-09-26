@@ -110,6 +110,11 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
             result.putBoolean("enabled", RuntimeModMenu.isSwitchEnabled(arg));
             return result;
         }
+        if ("testMenuSnapshot".equals(method)) {
+            Bundle result = baseReply();
+            RuntimeModMenu.putSwitchSnapshot(result);
+            return result;
+        }
 
         if ("clearTestMenu".equals(method)) {
             RuntimeModMenu.clear(probeContext());

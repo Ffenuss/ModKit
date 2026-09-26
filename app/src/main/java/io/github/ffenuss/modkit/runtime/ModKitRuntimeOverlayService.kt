@@ -25,10 +25,16 @@ import android.widget.Toast
 import io.github.ffenuss.modkit.MainActivity
 import io.github.ffenuss.modkit.ui.AutoModBuildRecord
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -41,6 +47,9 @@ class ModKitRuntimeOverlayService : Service() {
     private var manager: WindowManager? = null
     private var root: View? = null
     private var activeSha: String? = null
+    private var refreshJob: Job? = null
+    private var overlayGeneration = 0L
+    private val rpcLock = Mutex()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -67,8 +76,8 @@ class ModKitRuntimeOverlayService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        // A new launch reconfigures the injected menu and resets native patches.
-        // Rebuild the visible switches too, even if the same APK was launched again.
+        // The controller can be reopened while patches remain active. Read the
+        // process state instead of assuming every displayed switch is OFF.
 
         createChannel()
         startForeground(
@@ -100,12 +109,13 @@ class ModKitRuntimeOverlayService : Service() {
         // than posting a separate notification that would require that grant.
         startForeground(
             NOTIFICATION_ID,
-            notification("Меню доступно поверх игры · все моды сначала выключены"),
+            notification("Меню доступно поверх игры · состояния проверяются при открытии"),
         )
         return START_NOT_STICKY
     }
 
     private fun showOverlay(record: AutoModBuildRecord, authority: String) {
+        val generation = overlayGeneration
         val windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         manager = windowManager
         val dp = resources.displayMetrics.density
@@ -124,18 +134,21 @@ class ModKitRuntimeOverlayService : Service() {
         }
         val bubble = Button(this).apply {
             text = "MK"
+            contentDescription = "Открыть мод-меню ModKit"
             isAllCaps = false
             setTextColor(Color.WHITE)
         }
         host.addView(bubble, LinearLayout.LayoutParams(pixels(62), pixels(48)))
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            visibility = View.GONE
             setPadding(pixels(6), pixels(6), pixels(6), pixels(6))
         }
         val heading = text("ModKit · моды", 17f)
         panel.addView(heading)
-        panel.addView(text("Выключены при запуске. Включайте только нужные.", 12f))
+        val stateMessage = text("Получаем состояния из игры…", 12f).apply {
+            contentDescription = "Состояние мод-меню"
+        }
+        panel.addView(stateMessage)
         val scroll = ScrollView(this).apply {
             isFillViewport = false
             addView(panel)
@@ -151,16 +164,77 @@ class ModKitRuntimeOverlayService : Service() {
         scroll.visibility = View.GONE
 
         val transport = AndroidRepackedRuntimeProbeTransport(this)
+        val toggles = linkedMapOf<String, Switch>()
+        var internalChange = false
+        var busy = false
+        var snapshot: RepackedRuntimeSwitchSnapshot? = null
+
+        fun disconnected(message: String) {
+            if (generation != overlayGeneration) return
+            toggles.values.forEach { it.isEnabled = false }
+            stateMessage.text = "Состояния не подтверждены: $message"
+        }
+
+        fun render(current: RepackedRuntimeSwitchSnapshot) {
+            require(current.packageName == record.plan.packageName && current.enabledById.keys == toggles.keys) {
+                "Конфигурация игры изменилась. Запустите мод-меню снова из ModKit."
+            }
+            if (generation != overlayGeneration) return
+            val restarted = snapshot?.pid?.let { it != current.pid } == true
+            snapshot = current
+            internalChange = true
+            try {
+                toggles.forEach { (id, toggle) ->
+                    toggle.isChecked = current.enabledById.getValue(id)
+                    toggle.isEnabled = !busy
+                }
+            } finally { internalChange = false }
+            stateMessage.text = if (restarted) "Игра перезапущена. Состояния обновлены."
+                else "Включено изменений: ${current.enabledById.values.count { it }}"
+        }
+
         for (item in record.runtimeMenuItems) {
             val toggle = Switch(this).apply {
                 text = item.label
+                contentDescription = "Мод: ${item.label}"
                 setTextColor(Color.WHITE)
                 textSize = 13f
                 isChecked = false
+                isEnabled = false
             }
+            toggles[item.id] = toggle
             panel.addView(toggle)
             panel.addView(text(item.detail, 11f))
-            attachToggleListener(toggle, transport, authority, item.id)
+            toggle.setOnCheckedChangeListener { _, desired ->
+                if (internalChange || busy || !toggle.isEnabled) return@setOnCheckedChangeListener
+                busy = true
+                internalChange = true
+                toggle.isChecked = snapshot?.enabledById?.get(item.id) == true
+                internalChange = false
+                toggles.values.forEach { it.isEnabled = false }
+                stateMessage.text = "Применяем изменение…"
+                scope.launch {
+                    try {
+                        rpcLock.withLock {
+                            val accepted = withContext(Dispatchers.IO) {
+                                transport.setTestMenuSwitch(authority, item.id, desired)
+                            }
+                            val current = withContext(Dispatchers.IO) { transport.testMenuSwitchSnapshot(authority) }
+                            if (generation == overlayGeneration) {
+                                busy = false
+                                render(current)
+                                if (!accepted || current.enabledById[item.id] != desired) {
+                                    stateMessage.text = "Изменение не применено. Проверьте версию APK и загрузку игры."
+                                    Toast.makeText(this@ModKitRuntimeOverlayService,
+                                        "Игра не подтвердила переключение мода.", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (error: Exception) { disconnected(error.message ?: "Нет ответа от игры.") }
+                    finally { busy = false }
+                }
+            }
         }
 
         val close = Button(this).apply {
@@ -172,6 +246,24 @@ class ModKitRuntimeOverlayService : Service() {
         ))
         bubble.setOnClickListener {
             scroll.visibility = if (scroll.visibility == View.GONE) View.VISIBLE else View.GONE
+            refreshJob?.cancel()
+            if (scroll.visibility == View.VISIBLE) {
+                toggles.values.forEach { it.isEnabled = false }
+                stateMessage.text = "Получаем состояния из игры…"
+                refreshJob = scope.launch {
+                    while (isActive && generation == overlayGeneration) {
+                        if (!busy) {
+                            try {
+                                rpcLock.withLock {
+                                    render(withContext(Dispatchers.IO) { transport.testMenuSwitchSnapshot(authority) })
+                                }
+                            } catch (cancelled: CancellationException) { throw cancelled }
+                            catch (error: Exception) { disconnected(error.message ?: "Нет ответа от игры.") }
+                        }
+                        delay(1_500L)
+                    }
+                }
+            }
         }
 
         val params = WindowManager.LayoutParams(
@@ -195,37 +287,10 @@ class ModKitRuntimeOverlayService : Service() {
         }
     }
 
-    private fun attachToggleListener(
-        toggle: Switch,
-        transport: AndroidRepackedRuntimeProbeTransport,
-        authority: String,
-        id: String,
-    ) {
-        toggle.setOnCheckedChangeListener { _, desired ->
-            if (!toggle.isEnabled) return@setOnCheckedChangeListener
-            toggle.isEnabled = false
-            scope.launch {
-                val accepted = runCatching {
-                    withContext(Dispatchers.IO) {
-                        transport.setTestMenuSwitch(authority, id, desired)
-                    }
-                }.getOrDefault(false)
-                if (!accepted) {
-                    toggle.setOnCheckedChangeListener(null)
-                    toggle.isChecked = !desired
-                    attachToggleListener(toggle, transport, authority, id)
-                    Toast.makeText(
-                        this@ModKitRuntimeOverlayService,
-                        "Невозможно переключить мод: нет подтверждения от игры.",
-                        Toast.LENGTH_LONG,
-                    ).show()
-                }
-                toggle.isEnabled = true
-            }
-        }
-    }
-
     private fun removeOverlay() {
+        overlayGeneration++
+        refreshJob?.cancel()
+        refreshJob = null
         val view = root ?: return
         runCatching { manager?.removeViewImmediate(view) }
         root = null
