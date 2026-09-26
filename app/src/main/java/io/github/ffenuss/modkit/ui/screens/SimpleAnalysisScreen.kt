@@ -32,6 +32,7 @@ fun SimpleAnalysisScreen(title: String, progress: EngineProgress?, result: FastA
                     onOpenAutoMod?.let { Button(onClick = it, modifier = Modifier.fillMaxWidth()) { Text("Выбрать изменения") } }
                     OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("К выбору приложения") }
                 }
+                if (result != null && (!active || stalledAgeMs != null)) AnalysisReportExportButton(title, result)
             }
         }
     }) { padding ->

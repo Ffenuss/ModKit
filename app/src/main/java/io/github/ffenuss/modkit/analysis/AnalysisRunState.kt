@@ -60,6 +60,7 @@ sealed interface AnalysisRunState {
         val runId: Long,
         val target: AnalysisTargetDescriptor,
         val message: String,
+        val partialResult: FastAnalysisResult? = null,
     ) : AnalysisRunState
 
     data class Interrupted(

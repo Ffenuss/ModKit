@@ -55,4 +55,5 @@ data class FastAnalysisResult(
     val engineWarnings: List<String> = emptyList(),
     val unrealAssetInventory: UnrealAssetInventoryResult? = null,
     val flutterAssetInventory: FlutterAssetInventoryResult? = null,
+    val engineExecutions: EngineExecutionLedger = EngineExecutionLedger(),
 )

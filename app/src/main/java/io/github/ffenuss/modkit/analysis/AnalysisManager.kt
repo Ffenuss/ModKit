@@ -45,6 +45,7 @@ object AnalysisManager {
     @Volatile private var activeSignal: AtomicCancellationSignal? = null
     @Volatile private var activeSkipController: EngineSkipController? = null
     @Volatile private var activeArtifactSha256: String? = null
+    @Volatile private var activeExecutionJournal: EngineExecutionJournal? = null
     private var lastPersistAtMs = 0L
 
     fun initialize(context: Context) {
@@ -59,6 +60,8 @@ object AnalysisManager {
                     AnalysisRunStore.RUNNING,
                     AnalysisRunStore.CANCELLING,
                     AnalysisRunStore.STALLED,
+                    AnalysisRunStore.FAILED,
+                    AnalysisRunStore.CANCELLED,
                 )
             ) {
                 val cache = EngineResultCache(File(application.filesDir, "analysis-cache"))
@@ -70,7 +73,7 @@ object AnalysisManager {
                     artifactSha256 = saved.artifactSha256,
                     partialAvailable = partialAvailable,
                     message = if (partialAvailable) {
-                        "Предыдущий анализ был прерван. Готовые стадии сохранены: их можно открыть без повторного анализа или продолжить цель с переиспользованием кэша."
+                        "Предыдущий анализ не завершён. Готовые стадии сохранены: их можно открыть и отправить отчёт без повторного анализа или продолжить цель с переиспользованием кэша."
                     } else {
                         "Предыдущий анализ был прерван системой или перезапуском. Можно продолжить ту же цель; доступные завершённые стадии будут переиспользованы."
                     },
@@ -285,6 +288,7 @@ object AnalysisManager {
             activeSignal = signal
             activeSkipController = skipController
             activeArtifactSha256 = null
+            activeExecutionJournal = null
             mutableState.value = AnalysisRunState.Running(runId, target, initial, startedAt)
             persist(AnalysisRunStore.RUNNING, runId, target, initial, startedAt, force = true)
         }
@@ -334,6 +338,11 @@ object AnalysisManager {
                     )
                 }
                 activeArtifactSha256 = result.index.artifactSha256
+                val executionJournal = EngineExecutionJournal(
+                    result.index.artifactSha256, engineCache, result.engineExecutions,
+                )
+                activeExecutionJournal = executionJournal
+                result = result.copy(engineExecutions = executionJournal.snapshot())
                 publishPartial(runId, result)
 
                 val workspace = AnalysisWorkspace(
@@ -351,6 +360,7 @@ object AnalysisManager {
                     cache = engineCache,
                     progress = progressSink,
                     onPartial = { partial -> publishPartial(runId, partial) },
+                    executionJournal = executionJournal,
                 )
 
                 synchronized(lock) {
@@ -374,7 +384,9 @@ object AnalysisManager {
                 synchronized(lock) {
                     if (currentRunId() == runId) {
                         val message = failure.message ?: failure.javaClass.simpleName
-                        mutableState.value = AnalysisRunState.Failed(runId, target, message)
+                        mutableState.value = AnalysisRunState.Failed(
+                            runId, target, message, currentPartialResult(),
+                        )
                         store?.write(
                             AnalysisRunStore.FAILED,
                             runId,
@@ -396,6 +408,7 @@ object AnalysisManager {
                         activeSignal = null
                         activeSkipController?.clear()
                         activeSkipController = null
+                        activeExecutionJournal = null
                         watchdogJob?.cancel()
                         watchdogJob = null
                     }
@@ -425,13 +438,19 @@ object AnalysisManager {
                                             ?.currentTask,
                                 )
                             if (age >= stalledAfterMs) {
+                                current.progress?.engineId?.let {
+                                    activeExecutionJournal?.stalled(it, age)
+                                }
                                 val stalled = AnalysisRunState.Stalled(
                                     runId = runId,
                                     target = target,
                                     progress = current.progress?.copy(state = RunState.STALLED),
                                     startedAtEpochMs = startedAt,
                                     heartbeatAgeMs = age,
-                                    partialResult = current.partialResult,
+                                    partialResult = current.partialResult?.let { partial ->
+                                        partial.copy(engineExecutions =
+                                            activeExecutionJournal?.snapshot() ?: partial.engineExecutions)
+                                    },
                                 )
                                 mutableState.value = stalled
                                 persist(
@@ -556,12 +575,7 @@ object AnalysisManager {
     ) {
         synchronized(lock) {
             if (currentRunId() == runId) {
-                val partial = when (val current = mutableState.value) {
-                    is AnalysisRunState.Running -> current.partialResult
-                    is AnalysisRunState.Cancelling -> current.partialResult
-                    is AnalysisRunState.Stalled -> current.partialResult
-                    else -> null
-                }
+                val partial = currentPartialResult()
                 mutableState.value = AnalysisRunState.Cancelled(runId, target, partial)
                 store?.write(
                     AnalysisRunStore.CANCELLED,
@@ -573,6 +587,13 @@ object AnalysisManager {
                 )
             }
         }
+    }
+
+    private fun currentPartialResult(): FastAnalysisResult? = when (val current = mutableState.value) {
+        is AnalysisRunState.Running -> current.partialResult
+        is AnalysisRunState.Cancelling -> current.partialResult
+        is AnalysisRunState.Stalled -> current.partialResult
+        else -> null
     }
 
     private fun persist(

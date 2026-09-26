@@ -20,9 +20,9 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 object PatchLabDiagnosticReportWriter {
-    private const val SCHEMA_VERSION = 3
+    private const val SCHEMA_VERSION = 4
     private const val ENGINE_VERSION =
-        "patch-lab-diagnostic/4"
+        "patch-lab-diagnostic/5"
     private const val COPY_BUFFER_BYTES =
         128 * 1024
 
@@ -142,6 +142,7 @@ object PatchLabDiagnosticReportWriter {
             warnings("artifact.fast-index", result.index.warnings)
             warnings("routing.missing-capability", result.routingPlan.missingCapabilities)
             warnings("scheduler", result.engineWarnings)
+            warnings("execution.latest", result.engineExecutions.latestWarnings())
             warnings("dex.inventory", result.dexInventory?.warnings.orEmpty())
             warnings("elf.universal-inventory", result.elfInventory?.warnings.orEmpty())
             warnings("il2cpp.fast-dump", result.il2cppFastDump?.warnings.orEmpty())
@@ -164,7 +165,21 @@ object PatchLabDiagnosticReportWriter {
             metric("il2cppMetadataTruncated", result.il2cppFastDump?.metadata?.truncated)
             metric("il2cppExactBindings", result.il2cppBinaryBinding?.exactBindingCount)
             metric("il2cppMemoryPreview", result.il2cppBinaryBinding?.evidence?.sumOf { it.bindings.size })
-            metric("perEngineTiming", "NOT_RECORDED")
+            metric("perEngineTiming", if (result.engineExecutions.records.isEmpty())
+                "NOT_RECORDED" else "ROUTED_ENGINE_ATTEMPTS")
+            metric("engineExecutionRecords", result.engineExecutions.records.size)
+            metric("engineExecutionRecordsDropped", result.engineExecutions.droppedRecords)
+        }
+        writeTextEntry(zip, "analysis/executions.tsv") { writer ->
+            writer.line("attemptId\tengine\tschedule\tstatus\tstartedAtEpochMs\tlastHeartbeatEpochMs\tfinishedAtEpochMs\telapsedMs\tcacheHit\tcurrentTask\tcurrentArtifact\tprocessed\ttotal\twatchdogCount\tmaxHeartbeatAgeMs\tfailureClass\tfailureMessage\twarnings")
+            result.engineExecutions.records.forEach { record ->
+                writer.line(listOf(record.attemptId, record.engineId, record.scheduleClass, record.status,
+                    record.startedAtEpochMs, record.lastHeartbeatEpochMs, record.finishedAtEpochMs,
+                    record.elapsedMs, record.cacheHit, record.currentTask, record.currentArtifact,
+                    record.processed, record.total, record.watchdogCount, record.maxHeartbeatAgeMs,
+                    record.failureClass, record.failureMessage, record.warnings.joinToString(" | "))
+                    .joinToString("\t") { tsv(it) })
+            }
         }
         writeTextEntry(zip, "analysis/validated-inputs.tsv") { writer ->
             writer.line("container\tpath\tsize\tformat\tabi\ttags")
@@ -197,6 +212,9 @@ object PatchLabDiagnosticReportWriter {
             writer.line("ModKit Patch Lab diagnostic bundle")
             writer.line("schemaVersion: " + SCHEMA_VERSION)
             writer.line("engineVersion: " + ENGINE_VERSION)
+            writer.line("analysis/executions.tsv records routed engine attempts, not gameplay verification.")
+            writer.line("Cache-hit elapsedMs is retrieval time. INTERRUPTED elapsedMs is the last checkpoint; process-death time is unknown.")
+            writer.line("History keeps the last 128 attempts; see engineExecutionRecordsDropped. Input preparation and fast indexing are not timed here.")
             writer.line(
                 "generatedUtc: " +
                     formatter.format(Date()),
