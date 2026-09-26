@@ -48,7 +48,7 @@ class NativeRecipeCatalogTest {
     @Test fun numericCandidateBecomesSelectableWithAFittingValueAndRealDraft() {
         withFixture(listOf(0xBD401000, 0xD65F03C0)) { recipe, result, root ->
             assertTrue(recipe.blocker, recipe.selectable)
-            assertEquals(listOf("0", "0.5", "1", "2", "3", "5"), recipe.scalarValues.map { it.value })
+            assertEquals(listOf("0", "0.5", "1", "2", "3", "5", "16", "31"), recipe.scalarValues.map { it.value })
             val chosen = recipe.withScalarValue("5")
             assertEquals("5", chosen.scalarValue)
             val draft = Il2CppNativeMutationDraftBuilder.build(result, chosen.native!!.targetId,
@@ -60,6 +60,40 @@ class NativeRecipeCatalogTest {
         withFixture(listOf(0xBD401000, 0xD65F03C0), true) { recipe, _, _ ->
             assertFalse(recipe.selectable)
             assertTrue(recipe.blocker.orEmpty().contains("2 методов"))
+        }
+    }
+    @Test fun shortFloatingHealthGetterDefaultsToPositiveValueThatActuallyFits() {
+        val vectors = mutableListOf<String>()
+        listOf(Il2CppNativeReturnKind.FLOAT32 to 0xBD401000L,
+            Il2CppNativeReturnKind.FLOAT64 to 0xFD400800L).forEach { (kind, load) ->
+            withFixture(listOf(load, 0xD65F03C0), member = "get_MaxHealthRaw",
+                owner = "FlickEngine.CharacterSheetHealth", kind = kind) { recipe, result, root ->
+                assertTrue(recipe.blocker, recipe.selectable)
+                assertEquals("31", recipe.scalarValue)
+                assertEquals("Базовый предел здоровья · значение 31", recipe.title)
+                assertFalse(recipe.scalarValues.any { it.value == "999" })
+                val draft = Il2CppNativeMutationDraftBuilder.build(result, recipe.native!!.targetId,
+                    recipe.native.replacementHex!!, root, File(root, "staging"))
+                assertEquals(8, Il2CppNativeMutationDraftBuilder.parseHex(draft.replacementHex).size)
+                vectors += listOf("catalog-health-${kind.name}",
+                    if (kind == Il2CppNativeReturnKind.FLOAT32) "f" else "d", "7", "7",
+                    recipe.scalarValue, draft.originalHex, draft.replacementHex).joinToString("\t")
+            }
+        }
+        // Execute the catalog's chosen bytes independently in CI, not a separately chosen value.
+        File("build/native-catalog-verification.tsv").apply {
+            parentFile.mkdirs(); writeText(vectors.joinToString("\n"))
+        }
+    }
+    @Test fun largerHealthBodyKeepsPreferredValueAndBtiShortBodyKeepsLandingPad() {
+        withFixture(listOf(0xBD401000, 0x1E202800, 0x1E202800, 0xD65F03C0), member = "get_MaxHealthRaw") { recipe, _, _ ->
+            assertTrue(recipe.blocker, recipe.selectable)
+            assertEquals("999", recipe.scalarValue)
+        }
+        withFixture(listOf(0xD503245F, 0xBD401000, 0xD65F03C0), member = "get_MaxHealthRaw") { recipe, _, _ ->
+            assertTrue(recipe.blocker, recipe.selectable)
+            assertEquals("31", recipe.scalarValue)
+            assertTrue(recipe.native!!.replacementHex!!.startsWith("5F 24 03 D5 "))
         }
     }
     @Test fun numericChoicesDoNotRemoveCalls() {
@@ -101,6 +135,7 @@ class NativeRecipeCatalogTest {
         withFixture(listOf(0x1E201000, 0xD65F03C0)) { recipe, _, _ ->
             assertTrue(recipe.blocker, recipe.selectable)
             assertFalse(recipe.scalarValues.any { it.value == "2" })
+            assertEquals("3", recipe.scalarValue)
         }
     }
     @Test fun lastIndexedFunctionCannotPromiseAMultiInstructionDraft() {

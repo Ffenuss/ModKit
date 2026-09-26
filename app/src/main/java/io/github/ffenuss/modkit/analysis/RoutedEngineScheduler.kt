@@ -46,8 +46,21 @@ object RoutedEngineScheduler {
         onPartial: (FastAnalysisResult) -> Unit,
         allowedScheduleClasses: Set<EngineScheduleClass> = EngineScheduleClass.entries.toSet(),
         allowedEngineIds: Set<String>? = null,
+        executionJournal: EngineExecutionJournal? = null,
     ): FastAnalysisResult {
-        var result = initial
+        val journal = executionJournal ?: EngineExecutionJournal(
+            initial.index.artifactSha256, cache, initial.engineExecutions,
+        )
+        var result = initial.copy(engineExecutions = journal.snapshot())
+        fun checkpoint() {
+            result = result.copy(engineExecutions = journal.snapshot())
+            onPartial(result)
+        }
+        val engineProgress = ProgressSink { event ->
+            val checkpointDue = journal.progress(event)
+            progress.publish(event)
+            if (checkpointDue) checkpoint()
+        }
         val engines = initial.routingPlan.engines
             .asSequence()
             .filter { it.availableNow }
@@ -62,12 +75,21 @@ object RoutedEngineScheduler {
 
         for (engine in engines) {
             if (cancellation.isCancelled()) throw AnalysisCancelledException()
+            result = result.copy(
+                engineCacheHits = result.engineCacheHits - engine.id,
+                engineWarnings = result.engineWarnings.filterNot { it.startsWith(engine.id + ": ") },
+            )
+            journal.start(engine)
+            checkpoint()
             if (
                 engine.scheduleClass == EngineScheduleClass.CONFIRMATION &&
                 result.confirmationQueue.none { request ->
                     request.engineId == engine.id && request.availableNow
                 }
             ) {
+                journal.finish(engine.id, EngineExecutionStatus.SKIPPED,
+                    reason = "No available confirmation request; prerequisites are not satisfied.")
+                checkpoint()
                 continue
             }
             val engineCancellation = object : CancellationSignal {
@@ -76,7 +98,12 @@ object RoutedEngineScheduler {
             }
 
             result = try {
-                when (engine.id) {
+                engineProgress.publish(EngineProgress(
+                    engine.id, engine.scheduleClass, RunState.RUNNING,
+                    currentTask = "Запуск этапа: ${engine.id}",
+                    lastHeartbeatEpochMs = System.currentTimeMillis(),
+                ))
+                val produced = when (engine.id) {
                     "dex.inventory" -> {
                         val cached = withContext(Dispatchers.IO) {
                             cache?.loadDexInventory(
@@ -87,7 +114,7 @@ object RoutedEngineScheduler {
                             DexInventoryEngine.analyze(
                                 workspace = workspace,
                                 cancellation = engineCancellation,
-                                progress = progress,
+                                progress = engineProgress,
                             )
                         }.also { produced ->
                             withContext(Dispatchers.IO) {
@@ -99,7 +126,7 @@ object RoutedEngineScheduler {
                         }
                         if (cached != null) {
                             publishCacheHit(
-                                progress,
+                                engineProgress,
                                 engine,
                                 result.index.artifactSha256,
                             )
@@ -126,7 +153,7 @@ object RoutedEngineScheduler {
                         }
                         val inventory = cached ?: withContext(Dispatchers.IO) {
                             FlutterAssetInventoryEngine.analyze(
-                                workspace, engineCancellation, progress,
+                                workspace, engineCancellation, engineProgress,
                             )
                         }.also { produced ->
                             withContext(Dispatchers.IO) {
@@ -136,7 +163,7 @@ object RoutedEngineScheduler {
                             }
                         }
                         if (cached != null) {
-                            publishCacheHit(progress, engine, result.index.artifactSha256)
+                            publishCacheHit(engineProgress, engine, result.index.artifactSha256)
                         }
                         result.copy(
                             flutterAssetInventory = inventory,
@@ -157,7 +184,7 @@ object RoutedEngineScheduler {
                         }
                         val inventory = cached ?: withContext(Dispatchers.IO) {
                             UnrealAssetInventoryEngine.analyze(
-                                workspace, engineCancellation, progress,
+                                workspace, engineCancellation, engineProgress,
                             )
                         }.also { produced ->
                             withContext(Dispatchers.IO) {
@@ -167,7 +194,7 @@ object RoutedEngineScheduler {
                             }
                         }
                         if (cached != null) {
-                            publishCacheHit(progress, engine, result.index.artifactSha256)
+                            publishCacheHit(engineProgress, engine, result.index.artifactSha256)
                         }
                         result.copy(
                             unrealAssetInventory = inventory,
@@ -193,7 +220,7 @@ object RoutedEngineScheduler {
                                 workspace = workspace,
                                 outputRoot = outputRoot,
                                 cancellation = engineCancellation,
-                                progress = progress,
+                                progress = engineProgress,
                             )
                         }.also { produced ->
                             withContext(Dispatchers.IO) {
@@ -205,7 +232,7 @@ object RoutedEngineScheduler {
                         }
                         if (cached != null) {
                             publishCacheHit(
-                                progress,
+                                engineProgress,
                                 engine,
                                 result.index.artifactSha256,
                             )
@@ -235,7 +262,7 @@ object RoutedEngineScheduler {
                                 workspace = workspace,
                                 outputRoot = outputRoot,
                                 cancellation = engineCancellation,
-                                progress = progress,
+                                progress = engineProgress,
                             )
                         }.also { produced ->
                             withContext(Dispatchers.IO) {
@@ -246,7 +273,7 @@ object RoutedEngineScheduler {
                             }
                         }
                         if (cached != null) {
-                            publishCacheHit(progress, engine, result.index.artifactSha256)
+                            publishCacheHit(engineProgress, engine, result.index.artifactSha256)
                         }
                         result.copy(
                             il2cppFastDump = dump,
@@ -285,7 +312,7 @@ object RoutedEngineScheduler {
                                     metadata = dump.metadata,
                                     outputRoot = outputRoot,
                                     cancellation = engineCancellation,
-                                    progress = progress,
+                                    progress = engineProgress,
                                 )
                             }.also { produced ->
                                 withContext(Dispatchers.IO) {
@@ -296,7 +323,7 @@ object RoutedEngineScheduler {
                                 }
                             }
                             if (cached != null) {
-                                publishCacheHit(progress, engine, result.index.artifactSha256)
+                                publishCacheHit(engineProgress, engine, result.index.artifactSha256)
                             }
                             result.copy(
                                 il2cppBinaryBinding = binding,
@@ -334,22 +361,50 @@ object RoutedEngineScheduler {
                         )
                     }
                 }
+                if (engineCancellation.isCancelled()) throw AnalysisCancelledException()
+                val warnings = produced.engineOutputWarnings(engine.id)
+                val missingOutput = !produced.hasEngineOutput(engine.id)
+                journal.finish(
+                    engine.id,
+                    when {
+                        missingOutput -> EngineExecutionStatus.SKIPPED
+                        warnings.isNotEmpty() -> EngineExecutionStatus.COMPLETED_WITH_WARNINGS
+                        else -> EngineExecutionStatus.COMPLETED
+                    },
+                    cacheHit = engine.id in produced.engineCacheHits,
+                    warnings = warnings,
+                    reason = if (missingOutput) produced.engineWarnings.lastOrNull()
+                        ?: "Engine returned no output." else null,
+                )
+                produced.copy(engineWarnings = (produced.engineWarnings +
+                    warnings.map { "${engine.id}: $it" }).distinct())
             } catch (cancelled: AnalysisCancelledException) {
                 if (!cancellation.isCancelled() && skipController.consume(engine.id)) {
+                    journal.finish(engine.id, EngineExecutionStatus.SKIPPED,
+                        reason = "Skipped after watchdog/user request.")
                     result.withEngineWarning(engine.id, "Skipped after watchdog/user request.")
                 } else {
+                    journal.finish(engine.id, EngineExecutionStatus.CANCELLED,
+                        reason = "Analysis cancelled before engine completion.")
+                    checkpoint()
                     throw cancelled
                 }
             } catch (cancelled: CancellationException) {
+                journal.finish(engine.id, EngineExecutionStatus.CANCELLED,
+                    failure = cancelled, reason = "Analysis coroutine cancelled before engine completion.")
+                checkpoint()
                 throw cancelled
-            } catch (failure: Throwable) {
-                result.withEngineWarning(
-                    engine.id,
-                    failure.message ?: failure.javaClass.simpleName,
-                )
+            } catch (failure: Exception) {
+                journal.finish(engine.id, EngineExecutionStatus.FAILED, failure = failure)
+                result.withEngineWarning(engine.id, failure.message ?: failure.javaClass.simpleName)
+            } catch (fatal: Error) {
+                // Memory/VM failures cannot be isolated by starting more expensive engines.
+                journal.finish(engine.id, EngineExecutionStatus.FAILED, failure = fatal)
+                checkpoint()
+                throw fatal
             }
 
-            onPartial(result)
+            checkpoint()
         }
 
         return result

@@ -23,6 +23,40 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PatchLabDiagnosticReportWriterTest {
+    @Test fun exportsRecoveredExecutionFailureAndCheckpointWithoutClaimingCompletion() {
+        val root = Files.createTempDirectory("execution-report-").toFile()
+        try {
+            val cache = io.github.ffenuss.modkit.analysis.EngineResultCache(root.resolve("cache"))
+            cache.saveArtifactIndex(SHA, ArtifactIndex(SHA, emptyList(), emptyList()))
+            var clock = 0L
+            val journal = io.github.ffenuss.modkit.analysis.EngineExecutionJournal(
+                SHA, cache, monotonicMs = { clock },
+            )
+            val engine = io.github.ffenuss.modkit.analysis.PlannedEngine("elf.universal-inventory",
+                io.github.ffenuss.modkit.domain.EngineScheduleClass.TARGETED, true, "fixture")
+            journal.start(engine)
+            clock = 4_000L
+            journal.progress(io.github.ffenuss.modkit.domain.EngineProgress(engine.id, engine.scheduleClass,
+                io.github.ffenuss.modkit.domain.RunState.RUNNING, currentTask = "ELF: extracting",
+                processed = 256, total = 1024))
+            journal.stalled(engine.id, 180_000)
+            val restored = cache.restorePartialResult(SHA)!!
+            val report = PatchLabDiagnosticReportWriter.write(root, "interrupted", restored, null)
+            ZipFile(report).use { zip ->
+                val rows = read(zip, "analysis/executions.tsv").trim().lines().map { it.split('\t') }
+                val columns = rows.first().zip(rows[1]).toMap()
+                org.junit.Assert.assertEquals("INTERRUPTED", columns["status"])
+                org.junit.Assert.assertEquals("4000", columns["elapsedMs"])
+                org.junit.Assert.assertEquals("", columns["finishedAtEpochMs"])
+                org.junit.Assert.assertEquals("256", columns["processed"])
+                org.junit.Assert.assertEquals("1", columns["watchdogCount"])
+                assertTrue(read(zip, "analysis/warnings.tsv").contains("Process ended"))
+                assertTrue(read(zip, "analysis/coverage.tsv").contains("ROUTED_ENGINE_ATTEMPTS"))
+                assertTrue(read(zip, "README.txt").contains("schemaVersion: 4"))
+            }
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun exportsCurrentRoutingFailuresAndSourceEvidenceEvenWithoutRecipes() {
         val root = Files.createTempDirectory("engine-report-").toFile()
         try {

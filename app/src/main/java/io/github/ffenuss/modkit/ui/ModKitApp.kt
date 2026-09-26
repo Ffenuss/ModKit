@@ -363,7 +363,7 @@ fun ModKitApp() {
             SimpleAnalysisScreen(
                 title = state.target.label,
                 progress = null,
-                result = null,
+                result = state.partialResult,
                 active = false,
                 error = state.message,
                 cancelled = false,

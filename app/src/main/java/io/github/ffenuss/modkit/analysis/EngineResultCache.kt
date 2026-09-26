@@ -11,6 +11,8 @@ import java.io.FileOutputStream
 import java.io.ObjectInputStream
 import java.io.ObjectOutputStream
 import java.io.Serializable
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * App-private, content-addressed cache for completed engine outputs.
@@ -41,6 +43,15 @@ class EngineResultCache(
             type = ArtifactIndex::class.java,
         )
 
+    fun loadEngineExecutions(artifactSha256: String): EngineExecutionLedger? = load(
+        artifactSha256, ENGINE_EXECUTIONS_ID, ENGINE_EXECUTIONS_VERSION,
+        EngineExecutionLedger::class.java,
+    )
+
+    fun saveEngineExecutions(artifactSha256: String, ledger: EngineExecutionLedger): Boolean = save(
+        artifactSha256, ENGINE_EXECUTIONS_ID, ENGINE_EXECUTIONS_VERSION, ledger,
+    )
+
     fun hasRestorablePartial(artifactSha256: String): Boolean =
         entryFile(
             artifactSha256,
@@ -58,6 +69,8 @@ class EngineResultCache(
         val binding = loadIl2CppBinaryBinding(artifactSha256)
         val runtimeEvidence = loadRuntimeEvidence(artifactSha256)
         val runtimeAttempts = loadRuntimeStageAttempts(artifactSha256)
+        val executions = loadEngineExecutions(artifactSha256)?.afterInterruption()
+            ?: EngineExecutionLedger()
         val cacheHits = buildSet {
             add(ARTIFACT_INDEX_ENGINE_ID)
             if (dexInventory != null) add(DEX_INVENTORY_ENGINE_ID)
@@ -82,7 +95,12 @@ class EngineResultCache(
             il2cppBinaryBinding = binding,
             runtimeStageAttempts = runtimeAttempts?.attempts.orEmpty(),
             engineCacheHits = cacheHits,
+            engineExecutions = executions,
         )
+        result = result.copy(engineWarnings = (
+            cacheHits.flatMap { engine -> result.engineOutputWarnings(engine).map { "$engine: $it" } } +
+                executions.latestWarnings()
+            ).distinct())
         if (dump != null) {
             result = result.copy(
                 il2cppEvidence = EvidenceGate.evaluate(
@@ -330,9 +348,10 @@ class EngineResultCache(
         payload: Serializable,
     ): Boolean {
         val file = entryFile(artifactSha256, engineId, engineVersion)
-        val tmp = File(file.parentFile, file.name + ".tmp")
-        tmp.parentFile?.mkdirs()
-        tmp.delete()
+        file.parentFile?.mkdirs()
+        val tmp = try {
+            File.createTempFile("result-", ".tmp", file.parentFile)
+        } catch (_: java.io.IOException) { return false }
 
         return runCatching {
             ObjectOutputStream(
@@ -355,14 +374,9 @@ class EngineResultCache(
                 return false
             }
 
-            if (file.exists() && !file.delete()) {
-                tmp.delete()
-                return false
-            }
-            if (!tmp.renameTo(file)) {
-                tmp.delete()
-                return false
-            }
+            // A killed process must leave the previous completed checkpoint readable.
+            Files.move(tmp.toPath(), file.toPath(),
+                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             true
         }.getOrElse {
             tmp.delete()
@@ -423,5 +437,7 @@ class EngineResultCache(
 
         const val RUNTIME_STAGE_ATTEMPTS_ENGINE_ID = "runtime.stage-attempts"
         const val RUNTIME_STAGE_ATTEMPTS_ENGINE_VERSION = "1"
+        const val ENGINE_EXECUTIONS_ID = "analysis.engine-executions"
+        const val ENGINE_EXECUTIONS_VERSION = "1"
     }
 }
