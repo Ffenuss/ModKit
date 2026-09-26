@@ -26,8 +26,8 @@ android {
         applicationId = "io.github.ffenuss.modkit"
         minSdk = 26
         targetSdk = 36
-        versionCode = 32
-        versionName = "0.0.32"
+        versionCode = 33
+        versionName = "0.0.33"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -87,8 +87,17 @@ val prepareFixtureAssets = tasks.register<Copy>("prepareFixtureAssets") {
     into(fixtureAssets)
     rename { "fixture.apk" }
 }
+val nativeFixtureAssets = layout.buildDirectory.dir("generated/nativeFixtureAssets")
+android.sourceSets.getByName("androidTest").assets.directories.add(nativeFixtureAssets.get().asFile.absolutePath)
+val prepareNativeFixtureAssets = tasks.register<Copy>("prepareNativeFixtureAssets") {
+    dependsOn(":nativefixture:assembleDebug")
+    from(project(":nativefixture").layout.buildDirectory.file("outputs/apk/debug/nativefixture-debug.apk"))
+    into(nativeFixtureAssets)
+    rename { "native-fixture.apk" }
+}
 tasks.configureEach {
     if (name == "mergeDebugAndroidTestAssets" || (name.contains("AndroidTest") && name.contains("Lint", ignoreCase = true))) dependsOn(prepareFixtureAssets)
+    if (name == "mergeDebugAndroidTestAssets" || (name.contains("AndroidTest") && name.contains("Lint", ignoreCase = true))) dependsOn(prepareNativeFixtureAssets)
 }
 
 
