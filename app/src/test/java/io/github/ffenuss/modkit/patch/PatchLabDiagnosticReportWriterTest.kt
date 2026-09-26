@@ -23,6 +23,43 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PatchLabDiagnosticReportWriterTest {
+    @Test fun exportsCurrentRoutingFailuresAndSourceEvidenceEvenWithoutRecipes() {
+        val root = Files.createTempDirectory("engine-report-").toFile()
+        try {
+            val engine = io.github.ffenuss.modkit.analysis.PlannedEngine(
+                "flutter.asset-inventory", io.github.ffenuss.modkit.domain.EngineScheduleClass.TARGETED,
+                true, "Validated Flutter inputs",
+            )
+            val result = FastAnalysisResult(
+                ArtifactIndex(SHA, listOf(io.github.ffenuss.modkit.analysis.ArtifactSource(
+                    "base.apk", 4096, SHA,
+                )), emptyList(), runtimeProfiles = listOf(io.github.ffenuss.modkit.analysis.RuntimeProfile(
+                    "flutter", "Flutter", io.github.ffenuss.modkit.analysis.DetectionStatus.CONFIRMED,
+                    io.github.ffenuss.modkit.analysis.DetectionConfidence.HIGH, listOf("libflutter.so"),
+                ))),
+                EngineRoutingPlan(listOf(engine), listOf("Dart AOT unavailable")), 7,
+                engineWarnings = listOf("flutter.asset-inventory: malformed manifest"),
+            )
+            val report = PatchLabDiagnosticReportWriter.write(root, "fixture", result, null)
+            ZipFile(report).use { zip ->
+                assertTrue(read(zip, "analysis/sources.tsv").contains("base.apk\t4096\t$SHA"))
+                assertTrue(read(zip, "analysis/runtime-profiles.tsv").contains("flutter\tCONFIRMED\tHIGH"))
+                assertTrue(read(zip, "analysis/engines.tsv").contains("true\tfalse\tfalse"))
+                assertTrue(read(zip, "analysis/warnings.tsv").contains("malformed manifest"))
+                assertTrue(read(zip, "analysis/coverage.tsv").contains("perEngineTiming\tNOT_RECORDED"))
+            }
+            // Identical APK, dump path and binding count; only engine outcome changes.
+            // An expert export must not return an older cached success/failure ZIP.
+            PatchLabDiagnosticReportWriter.write(root, "fixture", result.copy(
+                engineWarnings = listOf("flutter.asset-inventory: source missing"),
+            ), null)
+            ZipFile(report).use { zip ->
+                assertTrue(read(zip, "analysis/warnings.tsv").contains("source missing"))
+                assertFalse(read(zip, "analysis/warnings.tsv").contains("malformed manifest"))
+            }
+        } finally { root.deleteRecursively() }
+    }
+
     @Test fun currentRecipeReasonsAndChangedValuesAreNotHiddenByTheFinderCache() {
         val root = Files.createTempDirectory("recipe-report-").toFile()
         try {
