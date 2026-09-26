@@ -82,7 +82,8 @@ object NativeRecipeCatalog {
                             val choices = when (binding.returnKind) {
                                 Il2CppNativeReturnKind.BOOLEAN -> listOf("0", "1")
                                 Il2CppNativeReturnKind.INTEGER -> listOf("0", "1", "2", "5", "99", "999", "9999")
-                                else -> listOf("0", "0.5", "1", "2", "3", "5", "99", "999")
+                                // 16 and 31 fit a two-instruction FMOV/RET body; 99/999 may not.
+                                else -> listOf("0", "0.5", "1", "2", "3", "5", "16", "31", "99", "999")
                             }
                             val encodedKind = if (binding.returnKind == Il2CppNativeReturnKind.BOOLEAN)
                                 Il2CppNativeReturnKind.INTEGER else binding.returnKind
@@ -108,7 +109,19 @@ object NativeRecipeCatalog {
                                 else -> "2"
                                 }
                             }
-                            val chosen = values.firstOrNull { it.value == preferred } ?: values.first()
+                            val chosen = values.firstOrNull { it.value == preferred } ?: run {
+                                require(binding.returnKind != Il2CppNativeReturnKind.BOOLEAN && preferred != "0") {
+                                    "Метод уже возвращает выбранное значение; изменение не требуется."
+                                }
+                                // Filtering by patch capacity must not turn a positive health/resource
+                                // default into zero. Choose the closest positive representable value,
+                                // preferring the larger value in a tie (e.g. multiplier 2 -> 3).
+                                values.filter { it.value.toDouble() > 0 }
+                                    .minWithOrNull(compareBy<ScalarRecipeValue> {
+                                        kotlin.math.abs(it.value.toDouble() - preferred.toDouble())
+                                    }.thenByDescending { it.value.toDouble() })
+                                    ?: error("Нет положительного значения, которое помещается в метод.")
+                            }
                             selectedValue = chosen.value
                             effective = candidate.copy(selectable = true, blocker = null,
                                 action = GameplayMutationAction.FORCE_SCALAR_DEFAULT, replacementHex = chosen.replacementHex)
