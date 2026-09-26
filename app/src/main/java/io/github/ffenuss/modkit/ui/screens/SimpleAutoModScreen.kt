@@ -208,6 +208,25 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                     Text("Доступно переключателей: ${state.recipes.count(RuntimeRecipeSelectionPolicy::supports)}",
                         style = MaterialTheme.typography.labelMedium)
                 }
+                result.il2cppBinaryBinding?.let { binding ->
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text("Охват IL2CPP", style = MaterialTheme.typography.titleMedium)
+                                result.il2cppFastDump?.metadata?.let { metadata ->
+                                    Text("Прочитано методов: ${metadata.methods.size} / ${metadata.declaredMethodCount ?: "?"}")
+                                }
+                                Text("Точных нативных привязок: ${binding.exactBindingCount}")
+                                if (binding.evidence.any { it.bindingIndex != null }) Text(
+                                    "Полный индекс сохранён на устройстве. Предпросмотр в памяти: " +
+                                        binding.evidence.sumOf { it.bindings.size } +
+                                        ". Поиск и экспорт используют полный индекс.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                    }
+                }
                 if (state.built != null) item { TextButton(onClick = model::showPreviousResult) { Text("Открыть предыдущую сборку") } }
                 if (state.recipes.isEmpty() && !state.busy) item {
                     Card { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
