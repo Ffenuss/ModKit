@@ -35,6 +35,7 @@ import java.util.Set;
 
 final class RuntimeModMenu {
     static final String MODE_PATCH = "PATCH";
+    static final String MODE_DEX = "DEX";
     static final String MODE_INFO = "INFO";
 
     private static final String PREFS = "modkit_runtime_menu_v1";
@@ -65,6 +66,7 @@ final class RuntimeModMenu {
         synchronized (LOCK) {
             if (installed) return;
             installed = true;
+            RuntimeDexSwitches.initialize(appContext);
             config = load(appContext);
         }
 
@@ -164,7 +166,7 @@ final class RuntimeModMenu {
     /** Reconfiguration cannot silently forget bytes patched by an old menu. */
     private static void restoreAllActive() {
         for (Item item : config.items) {
-            if (MODE_PATCH.equals(item.mode) &&
+            if (isSwitchMode(item.mode) &&
                     Boolean.TRUE.equals(ACTIVE.get(item.id)) &&
                     !apply(item, false)) {
                 throw new IllegalStateException(
@@ -184,7 +186,7 @@ final class RuntimeModMenu {
         boolean applied = false;
         synchronized (LOCK) {
             for (Item item : config.items) {
-                if (id.equals(item.id) && MODE_PATCH.equals(item.mode)) {
+                if (id.equals(item.id) && isSwitchMode(item.mode)) {
                     applied = apply(item, enabled);
                     break;
                 }
@@ -200,7 +202,7 @@ final class RuntimeModMenu {
             ArrayList<String> ids = new ArrayList<>();
             ArrayList<Boolean> states = new ArrayList<>();
             for (Item item : config.items) {
-                if (!MODE_PATCH.equals(item.mode)) continue;
+                if (!isSwitchMode(item.mode)) continue;
                 ids.add(item.id);
                 states.add(Boolean.TRUE.equals(ACTIVE.get(item.id)));
             }
@@ -224,7 +226,7 @@ final class RuntimeModMenu {
     static int patchItemCount() {
         int count = 0;
         for (Item item : config.items) {
-            if (MODE_PATCH.equals(item.mode)) count++;
+            if (isSwitchMode(item.mode)) count++;
         }
         return count;
     }
@@ -364,7 +366,7 @@ final class RuntimeModMenu {
         column.addView(summary);
 
         for (Item item : snapshot.items) {
-            if (MODE_PATCH.equals(item.mode)) {
+            if (isSwitchMode(item.mode)) {
                 addPatchItem(activity, column, item);
             } else {
                 addInfoItem(activity, column, item);
@@ -460,6 +462,10 @@ final class RuntimeModMenu {
         }
     }
 
+    private static boolean isSwitchMode(String mode) {
+        return MODE_PATCH.equals(mode) || MODE_DEX.equals(mode);
+    }
+
     private static boolean apply(
             Item item,
             boolean enable
@@ -474,6 +480,11 @@ final class RuntimeModMenu {
             }
             APPLYING.add(item.id);
             try {
+                if (MODE_DEX.equals(item.mode)) {
+                    boolean ok = RuntimeDexSwitches.setEnabled(item.id, enable);
+                    if (ok) ACTIVE.put(item.id, enable);
+                    return ok;
+                }
                 byte[] original = parseHex(item.originalHex);
                 byte[] replacement = parseHex(item.replacementHex);
                 boolean ok = RuntimeNativeBridge.patchCode(
@@ -576,8 +587,7 @@ final class RuntimeModMenu {
                     "item mode",
                     16
             );
-            if (!MODE_PATCH.equals(mode) &&
-                    !MODE_INFO.equals(mode)) {
+            if (!isSwitchMode(mode) && !MODE_INFO.equals(mode)) {
                 throw new IllegalArgumentException(
                         "Unsupported runtime test menu item mode."
                 );
@@ -615,6 +625,9 @@ final class RuntimeModMenu {
                     );
                 }
             } else {
+                if (MODE_DEX.equals(mode) && !RuntimeDexSwitches.isAvailable(id)) {
+                    throw new IllegalArgumentException("DEX switch is not present in this APK. Rebuild the mod from the original APK.");
+                }
                 module = "";
                 original = "";
                 replacement = "";
@@ -701,6 +714,8 @@ final class RuntimeModMenu {
             List<Item> items = new ArrayList<>();
             for (int index = 0; index < array.length(); index++) {
                 JSONObject object = array.getJSONObject(index);
+                if (MODE_DEX.equals(object.getString("mode")) &&
+                        !RuntimeDexSwitches.isAvailable(object.getString("id"))) return Config.empty();
                 items.add(
                         new Item(
                                 object.getString("id"),
@@ -841,7 +856,7 @@ final class RuntimeModMenu {
         int patchCount() {
             int count = 0;
             for (Item item : items) {
-                if (MODE_PATCH.equals(item.mode)) count++;
+                if (isSwitchMode(item.mode)) count++;
             }
             return count;
         }

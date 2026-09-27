@@ -78,7 +78,7 @@ data class AutoModBuildRecord(
                     )
                 }
             }.orEmpty()
-            require(menu.all { it.mode == RepackedRuntimeTestMenuItemMode.PATCH })
+            require(menu.all { it.mode in setOf(RepackedRuntimeTestMenuItemMode.PATCH, RepackedRuntimeTestMenuItemMode.DEX) })
             require(menu.map { it.id }.distinct().size == menu.size)
             AutoModBuildRecord(RepackedRuntimeInstallPlan(sha, obj.getString("package"),
                 strings("signers").toSet(), apks, apks.sumOf { it.size }, emptyList()),

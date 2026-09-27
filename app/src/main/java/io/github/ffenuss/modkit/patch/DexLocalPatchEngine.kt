@@ -5,6 +5,7 @@ import io.github.ffenuss.modkit.analysis.CancellationSignal
 import java.io.File
 import java.security.MessageDigest
 import java.util.zip.ZipFile
+import org.jf.dexlib2.AccessFlags
 import org.jf.dexlib2.Opcode
 import org.jf.dexlib2.Opcodes
 import org.jf.dexlib2.dexbacked.DexBackedDexFile
@@ -63,6 +64,7 @@ data class DexLocalOpportunity(
     val bodyKind: DexMethodBodyKind = DexMethodBodyKind.UNSUPPORTED,
     val fieldIdentity: String? = null,
     val matchedByField: Boolean = false,
+    val runtimeBlocker: String? = null,
 ) {
     val displayName: String
         get() = className.removePrefix("L").removeSuffix(";")
@@ -319,6 +321,8 @@ object DexLocalPatchEngine {
                     bodyKind = body.kind,
                     fieldIdentity = body.fieldIdentity,
                     matchedByField = nameMatch == null && fieldMatch != null,
+                    runtimeBlocker = if (AccessFlags.INTERFACE.isSet(classDef.accessFlags))
+                        "Runtime-переключатели методов интерфейса пока не поддерживаются." else null,
                 )
             }
         }
@@ -361,32 +365,8 @@ object DexLocalPatchEngine {
         developerTestMode: Boolean,
         cancellation: CancellationSignal,
     ): DexLocalRewrite {
-        require(selected.isNotEmpty()) { "No DEX changes selected." }
         val originalSha = sha256(bytes)
-        val current = scanDex(
-            bytes, apkIndex, dexEntry, developerTestMode, cancellation,
-        ).opportunities.associateBy { it.id }
-        val selectedIds = selected.map { it.id }
-        require(selectedIds.toSet().size == selectedIds.size) {
-            "Duplicate DEX method selections."
-        }
-        selected.forEach { request ->
-            val candidate = current[request.id]
-                ?: error("DEX method disappeared or is no longer eligible: " +
-                    request.displayName)
-            require(candidate.selectable && request.selectable) {
-                "Developer test mode is not enabled for this target."
-            }
-            require(candidate.originalDexSha256 == originalSha &&
-                request.originalDexSha256 == originalSha &&
-                candidate.action == request.action &&
-                candidate.className == request.className &&
-                candidate.methodName == request.methodName &&
-                candidate.signature == request.signature
-            ) {
-                "DEX method provenance changed since selection."
-            }
-        }
+        validatedSelections(bytes, apkIndex, dexEntry, selected, developerTestMode, cancellation)
 
         val dex = parseDex(bytes)
         val wanted = selected.associateBy { it.id }
@@ -477,6 +457,40 @@ object DexLocalPatchEngine {
             destination.delete()
             throw failure
         }
+    }
+
+    internal fun validatedSelections(
+        bytes: ByteArray, apkIndex: Int, dexEntry: String,
+        selected: List<DexLocalOpportunity>, developerTestMode: Boolean,
+        cancellation: CancellationSignal,
+    ) {
+        require(selected.isNotEmpty()) { "No DEX changes selected." }
+        val originalSha = sha256(bytes)
+        val current = scanDex(
+            bytes, apkIndex, dexEntry, developerTestMode, cancellation,
+        ).opportunities.associateBy { it.id }
+        val selectedIds = selected.map { it.id }
+        require(selectedIds.toSet().size == selectedIds.size) {
+            "Duplicate DEX method selections."
+        }
+        selected.forEach { request ->
+            val candidate = current[request.id]
+                ?: error("DEX method disappeared or is no longer eligible: " +
+                    request.displayName)
+            require(candidate.selectable && request.selectable) {
+                "Developer test mode is not enabled for this target."
+            }
+            require(candidate.originalDexSha256 == originalSha &&
+                request.originalDexSha256 == originalSha &&
+                candidate.action == request.action &&
+                candidate.className == request.className &&
+                candidate.methodName == request.methodName &&
+                candidate.signature == request.signature
+            ) {
+                "DEX method provenance changed since selection."
+            }
+        }
+
     }
 
     private fun rewriteMethod(
@@ -703,7 +717,7 @@ object DexLocalPatchEngine {
             framework.any(path::startsWith)
     }
 
-    private fun stableId(
+    internal fun stableId(
         apkIndex: Int,
         dexEntry: String,
         method: Method,

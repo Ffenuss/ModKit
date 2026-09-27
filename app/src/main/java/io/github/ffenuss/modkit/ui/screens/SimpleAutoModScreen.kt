@@ -171,7 +171,7 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                             Text(if (record!!.plan.apks.size == 1) "Один подписанный APK" else "Комплект из ${record.plan.apks.size} APK — установка вместе")
                             Text(if (runtimeBuild)
                                 "Создан APK с ${record.runtimeMenuItems.size} переключателями. Моды выключены до вашего нажатия в меню MK."
-                            else "Статические DEX-патчи и подпись проверены. Переключателей в игре нет.",
+                            else "Прежняя статическая DEX-сборка. Создайте новую для переключателей.",
                                 style = MaterialTheme.typography.bodyMedium)
                         }
                     }
@@ -203,7 +203,7 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                 item {
                     Text("Настройте свой мод", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
-                    Text("Нативные ARM64-рецепты будут выключены до включения в мод-меню. DEX-рецепты пока статические. Эффект проверяйте в игре.",
+                    Text("DEX и нативные ARM64-рецепты изначально выключены. Включайте их через мод-меню; эффект проверяйте в приложении.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Доступно переключателей: ${state.recipes.count(RuntimeRecipeSelectionPolicy::supports)}",
                         style = MaterialTheme.typography.labelMedium)
@@ -316,7 +316,7 @@ private fun RecipeCard(recipe: AutoModRecipe, selected: Boolean, enabled: Boolea
                     }
                 }
                 Text(if (RuntimeRecipeSelectionPolicy.supports(recipe)) "Переключатель в игре · Эффект не проверен"
-                    else if (recipe.selectable && recipe.dex.isNotEmpty()) "Статический DEX-патч · Отключение не поддерживается"
+                    else if (recipe.selectable && recipe.dex.isNotEmpty()) "DEX-переключатель · Изначально выключен"
                     else if (recipe.selectable) "Нет поддержки runtime-переключателя"
                     else "Нужен дополнительный анализ",
                     style = MaterialTheme.typography.labelSmall, color = if (recipe.selectable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)

@@ -426,6 +426,35 @@ object RepackedRuntimeBuildPreflight {
  * development signing, package verification and report generation.
  */
 object RepackedRuntimeBuildCoordinator {
+    fun buildDexSwitchInjected(
+        context: Context,
+        manifestInventory: RepackedRuntimeManifestInventory,
+        injection: RepackedRuntimeDexSwitchInjection,
+        outputRoot: File,
+        cancellation: CancellationSignal,
+        progress: ProgressSink,
+    ): RepackedRuntimeBuildResult {
+        val prior = RepackedRuntimeBuildPreflight.validateNativeProbeInjection(manifestInventory, injection.nativeInjection)
+        require(prior.ready) { prior.blockers.joinToString("; ") }
+        RepackedRuntimeDexSwitchInjector.verify(injection, cancellation)
+        return build(context, injection.nativeInjection.artifactSha256, manifestInventory,
+            injection.sources.map { it.sourceDisplayName to File(it.outputPath) }, outputRoot, cancellation, progress).also { built ->
+            File(built.reportPath).appendText(buildString {
+                appendLine("\nDEX runtime switches: ${injection.switchIds.size}")
+                appendLine("instrumentedMethods: ${injection.instrumentedMethods}")
+                appendLine("originalBodiesPreserved: true")
+                appendLine("defaultEnabled: false")
+                appendLine("runtimeEffectConfirmed: false")
+                injection.sources.forEach { source ->
+                    appendLine("- dexStageSource: ${source.sourceDisplayName}")
+                    appendLine("  inputSha256: ${source.inputSha256}")
+                    appendLine("  outputSha256: ${source.outputSha256}")
+                    source.rewrittenDexSha256.forEach { (entry, sha) -> appendLine("  $entry: $sha") }
+                }
+            })
+        }
+    }
+
     fun buildNativeProbeInjected(
         context: Context,
         manifestInventory: RepackedRuntimeManifestInventory,

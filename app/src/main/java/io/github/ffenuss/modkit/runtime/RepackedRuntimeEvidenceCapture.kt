@@ -39,6 +39,7 @@ data class RepackedRuntimeNativeLookupReply(
 
 enum class RepackedRuntimeTestMenuItemMode {
     PATCH,
+    DEX,
     INFO,
 }
 

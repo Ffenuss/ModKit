@@ -14,6 +14,7 @@ import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstrumentationCoordinato
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeProbeIdentityVerifier
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestAppLauncher
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestMenuStatus
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeDexSwitchInjector
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -43,7 +44,7 @@ object AutoModRuntimeTestMenuCoordinator {
         selected: List<AutoModRecipe>? = null,
     ): AutoModRuntimeTestMenuBuild =
         withContext(Dispatchers.IO) {
-            require(preparation.sourceShaVerified) {
+            require((selected != null && selected.none { it.native != null }) || preparation.sourceShaVerified) {
                 "Исходная версия не подтверждена по SHA-256."
             }
             require(
@@ -107,9 +108,16 @@ object AutoModRuntimeTestMenuCoordinator {
                             outputRoot = outputRoot,
                             cancellation = cancellation,
                         )
-                val build =
-                    RepackedRuntimeBuildCoordinator
-                        .buildNativeProbeInjected(
+                val dexSelections = selected.orEmpty().flatMap { recipe -> recipe.dex.map {
+                    DexRuntimeSelection(it, DexRuntimeSwitchRewriter.switchId(recipe.id))
+                } }
+                val dexInjection = if (dexSelections.isEmpty()) null else RepackedRuntimeDexSwitchInjector.inject(
+                    instrumentation.nativeProbeInjection, result.index.sources.map { it.displayName },
+                    dexSelections, outputRoot, cancellation,
+                )
+                val build = if (dexInjection != null) RepackedRuntimeBuildCoordinator.buildDexSwitchInjected(
+                    context, instrumentation.base.manifestInventory, dexInjection, outputRoot, cancellation, progress,
+                ) else RepackedRuntimeBuildCoordinator.buildNativeProbeInjected(
                             context = context,
                             manifestInventory =
                                 instrumentation

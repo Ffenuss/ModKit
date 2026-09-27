@@ -102,8 +102,7 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
         require(selected.isNotEmpty()) { "Сначала выберите изменения." }
 
         val record: AutoModBuildRecord
-        val nativeSelected = selected.any { it.native != null }
-        if (nativeSelected) {
+        run {
             // No selected native change is written into the output APK.
             // Runtime patches are initially OFF and only toggled with consent.
             require(selected.all(RuntimeRecipeSelectionPolicy::supports)) {
@@ -129,27 +128,6 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
                 reportPath = result.build.reportPath,
                 runtimeMenuItems = result.menu.items,
             )
-        } else {
-            // Preserve the pre-existing DEX workflow while its reversible
-            // runtime backend is developed. The UI labels it as static.
-            val built = AutoModBuildCoordinator.build(
-                context, target, analysis, preparation, selected, signal, sink,
-            ) {
-                mutable.update { current -> current.copy(recipes = current.recipes.map {
-                    if (it.id in current.selected) it.copy(
-                        verification = it.verification.copy(staticVerified = true),
-                    ) else it
-                }) }
-            }
-            val plan = withContext(Dispatchers.IO) {
-                RepackedRuntimeInstallPlanner.plan(built, signal)
-            }
-            require(plan.ready) { plan.blockers.joinToString("; ") }
-            record = AutoModBuildRecord(
-                plan, built.builtAtEpochMs,
-                selected.map { it.title + " · " + it.targetLabel },
-                built.reportFile.absolutePath,
-            )
         }
         withContext(Dispatchers.IO) { record.save(context) }
         mutable.update { current -> current.copy(
@@ -159,7 +137,7 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
             notice = if (record.runtimeMenuItems.isNotEmpty()) {
                 "Создан APK с ${record.runtimeMenuItems.size} переключателями. Все моды изначально выключены."
             } else {
-                "Это статическая DEX-сборка: переключатели для неё пока не поддерживаются."
+                "Это прежняя статическая DEX-сборка. Создайте новую для переключателей."
             },
             recipes = current.recipes.map { recipe ->
                 if (recipe.id in current.selected) recipe.copy(
@@ -186,7 +164,7 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
     fun launchWithOverlay() = operate("Запускаем с переключателями") {
         val record = requireNotNull(state.value.built)
         require(record.runtimeMenuItems.isNotEmpty()) {
-            "В этой сборке нет переключателей. Создайте сборку с нативными модами."
+            "В этой сборке нет переключателей. Создайте новую сборку с переключателями."
         }
         require(Settings.canDrawOverlays(context)) {
             "Разрешите ModKit показывать окна поверх игр."

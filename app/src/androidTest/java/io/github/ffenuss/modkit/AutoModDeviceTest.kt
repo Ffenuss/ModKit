@@ -284,6 +284,17 @@ class AutoModDeviceTest {
         }
     }
 
+    @Test fun e_dexOverlayRestoresOriginalGameLogic() {
+        DexOverlayDeviceScenario(instrumentation, device).run(::evidence) { plan ->
+            context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            device.waitForIdle()
+            val attemptedAt = System.currentTimeMillis()
+            val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+            val result = awaitInstallResult(attemptedAt, 100_000L, expectedSessionId = submission.sessionId)
+            assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, result.kind)
+        }
+    }
+
     @Test fun c_installButtonInstallsTheUiBuildAfterTheOriginalConflictIsResolved() {
         // The original certificate conflict was checked in b. The app produced by a
         // uses the same persistent ModKit key and can now update our owned fixture.
@@ -326,10 +337,26 @@ class AutoModDeviceTest {
             completed.updatedAtEpochMs >= attemptedAt,
         )
         assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, completed.kind)
-        launchGame()
-        repeat(3) { hit() }
-        assertTrue("The APK selected and installed through the UI must change gameplay",
-            device.hasObject(By.text("ALIVE | Health: 9999")))
-        evidence("ui-installed-game.png") { device.takeScreenshot(it) }
+        device.executeShellCommand("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
+        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val launch = requireNotNull(device.wait(Until.findObject(By.text(Pattern.compile(
+            "Запустить с мод-меню|Разрешить окно поверх игры"))), 15_000))
+        launch.click()
+        assertTrue("New UI builds must preserve original behaviour while OFF",
+            device.wait(Until.hasObject(By.text("ALIVE | Health: 20")), 15_000))
+        try {
+            val bubble = By.desc("Открыть мод-меню ModKit")
+            requireNotNull(device.wait(Until.findObject(bubble), 10_000)).click()
+            val healthSwitch = By.desc("Мод: Здоровье · значение 9999")
+            requireNotNull(device.wait(Until.findObject(healthSwitch.enabled(true)), 10_000)).click()
+            assertTrue(device.wait(Until.hasObject(healthSwitch.checked(true)), 15_000))
+            device.findObject(bubble).click()
+            repeat(3) { hit() }
+            assertTrue("The APK selected and installed through the UI must change gameplay after enabling",
+                device.hasObject(By.text("ALIVE | Health: 9999")))
+            evidence("ui-installed-game.png") { device.takeScreenshot(it) }
+        } finally {
+            context.stopService(Intent(context, ModKitRuntimeOverlayService::class.java))
+        }
     }
 }

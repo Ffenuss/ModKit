@@ -57,7 +57,7 @@ object DexRecipeCatalog {
                 else "Изменение возвращаемого значения. Эффект требует проверки в приложении.",
                 targetLabel = first.className.substringAfterLast('/').removeSuffix(";"),
                 dex = methods,
-                blocker = methods.firstOrNull { !it.selectable }?.reason,
+                blocker = methods.firstOrNull { !it.selectable }?.reason ?: methods.firstNotNullOfOrNull { it.runtimeBlocker },
                 verification = ModificationVerification(recipePrepared = methods.all { it.selectable }),
             )
         }
