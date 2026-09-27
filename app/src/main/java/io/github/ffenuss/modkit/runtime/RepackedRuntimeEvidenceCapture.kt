@@ -62,6 +62,12 @@ data class RepackedRuntimeTestMenuStatus(
     val infoItemCount: Int,
 )
 
+data class RepackedRuntimeSwitchSnapshot(
+    val packageName: String,
+    val pid: Int,
+    val enabledById: Map<String, Boolean>,
+)
+
 data class RepackedRuntimeNativeTraceStatus(
     val schemaVersion: Int,
     val packageName: String,
@@ -405,6 +411,22 @@ class AndroidRepackedRuntimeProbeTransport(
             context.contentResolver.call(uri, "testMenuSwitchStatus", id, null),
         ) { "Runtime probe did not report switch state." }
         return reply.getBoolean("enabled")
+    }
+
+    fun testMenuSwitchSnapshot(authority: String): RepackedRuntimeSwitchSnapshot {
+        val uri = Uri.parse("content://$authority/${RuntimeEvidenceProviderContract.PATH_EVIDENCE}")
+        val reply = requireNotNull(context.contentResolver.call(uri, "testMenuSnapshot", null, null)) {
+            "Игра не сообщила состояние мод-меню. Пересоберите и установите мод новой версией ModKit."
+        }
+        val ids = requireNotNull(reply.getStringArrayList("ids")) { "Список переключателей не получен." }
+        val states = requireNotNull(reply.getBooleanArray("enabledStates")) { "Состояния переключателей не получены." }
+        val packageName = reply.getString("packageName").orEmpty()
+        val pid = reply.getInt("pid", -1)
+        require(reply.getInt("schemaVersion", -1) == 1 && pid > 0 &&
+            authority == packageName + BinaryAndroidManifestProbeInjector.AUTHORITY_SUFFIX &&
+            ids.size <= 64 && ids.size == states.size && ids.distinct().size == ids.size &&
+            ids.all { it.isNotBlank() && it.length <= 128 }) { "Некорректный ответ мод-меню." }
+        return RepackedRuntimeSwitchSnapshot(packageName, pid, ids.indices.associate { ids[it] to states[it] })
     }
 
     override fun testMenuStatus(

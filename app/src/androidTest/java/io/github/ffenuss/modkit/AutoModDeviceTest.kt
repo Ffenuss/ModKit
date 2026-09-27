@@ -272,6 +272,18 @@ class AutoModDeviceTest {
             .put("outputSha256", org.json.JSONArray(built.files.map { it.sha256 })).toString(2)) }
     }
 
+    @Test fun d_nativeOverlayChangesAndRestoresActualCode() {
+        NativeOverlayDeviceScenario(instrumentation, device).run(::evidence) { plan ->
+            assertTrue(context.packageManager.canRequestPackageInstalls())
+            context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            device.waitForIdle()
+            val attemptedAt = System.currentTimeMillis()
+            val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+            val result = awaitInstallResult(attemptedAt, 100_000L, expectedSessionId = submission.sessionId)
+            assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, result.kind)
+        }
+    }
+
     @Test fun c_installButtonInstallsTheUiBuildAfterTheOriginalConflictIsResolved() {
         // The original certificate conflict was checked in b. The app produced by a
         // uses the same persistent ModKit key and can now update our owned fixture.
