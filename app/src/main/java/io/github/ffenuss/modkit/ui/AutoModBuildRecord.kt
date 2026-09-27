@@ -16,6 +16,7 @@ data class AutoModBuildRecord(
     val reportPath: String,
     val userObservation: String? = null,
     val runtimeMenuItems: List<RepackedRuntimeTestMenuItem> = emptyList(),
+    val resourceChangeCount: Int = 0,
 ) {
     fun save(context: Context) {
         val file = location(context, plan.artifactSha256)
@@ -24,6 +25,7 @@ data class AutoModBuildRecord(
             .put("builtAt", builtAt).put("signers", JSONArray(plan.signerCertificateSha256.toList()))
             .put("changes", JSONArray(changes)).put("report", reportPath)
             .put("userObservation", userObservation)
+            .put("resourceChangeCount", resourceChangeCount)
             .put("runtimeMenu", JSONArray(runtimeMenuItems.map { item -> JSONObject()
                 .put("id", item.id).put("label", item.label)
                 .put("detail", item.detail).put("mode", item.mode.name)
@@ -84,7 +86,7 @@ data class AutoModBuildRecord(
                 strings("signers").toSet(), apks, apks.sumOf { it.size }, emptyList()),
                 obj.getLong("builtAt"), strings("changes"), obj.getString("report"),
                 if (obj.isNull("userObservation")) null else obj.getString("userObservation"),
-                menu)
+                menu, obj.optInt("resourceChangeCount", 0).also { require(it in 0..10000) })
         }.getOrNull()
     }
 }

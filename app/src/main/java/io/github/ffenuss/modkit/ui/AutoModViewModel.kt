@@ -59,6 +59,7 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
     fun discover() = operate("Проверяем доступные изменения") {
         val restored = withContext(Dispatchers.IO) { AutoModBuildRecord.load(context, analysis.index.artifactSha256) }
         val dex = DexAutoModCoordinator.scan(context, target, analysis, signal, sink)
+        val resources = EngineResourceModCoordinator.scan(context, target, analysis, signal, sink)
         val native = if (analysis.il2cppFastDump != null || analysis.il2cppBinaryBinding != null) {
             val prepared = AutoModPreparationCoordinator.prepare(context, target, analysis, signal, sink)
             analysis = prepared.analysisResult
@@ -72,7 +73,7 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
             emptyList()
         }
         val preferences = context.getSharedPreferences("automod-selection", 0)
-        val recipes = (DexRecipeCatalog.create(dex) + native).map { recipe ->
+        val recipes = (DexRecipeCatalog.create(dex) + native + resources.recipes).map { recipe ->
             preferences.getString(analysis.index.artifactSha256 + ":value:" + recipe.id, null)
                 ?.let(recipe::withScalarValue) ?: recipe
         }
@@ -80,7 +81,7 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
         mutable.update { it.copy(recipes = recipes, methodsExamined = dex.methodsExamined,
             selected = saved.intersect(recipes.filter { r -> r.selectable }.map { r -> r.id }.toSet()),
             built = it.built ?: restored, showingResult = restored != null,
-            notice = (dex.warnings + analysis.engineWarnings).firstOrNull()) }
+            notice = (resources.warnings + dex.warnings + analysis.engineWarnings).distinct().joinToString("\n").ifEmpty { null }) }
     }
 
     fun toggle(id: String) {
@@ -105,7 +106,7 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
         run {
             // No selected native change is written into the output APK.
             // Runtime patches are initially OFF and only toggled with consent.
-            require(selected.all(RuntimeRecipeSelectionPolicy::supports)) {
+            require(selected.all { it.resource != null || RuntimeRecipeSelectionPolicy.supports(it) }) {
                 "Часть выбранных модов пока не поддерживает отключение в игре. Уберите их из выбора."
             }
             val result = AutoModRuntimeTestMenuCoordinator.build(
@@ -124,9 +125,12 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
             record = AutoModBuildRecord(
                 plan = plan,
                 builtAt = result.build.completedAtEpochMs,
-                changes = selected.map { it.title + " · " + it.targetLabel },
+                changes = selected.map { recipe -> recipe.resource?.let {
+                    "${recipe.title}: ${it.oldValue} → ${it.value} · при сборке · ${recipe.targetLabel}"
+                } ?: (recipe.title + " · в меню MK · " + recipe.targetLabel) },
                 reportPath = result.build.reportPath,
                 runtimeMenuItems = result.menu.items,
+                resourceChangeCount = selected.count { it.resource != null },
             )
         }
         withContext(Dispatchers.IO) { record.save(context) }
@@ -135,13 +139,13 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
             showingResult = true,
             installSession = null,
             notice = if (record.runtimeMenuItems.isNotEmpty()) {
-                "Создан APK с ${record.runtimeMenuItems.size} переключателями. Все моды изначально выключены."
+                "Переключателей MK: ${record.runtimeMenuItems.size} (выключены). Изменений ресурсов при сборке: ${record.resourceChangeCount}."
             } else {
-                "Это прежняя статическая DEX-сборка. Создайте новую для переключателей."
+                "Изменений ресурсов при сборке: ${record.resourceChangeCount}. Установите APK и проверьте результат в приложении."
             },
             recipes = current.recipes.map { recipe ->
                 if (recipe.id in current.selected) recipe.copy(
-                    verification = recipe.verification.copy(apkBuilt = true),
+                    verification = recipe.verification.copy(staticVerified = true, apkBuilt = true),
                 ) else recipe
             },
         ) }
