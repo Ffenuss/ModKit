@@ -446,6 +446,9 @@ object RepackedRuntimeBuildCoordinator {
                 appendLine("originalBodiesPreserved: true")
                 appendLine("defaultEnabled: false")
                 appendLine("runtimeEffectConfirmed: false")
+                appendLine("originalInstaller: ${injection.originalInstaller?.installerPackageName ?: "unknown"}")
+                appendLine("installerRedirectedCalls: ${injection.installerRedirectedCalls}")
+                appendLine("installerScope: observed local installer queries of this package only; not licensing/signature/integrity")
                 injection.sources.forEach { source ->
                     appendLine("- dexStageSource: ${source.sourceDisplayName}")
                     appendLine("  inputSha256: ${source.inputSha256}")

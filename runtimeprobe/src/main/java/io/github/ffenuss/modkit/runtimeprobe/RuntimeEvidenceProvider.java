@@ -39,6 +39,7 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
     public boolean onCreate() {
         Context context = getContext();
         if (context != null) {
+            RuntimeInstallerCompatibility.install(context);
             RuntimeModMenu.install(context);
         }
         return true;

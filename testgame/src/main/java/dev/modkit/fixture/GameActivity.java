@@ -24,6 +24,10 @@ public final class GameActivity extends Activity {
         distance = new TextView(this);
         distance.setTextSize(24);
         layout.addView(distance);
+        TextView installer = new TextView(this);
+        installer.setTextSize(10);
+        installer.setText(InstallerProbe.describe(this));
+        layout.addView(installer);
         Button hit = new Button(this);
         hit.setText("Take damage");
         hit.setOnClickListener(v -> { player.hit(); showState(); });

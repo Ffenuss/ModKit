@@ -154,6 +154,9 @@ class AutoModDeviceTest {
     }
 
     @Test fun a_simpleInterfaceSelectsAndBuildsWithoutExpertTools() {
+        @Suppress("DEPRECATION")
+        val sourceInstaller = context.packageManager.getInstallerPackageName(fixturePackage)
+        assertEquals("com.android.shell", sourceInstaller)
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val homeReady = device.wait(Until.hasObject(By.text("Выбрать игру")), 45_000)
         if (!homeReady) evidence("modkit-home-timeout.png") { device.takeScreenshot(it) }
@@ -350,6 +353,7 @@ class AutoModDeviceTest {
         assertTrue(device.wait(Until.hasObject(By.desc("Открыть мод-меню ModKit")), 10_000))
         assertTrue(device.wait(Until.gone(By.desc("Встроенное мод-меню ModKit")), 10_000))
         assertEquals("Simple Mode must show only one MK button", 1, device.findObjects(By.text("MK")).size)
+        verifyOriginalInstallerCompatibility("first-launch")
         try {
             val bubble = By.desc("Открыть мод-меню ModKit")
             requireNotNull(device.wait(Until.findObject(bubble), 10_000)).click()
@@ -361,8 +365,25 @@ class AutoModDeviceTest {
             assertTrue("The APK selected and installed through the UI must change gameplay after enabling",
                 device.hasObject(By.text("ALIVE | Health: 9999")))
             evidence("ui-installed-game.png") { device.takeScreenshot(it) }
+            device.executeShellCommand("am force-stop $fixturePackage")
+            launchGame()
+            verifyOriginalInstallerCompatibility("process-restarted")
         } finally {
             context.stopService(Intent(context, ModKitRuntimeOverlayService::class.java))
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun verifyOriginalInstallerCompatibility(stage: String) {
+        val actual = context.packageManager.getInstallerPackageName(fixturePackage)
+        assertEquals("Android must retain the real installer", context.packageName, actual)
+        val other = context.packageManager.getInstallerPackageName("com.android.shell")
+        val modern = if (Build.VERSION.SDK_INT >= 30) "com.android.shell" else "unavailable"
+        val expected = "Installer: com.android.shell | actual: $actual\nInstallSource: $modern | other: $other | missingRejected: true"
+        assertTrue("Local queries must preserve only our original installer", device.wait(Until.hasObject(By.text(expected)), 15_000))
+        evidence("installer-compatibility-$stage.json") {
+            it.writeText(JSONObject().put("api", Build.VERSION.SDK_INT).put("observedOriginal", "com.android.shell")
+                .put("actualInstaller", actual).put("inAppQueries", expected).put("stage", stage).toString(2))
         }
     }
 }

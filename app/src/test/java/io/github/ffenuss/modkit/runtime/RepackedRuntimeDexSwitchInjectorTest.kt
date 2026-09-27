@@ -98,4 +98,70 @@ class RepackedRuntimeDexSwitchInjectorTest {
             }
         } finally { root.deleteRecursively() }
     }
+
+    private fun installerDex(): ByteArray {
+        val pm = "Landroid/content/pm/PackageManager;"
+        val string = "Ljava/lang/String;"
+        val method = ImmutableMethod(owner, "queryInstaller", listOf(
+            ImmutableMethodParameter(pm, emptySet(), null), ImmutableMethodParameter(string, emptySet(), null)),
+            string, AccessFlags.PUBLIC.value or AccessFlags.STATIC.value, emptySet(), emptySet(),
+            ImmutableMethodImplementation(2, listOf(
+                ImmutableInstruction35c(Opcode.INVOKE_VIRTUAL, 2, 0, 1, 0, 0, 0,
+                    org.jf.dexlib2.immutable.reference.ImmutableMethodReference(pm, "getInstallerPackageName", listOf(string), string)),
+                ImmutableInstruction11x(Opcode.MOVE_RESULT_OBJECT, 0), ImmutableInstruction11x(Opcode.RETURN_OBJECT, 0)),
+                emptyList(), emptyList()))
+        val clazz = ImmutableClassDef(owner, AccessFlags.PUBLIC.value, "Ljava/lang/Object;", emptyList(), null,
+            emptySet(), emptyList(), emptyList(), listOf(method), emptyList())
+        val out = MemoryDataStore()
+        try { DexPool.writeTo(out, ImmutableDexFile(Opcodes.forApi(28), listOf(clazz))); return out.data }
+        finally { out.close() }
+    }
+
+    @Test fun preservesObservedInstallerAcrossCodeSplitWithoutAnyDexModSelection() {
+        val root = Files.createTempDirectory("installer-split").toFile()
+        try {
+            val base = File(root, "base.apk"); val split = File(root, "feature.apk"); val resources = File(root, "resources.apk")
+            val originalDex = installerDex()
+            zip(base, mapOf("classes.dex" to dex()))
+            zip(split, mapOf("classes.dex" to originalDex, "assets/keep" to byteArrayOf(7)))
+            zip(resources, mapOf("assets/data" to byteArrayOf(8)))
+            val prior = previous(listOf(base, split, resources))
+            val record = OriginalInstallerRecord("dev.game", "dev.original.store", prior.artifactSha256)
+            val result = RepackedRuntimeDexSwitchInjector.inject(prior, listOf(base.name, split.name, resources.name),
+                emptyList(), File(root, "out"), signal, record)
+            assertEquals(1, result.installerRedirectedCalls)
+            assertTrue(result.switchIds.isEmpty())
+            assertEquals(record, result.originalInstaller)
+            assertEquals(resources.path, result.sources[2].outputPath)
+            assertEquals(prior.sources.map { it.outputSha256 }, listOf(base, split, resources).map(::hash))
+            ZipFile(result.sources[0].outputPath).use { zip ->
+                assertArrayEquals(record.encode(), zip.getInputStream(zip.getEntry(OriginalInstallerRecord.ENTRY)).readBytes())
+                assertNull(zip.getEntry(RepackedRuntimeDexSwitchInjector.CATALOG))
+            }
+            ZipFile(result.sources[1].outputPath).use { zip ->
+                assertNull(zip.getEntry(OriginalInstallerRecord.ENTRY))
+                assertFalse(originalDex.contentEquals(zip.getInputStream(zip.getEntry("classes.dex")).readBytes()))
+                assertArrayEquals(byteArrayOf(7), zip.getInputStream(zip.getEntry("assets/keep")).readBytes())
+            }
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun wrongInstallerSourceAndExistingObservationAreRejected() {
+        val root = Files.createTempDirectory("installer-provenance").toFile()
+        try {
+            val base = File(root, "base.apk"); zip(base, mapOf("classes.dex" to installerDex()))
+            val prior = previous(listOf(base))
+            for (record in listOf(OriginalInstallerRecord("dev.other", "dev.store", prior.artifactSha256),
+                OriginalInstallerRecord("dev.game", "dev.store", "c".repeat(64)))) {
+                assertThrows(IllegalArgumentException::class.java) {
+                    RepackedRuntimeDexSwitchInjector.inject(prior, listOf(base.name), emptyList(), File(root, "out"), signal, record)
+                }
+            }
+            zip(base, mapOf("classes.dex" to installerDex(), OriginalInstallerRecord.ENTRY to byteArrayOf(1)))
+            assertThrows(IllegalArgumentException::class.java) {
+                RepackedRuntimeDexSwitchInjector.inject(previous(listOf(base)), listOf(base.name), emptyList(), File(root, "out"), signal,
+                    OriginalInstallerRecord("dev.game", "dev.store", prior.artifactSha256))
+            }
+        } finally { root.deleteRecursively() }
+    }
 }

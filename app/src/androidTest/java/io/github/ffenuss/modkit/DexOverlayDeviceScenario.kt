@@ -80,6 +80,10 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             requireNotNull(device.wait(Until.findObject(bubble), 15_000))
             launch()
             assertExternalOnly("external-menu-single")
+            // A file input has no observed installation source. Keep real platform queries.
+            @Suppress("DEPRECATION")
+            val actualInstaller = context.packageManager.getInstallerPackageName(fixture)
+            assertTrue(device.wait(Until.hasObject(By.textContains("Installer: $actualInstaller | actual: $actualInstaller")), 10_000))
 
             stage = "baseline"
             expect("ALIVE | Health: 20", "baseline-health")

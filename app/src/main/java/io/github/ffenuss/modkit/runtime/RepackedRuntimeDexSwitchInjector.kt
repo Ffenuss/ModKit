@@ -4,6 +4,7 @@ import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.patch.DexRuntimeSelection
 import io.github.ffenuss.modkit.patch.DexRuntimeSwitchRewriter
+import io.github.ffenuss.modkit.patch.DexInstallerCompatibilityRewriter
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -28,6 +29,8 @@ data class RepackedRuntimeDexSwitchInjection(
     val sources: List<RuntimeDexApkSource>,
     val switchIds: Set<String>,
     val instrumentedMethods: Int,
+    val originalInstaller: OriginalInstallerRecord? = null,
+    val installerRedirectedCalls: Int = 0,
 )
 
 object RepackedRuntimeDexSwitchInjector {
@@ -40,14 +43,18 @@ object RepackedRuntimeDexSwitchInjector {
         selections: List<DexRuntimeSelection>,
         outputRoot: File,
         cancellation: CancellationSignal,
+        originalInstaller: OriginalInstallerRecord? = null,
     ): RepackedRuntimeDexSwitchInjection {
-        require(selections.isNotEmpty() && selections.map { it.method.id }.distinct().size == selections.size)
+        require((selections.isNotEmpty() || originalInstaller != null) && selections.map { it.method.id }.distinct().size == selections.size)
+        require(originalInstaller == null || originalInstaller.packageName == nativeInjection.packageName &&
+            originalInstaller.artifactSha256 == nativeInjection.artifactSha256) { "Installer observation belongs to another source." }
         require(nativeInjection.sources.map { it.sourceDisplayName } == sourceNames) { "APK-set order changed before DEX instrumentation." }
         require(selections.all { it.method.apkIndex in sourceNames.indices }) { "DEX source APK is missing." }
         val switchIds = selections.map { it.switchId }.toSet()
-        require(switchIds.size in 1..24 && switchIds.all { it.matches(Regex("dex:[0-9a-f]{32}")) })
+        require(switchIds.size in 0..24 && switchIds.all { it.matches(Regex("dex:[0-9a-f]{32}")) })
         val catalog = (switchIds.sorted().joinToString("\n") + "\n").toByteArray(Charsets.UTF_8)
         val root = File(outputRoot, nativeInjection.artifactSha256 + "/repacked-test/dex-switch-injection").apply { mkdirs() }
+        var installerCalls = 0
         try {
             val sources = nativeInjection.sources.mapIndexed { index, source ->
                 checkCancelled(cancellation)
@@ -58,7 +65,12 @@ object RepackedRuntimeDexSwitchInjector {
                 val replacement = linkedMapOf<String, ByteArray>()
                 ZipFile(input).use { zip ->
                     require(zip.getEntry(CATALOG) == null) { "APK already contains a DEX switch catalog. Use the original APK." }
-                    byEntry.forEach { (name, chosen) ->
+                    require(zip.getEntry(OriginalInstallerRecord.ENTRY) == null) { "APK already contains an installer observation. Use the original APK." }
+                    val dexNames = if (originalInstaller == null) byEntry.keys else zip.entries().asSequence()
+                        .map { it.name }.filter { it.matches(Regex("classes(?:[0-9]+)?[.]dex")) }.toSet()
+                    require(dexNames.containsAll(byEntry.keys)) { "Selected DEX entry is missing." }
+                    dexNames.forEach { name ->
+                        val chosen = byEntry[name].orEmpty()
                         require(name.matches(Regex("classes(?:[0-9]+)?[.]dex")))
                         val entry = requireNotNull(zip.getEntry(name)) { "Selected DEX entry is missing: $name" }
                         require(entry.size in 1..MAX_DEX.toLong())
@@ -75,22 +87,36 @@ object RepackedRuntimeDexSwitchInjector {
                             out.toByteArray()
                         }
                         require(bytes.size.toLong() == entry.size && bytes.size <= MAX_DEX)
-                        val rewritten = DexRuntimeSwitchRewriter.rewrite(bytes, index, name, chosen,
-                            File(root, "$index-$name"), cancellation)
-                        require(rewritten.appliedIds == chosen.map { it.method.id }.toSet())
-                        replacement[name] = rewritten.file.readBytes()
-                        rewritten.file.delete()
+                        var updated = bytes
+                        if (chosen.isNotEmpty()) {
+                            val rewritten = DexRuntimeSwitchRewriter.rewrite(bytes, index, name, chosen,
+                                File(root, "$index-$name"), cancellation)
+                            require(rewritten.appliedIds == chosen.map { it.method.id }.toSet())
+                            updated = rewritten.file.readBytes()
+                            rewritten.file.delete()
+                        }
+                        if (originalInstaller != null) {
+                            val compatible = DexInstallerCompatibilityRewriter.rewrite(updated, cancellation)
+                            updated = compatible.bytes
+                            installerCalls += compatible.redirectedCalls
+                        }
+                        if (updated !== bytes) replacement[name] = updated
                     }
                 }
                 val dexHashes = replacement.mapValues { hash(it.value) }
-                if (isBase) replacement[CATALOG] = catalog
+                val addedEntries = linkedSetOf<String>()
+                if (isBase && switchIds.isNotEmpty()) { replacement[CATALOG] = catalog; addedEntries += CATALOG }
+                if (isBase && originalInstaller != null) {
+                    replacement[OriginalInstallerRecord.ENTRY] = originalInstaller.encode()
+                    addedEntries += OriginalInstallerRecord.ENTRY
+                }
                 val output = if (replacement.isEmpty()) input else File(root, "$index.apk").also {
-                    rewriteApk(input, it, replacement, if (isBase) CATALOG else null, cancellation)
+                    rewriteApk(input, it, replacement, addedEntries, cancellation)
                 }
                 RuntimeDexApkSource(source.sourceDisplayName, input.absolutePath, source.outputSha256,
                     output.absolutePath, hash(output.inputStream(), cancellation), dexHashes)
             }
-            return RepackedRuntimeDexSwitchInjection(nativeInjection, sources, switchIds, selections.size)
+            return RepackedRuntimeDexSwitchInjection(nativeInjection, sources, switchIds, selections.size, originalInstaller, installerCalls)
                 .also { verify(it, cancellation) }
         } catch (failure: Throwable) {
             root.deleteRecursively()
@@ -109,7 +135,7 @@ object RepackedRuntimeDexSwitchInjector {
     }
 
     private fun rewriteApk(input: File, output: File, replacements: Map<String, ByteArray>,
-                           addedEntry: String?, signal: CancellationSignal) {
+                           addedEntries: Set<String>, signal: CancellationSignal) {
         val expected = linkedMapOf<String, String>()
         ZipFile(input).use { zip ->
             ZipOutputStream(output.outputStream().buffered()).use { out ->
@@ -132,8 +158,8 @@ object RepackedRuntimeDexSwitchInjector {
                     } else hash(zip.getInputStream(entry), signal, out)
                     out.closeEntry()
                 }
-                require(replacements.keys.all { it in expected || it == addedEntry }) { "Missing selected APK entry." }
-                if (addedEntry != null) {
+                require(replacements.keys.all { it in expected || it in addedEntries }) { "Missing selected APK entry." }
+                for (addedEntry in addedEntries) {
                     require(addedEntry !in expected)
                     val bytes = replacements.getValue(addedEntry)
                     out.putNextEntry(ZipEntry(addedEntry)); out.write(bytes); out.closeEntry()
