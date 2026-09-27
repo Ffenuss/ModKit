@@ -239,6 +239,10 @@ final class RuntimeModMenu {
         return count;
     }
 
+    static boolean embeddedMenuEnabled() {
+        return config.embeddedMenu;
+    }
+
     private static void requestRefresh() {
         MAIN.post(() -> {
             Activity activity;
@@ -260,7 +264,7 @@ final class RuntimeModMenu {
         }
         detach();
         Config snapshot = config;
-        if (snapshot.items.isEmpty() ||
+        if (!snapshot.embeddedMenu || snapshot.items.isEmpty() ||
                 activity.isFinishing() ||
                 activity.isDestroyed()) {
             return;
@@ -284,6 +288,7 @@ final class RuntimeModMenu {
 
         Button bubble = new Button(activity);
         bubble.setText("MK");
+        bubble.setContentDescription("Встроенное мод-меню ModKit");
         bubble.setAllCaps(false);
         bubble.setTextColor(Color.WHITE);
         bubble.setTextSize(13f);
@@ -647,7 +652,7 @@ final class RuntimeModMenu {
                     )
             );
         }
-        return new Config(items);
+        return new Config(items, extras.getBoolean("embeddedMenu", true));
     }
 
     private static void persist(
@@ -676,6 +681,7 @@ final class RuntimeModMenu {
             }
             JSONObject root = new JSONObject();
             root.put("schemaVersion", 1);
+            root.put("embeddedMenu", value.embeddedMenu);
             root.put("items", items);
             context.getSharedPreferences(
                     PREFS,
@@ -738,7 +744,7 @@ final class RuntimeModMenu {
                         )
                 );
             }
-            return new Config(items);
+            return new Config(items, root.optBoolean("embeddedMenu", true));
         } catch (Exception ignored) {
             return Config.empty();
         }
@@ -846,8 +852,10 @@ final class RuntimeModMenu {
 
     private static final class Config {
         final List<Item> items;
+        final boolean embeddedMenu;
 
-        Config(List<Item> items) {
+        Config(List<Item> items, boolean embeddedMenu) {
+            this.embeddedMenu = embeddedMenu;
             this.items = Collections.unmodifiableList(
                     new ArrayList<>(items)
             );
@@ -870,7 +878,7 @@ final class RuntimeModMenu {
         }
 
         static Config empty() {
-            return new Config(Collections.emptyList());
+            return new Config(Collections.emptyList(), true);
         }
     }
 

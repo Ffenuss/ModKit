@@ -82,7 +82,9 @@ class NativeOverlayDeviceScenario(private val instrumentation: Instrumentation, 
             install(plan)
             val installed = requireNotNull(transport.inspectInstalled(fixture, authority))
             RepackedRuntimeProbeIdentityVerifier.verify(built, installed)
-            assertEquals(2, transport.configureTestMenu(authority, items).patchItemCount)
+            val configured = transport.configureTestMenu(authority, items, embeddedMenu = false)
+            assertEquals(2, configured.patchItemCount)
+            assertFalse(configured.embeddedMenu)
             AutoModBuildRecord(plan, System.currentTimeMillis(), listOf("Runtime value"), built.reportPath,
                 runtimeMenuItems = items).save(context)
 
@@ -134,7 +136,7 @@ class NativeOverlayDeviceScenario(private val instrumentation: Instrumentation, 
             stage = "replace-config"
             clickSwitch("Runtime value")
             assertSwitch("Runtime value", true)
-            transport.configureTestMenu(authority, items)
+            transport.configureTestMenu(authority, items, embeddedMenu = false)
             assertSwitch("Runtime value", false)
             readValue(7, "reconfigured-restores-code")
 
@@ -171,6 +173,8 @@ class NativeOverlayDeviceScenario(private val instrumentation: Instrumentation, 
         context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(fixture))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         assertTrue(device.wait(Until.hasObject(By.textStartsWith("Native value:")), 15_000))
+        assertTrue(device.wait(Until.gone(By.desc("Встроенное мод-меню ModKit")), 10_000))
+        assertEquals(1, device.findObjects(By.text("MK")).size)
     }
 
     private fun clickSwitch(label: String) {

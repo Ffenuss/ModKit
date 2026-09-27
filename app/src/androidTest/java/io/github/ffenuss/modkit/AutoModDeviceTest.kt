@@ -347,6 +347,9 @@ class AutoModDeviceTest {
         launch.click()
         assertTrue("New UI builds must preserve original behaviour while OFF",
             device.wait(Until.hasObject(By.text("ALIVE | Health: 20")), 15_000))
+        assertTrue(device.wait(Until.hasObject(By.desc("Открыть мод-меню ModKit")), 10_000))
+        assertTrue(device.wait(Until.gone(By.desc("Встроенное мод-меню ModKit")), 10_000))
+        assertEquals("Simple Mode must show only one MK button", 1, device.findObjects(By.text("MK")).size)
         try {
             val bubble = By.desc("Открыть мод-меню ModKit")
             requireNotNull(device.wait(Until.findObject(bubble), 10_000)).click()

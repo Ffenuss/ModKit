@@ -61,6 +61,7 @@ data class RepackedRuntimeTestMenuStatus(
     val itemCount: Int,
     val patchItemCount: Int,
     val infoItemCount: Int,
+    val embeddedMenu: Boolean = true,
 )
 
 data class RepackedRuntimeSwitchSnapshot(
@@ -324,6 +325,13 @@ class AndroidRepackedRuntimeProbeTransport(
     override fun configureTestMenu(
         authority: String,
         items: List<RepackedRuntimeTestMenuItem>,
+    ): RepackedRuntimeTestMenuStatus = configureTestMenu(authority, items, embeddedMenu = true)
+
+    /** Simple Mode uses the external controller; expert callers retain the embedded menu. */
+    fun configureTestMenu(
+        authority: String,
+        items: List<RepackedRuntimeTestMenuItem>,
+        embeddedMenu: Boolean,
     ): RepackedRuntimeTestMenuStatus {
         require(items.size <= 64) {
             "Runtime test menu supports at most 64 items."
@@ -337,6 +345,7 @@ class AndroidRepackedRuntimeProbeTransport(
         )
         val extras =
             Bundle().apply {
+                putBoolean("embeddedMenu", embeddedMenu)
                 putStringArrayList(
                     "ids",
                     ArrayList(items.map { it.id }),
@@ -383,6 +392,9 @@ class AndroidRepackedRuntimeProbeTransport(
             ) {
                 "Runtime test menu configuration returned no result."
             }
+        require(embeddedMenu || (result.containsKey("embeddedMenu") && !result.getBoolean("embeddedMenu"))) {
+            "Установленный мод не поддерживает единое внешнее меню. Пересоберите и установите его новой версией ModKit."
+        }
         return parseTestMenuStatus(result)
     }
 
@@ -631,6 +643,7 @@ class AndroidRepackedRuntimeProbeTransport(
                 result.getInt("patchItemCount", -1),
             infoItemCount =
                 result.getInt("infoItemCount", -1),
+            embeddedMenu = result.getBoolean("embeddedMenu", true),
         )
 
     private fun nativeTraceControl(

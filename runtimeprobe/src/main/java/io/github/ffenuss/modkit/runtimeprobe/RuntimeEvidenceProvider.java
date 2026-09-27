@@ -296,6 +296,7 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         result.putInt("schemaVersion", 1);
         result.putString("packageName", probeContext().getPackageName());
         result.putInt("pid", Process.myPid());
+        result.putBoolean("embeddedMenu", RuntimeModMenu.embeddedMenuEnabled());
         return result;
     }
 
