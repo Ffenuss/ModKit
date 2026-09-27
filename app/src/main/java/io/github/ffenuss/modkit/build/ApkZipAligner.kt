@@ -204,7 +204,9 @@ object ApkZipAligner {
         if (remainder == 0) return base.takeIf { it.isNotEmpty() }
 
         var totalFieldBytes = alignment - remainder
-        if (totalFieldBytes < 4) totalFieldBytes += alignment
+        // Android's 0xd935 field starts with a uint16 alignment multiple.
+        // Zero-filled padding alone tells apksig that no alignment is needed.
+        while (totalFieldBytes < 6) totalFieldBytes += alignment
         val payloadBytes = totalFieldBytes - 4
         require(payloadBytes in 0..0xffff) {
             "Alignment padding exceeds ZIP extra-field limit."
@@ -215,6 +217,8 @@ object ApkZipAligner {
         field[1] = ((ALIGN_EXTRA_ID ushr 8) and 0xff).toByte()
         field[2] = (payloadBytes and 0xff).toByte()
         field[3] = ((payloadBytes ushr 8) and 0xff).toByte()
+        field[4] = (alignment and 0xff).toByte()
+        field[5] = ((alignment ushr 8) and 0xff).toByte()
         return base + field
     }
 

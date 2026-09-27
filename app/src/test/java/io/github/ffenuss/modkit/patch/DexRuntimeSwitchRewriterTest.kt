@@ -113,7 +113,7 @@ class DexRuntimeSwitchRewriterTest {
     }
 
     @Test fun sideEffectsCannotBeEnabledByForgingSelectableFlag() {
-        val bytes = dex(listOf(method("getHealth", "I", instructions = arrayOf(
+        val bytes = dex(listOf(method("getHealth", "I", instructions = arrayOf<Instruction>(
             ImmutableInstruction11n(Opcode.CONST_4, 0, 1),
             ImmutableInstruction22c(Opcode.IPUT, 0, 1, field("health")), ImmutableInstruction11x(Opcode.RETURN, 0)))))
         val unsafe = scan(bytes).single()

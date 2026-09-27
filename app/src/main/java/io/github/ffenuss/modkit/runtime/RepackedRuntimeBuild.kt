@@ -11,6 +11,7 @@ import io.github.ffenuss.modkit.build.BuiltPackageVerifier
 import io.github.ffenuss.modkit.build.InstallabilityVerification
 import io.github.ffenuss.modkit.build.ModKitSigningIdentityProvider
 import io.github.ffenuss.modkit.build.ZipAlignmentVerification
+import io.github.ffenuss.modkit.build.ZipAlignmentVerifier
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.File
@@ -586,6 +587,11 @@ object RepackedRuntimeBuildCoordinator {
                     output = signed,
                     identity = identity,
                 )
+                val signedAlignment = ZipAlignmentVerifier.verify(signed)
+                require(signedAlignment.verified) {
+                    "Signed runtime APK lost required alignment: " +
+                        (signedAlignment.blockers.firstOrNull() ?: displayName)
+                }
                 val signedSha = sha256(signed, cancellation)
 
                 built += RepackedRuntimeBuiltApk(
@@ -594,7 +600,7 @@ object RepackedRuntimeBuildCoordinator {
                     alignedPath = aligned.absolutePath,
                     signedPath = signed.absolutePath,
                     signedSha256 = signedSha,
-                    alignment = alignedResult.verification,
+                    alignment = signedAlignment,
                     signature = signedResult.verification,
                 )
                 signedFiles += signed

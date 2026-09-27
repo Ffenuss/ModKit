@@ -12,6 +12,7 @@ import io.github.ffenuss.modkit.patch.*
 import io.github.ffenuss.modkit.runtime.*
 import io.github.ffenuss.modkit.ui.AutoModBuildRecord
 import java.io.File
+import java.security.MessageDigest
 import java.util.regex.Pattern
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -48,6 +49,19 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             assertTrue(prepared.menu.items.all { it.mode == RepackedRuntimeTestMenuItemMode.DEX })
             assertEquals(2, prepared.menu.patchItemCount)
             val plan = RepackedRuntimeInstallPlanner.plan(prepared.build, signal)
+            // A later attempt with different selections must not replace the first APK.
+            val second = AutoModRuntimeTestMenuCoordinator.build(context,
+                AnalysisTargetDescriptor.FileUri(Uri.fromFile(source).toString(), "Owned DEX fixture"), analysis,
+                PatchPreparationPlan(analysis.index.artifactSha256, false, System.currentTimeMillis(), emptyList(), emptyList()),
+                signal, progress, listOf(health))
+            assertEquals(1, second.menu.patchItemCount)
+            plan.apks.forEach { apk ->
+                val bytes = File(apk.signedPath).readBytes()
+                assertEquals(apk.expectedSha256, MessageDigest.getInstance("SHA-256").digest(bytes)
+                    .joinToString("") { "%02x".format(it.toInt() and 0xff) })
+                assertFalse(second.build.signedApks.any { it.signedPath == apk.signedPath })
+            }
+            events.put(JSONObject().put("event", "previous-build-preserved").put("observed", plan.apks.size))
             stage = "install"
             device.executeShellCommand("pm uninstall $fixture")
             install(plan)

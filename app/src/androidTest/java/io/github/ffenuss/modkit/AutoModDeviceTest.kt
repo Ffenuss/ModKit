@@ -114,6 +114,7 @@ class AutoModDeviceTest {
                         device.hasObject(By.pkg("com.android.packageinstaller")) ||
                             device.hasObject(By.pkg("com.google.android.packageinstaller"))
                     if (installerVisible && !systemConfirmationTapped) {
+                        device.waitForIdle()
                         val systemInstall =
                             device.findObject(By.res("com.android.packageinstaller", "ok_button"))
                                 ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
@@ -122,6 +123,8 @@ class AutoModDeviceTest {
                                 ?: device.findObject(By.text("Update"))
                                 ?: device.findObject(By.text("UPDATE"))
                         if (systemInstall != null) {
+                            evidence("installer-confirmation-${status.sessionId}.png") { device.takeScreenshot(it) }
+                            evidence("installer-confirmation-${status.sessionId}.xml") { device.dumpWindowHierarchy(it) }
                             systemInstall.click()
                             systemConfirmationTapped = true
                         }
