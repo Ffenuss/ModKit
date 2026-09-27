@@ -29,6 +29,7 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
     private val progress = ProgressSink { android.util.Log.i("DexOverlayTest", it.currentTask.orEmpty()) }
     private val events = JSONArray()
     private val bubble = By.desc("Открыть мод-меню ModKit")
+    private val embeddedBubble = By.desc("Встроенное мод-меню ModKit")
 
     fun run(evidence: (String, (File) -> Unit) -> Unit, install: (RepackedRuntimeInstallPlan) -> Unit) = runBlocking {
         var stage = "build"
@@ -66,7 +67,9 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             device.executeShellCommand("pm uninstall $fixture")
             install(plan)
             RepackedRuntimeProbeIdentityVerifier.verify(prepared.build, requireNotNull(transport.inspectInstalled(fixture, authority)))
-            assertEquals(2, transport.configureTestMenu(authority, prepared.menu.items).patchItemCount)
+            val configured = transport.configureTestMenu(authority, prepared.menu.items, embeddedMenu = false)
+            assertEquals(2, configured.patchItemCount)
+            assertFalse(configured.embeddedMenu)
             AutoModBuildRecord(plan, System.currentTimeMillis(), listOf(health.title, sprint.title), prepared.build.reportPath,
                 runtimeMenuItems = prepared.menu.items).save(context)
             assertEquals(prepared.menu.items, requireNotNull(AutoModBuildRecord.load(context, plan.artifactSha256)).runtimeMenuItems)
@@ -76,6 +79,7 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             ModKitRuntimeOverlayService.start(context, plan.artifactSha256)
             requireNotNull(device.wait(Until.findObject(bubble), 15_000))
             launch()
+            assertExternalOnly("external-menu-single")
 
             stage = "baseline"
             expect("ALIVE | Health: 20", "baseline-health")
@@ -123,6 +127,7 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             val pid = transport.testMenuSwitchSnapshot(authority).pid
             device.executeShellCommand("am force-stop $fixture")
             launch()
+            assertExternalOnly("external-mode-after-restart")
             openPanel()
             assertSwitch(health.title, false)
             assertSwitch(sprint.title, false)
@@ -132,7 +137,7 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
 
             stage = "reconfigure"
             toggle(health.title, true)
-            transport.configureTestMenu(authority, prepared.menu.items)
+            transport.configureTestMenu(authority, prepared.menu.items, embeddedMenu = false)
             openPanel(); assertSwitch(health.title, false); device.findObject(bubble).click()
             action("Reset")
             expect("ALIVE | Health: 20", "reconfigured-original")
@@ -143,6 +148,33 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             assertTrue(transport.testMenuSwitchSnapshot(authority).enabledById.isEmpty())
             action("Reset")
             expect("ALIVE | Health: 20", "cleared-original")
+
+            stage = "embedded-menu-compatibility"
+            context.stopService(Intent(context, ModKitRuntimeOverlayService::class.java))
+            assertTrue(device.wait(Until.gone(bubble), 10_000))
+            assertTrue(transport.configureTestMenu(authority, prepared.menu.items).embeddedMenu)
+            assertTrue(device.wait(Until.hasObject(embeddedBubble), 10_000))
+            assertEquals(1, device.findObjects(By.text("MK")).size)
+            device.executeShellCommand("am force-stop $fixture")
+            launch()
+            assertTrue(device.wait(Until.hasObject(embeddedBubble), 10_000))
+            assertTrue(transport.testMenuStatus(authority).embeddedMenu)
+            events.put(JSONObject().put("event", "embedded-mode-after-restart").put("observed", 1))
+            evidence("dex-embedded-menu.png") { device.takeScreenshot(it) }
+
+            stage = "return-to-external-menu"
+            assertFalse(transport.configureTestMenu(authority, prepared.menu.items, embeddedMenu = false).embeddedMenu)
+            assertTrue(device.wait(Until.gone(embeddedBubble), 10_000))
+            context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            device.waitForIdle()
+            ModKitRuntimeOverlayService.start(context, plan.artifactSha256)
+            requireNotNull(device.wait(Until.findObject(bubble), 15_000))
+            launch()
+            assertExternalOnly("returned-to-external-menu")
+            toggle(health.title, true)
+            action("Take damage")
+            expect("ALIVE | Health: 9999", "external-menu-after-mode-change")
+            toggle(health.title, false)
             stage = "complete"
         } finally {
             evidence("dex-overlay-final.png") { device.takeScreenshot(it) }
@@ -160,6 +192,13 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
     }
     private fun openPanel() {
         if (!device.hasObject(By.text("ModKit · моды"))) requireNotNull(device.wait(Until.findObject(bubble), 10_000)).click()
+    }
+    private fun assertExternalOnly(event: String) {
+        assertTrue(device.wait(Until.hasObject(bubble), 10_000))
+        assertTrue(device.wait(Until.gone(embeddedBubble), 10_000))
+        assertFalse(transport.testMenuStatus(authority).embeddedMenu)
+        assertEquals(1, device.findObjects(By.text("MK")).size)
+        events.put(JSONObject().put("event", event).put("observed", 1))
     }
     private fun toggle(label: String, value: Boolean) {
         openPanel()

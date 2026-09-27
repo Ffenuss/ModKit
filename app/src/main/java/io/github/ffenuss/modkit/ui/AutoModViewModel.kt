@@ -189,7 +189,7 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
         ) { "Сертификат или runtime-компонент установленной сборки не соответствует собранному APK." }
 
         val configured = withContext(Dispatchers.IO) {
-            transport.configureTestMenu(authority, record.runtimeMenuItems)
+            transport.configureTestMenu(authority, record.runtimeMenuItems, embeddedMenu = false)
         }
         require(configured.packageName == record.plan.packageName &&
             configured.patchItemCount == record.runtimeMenuItems.size
