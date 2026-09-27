@@ -64,6 +64,8 @@ object ApkSigningStage {
                 .setV2SigningEnabled(true)
                 .setV3SigningEnabled(true)
                 .setV4SigningEnabled(false)
+                .setAlignmentPreserved(true)
+                .setLibraryPageAlignmentBytes(16 * 1024)
                 .setCreatedBy("ModKit")
                 .build()
                 .sign()

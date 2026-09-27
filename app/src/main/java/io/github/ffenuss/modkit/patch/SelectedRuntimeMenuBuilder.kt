@@ -32,9 +32,11 @@ object RuntimeRecipeSelectionPolicy {
         GameplayModificationCategory.CAMERA,
     )
 
-    fun supports(recipe: AutoModRecipe): Boolean =
-        recipe.selectable && recipe.dex.isEmpty() &&
-            recipe.native?.let {
+    fun supports(recipe: AutoModRecipe): Boolean = recipe.selectable &&
+        if (recipe.dex.isNotEmpty()) recipe.native == null && recipe.dex.all {
+            it.selectable && it.runtimeBlocker == null && it.category !in
+                setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI)
+        } else recipe.native?.let {
                 it.category in allowedCategories && !it.replacementHex.isNullOrBlank()
             } == true
 }
@@ -67,6 +69,12 @@ object SelectedRuntimeMenuBuilder {
             require(RuntimeRecipeSelectionPolicy.supports(recipe)) {
                 "«${recipe.title}» нельзя выключать во время игры: готового runtime-рецепта нет."
             }
+            if (recipe.dex.isNotEmpty()) return@map RepackedRuntimeTestMenuItem(
+                id = DexRuntimeSwitchRewriter.switchId(recipe.id),
+                label = recipe.title.take(180),
+                detail = (recipe.targetLabel + " · выключение возвращает исходный метод; игровые данные не откатываются").take(320),
+                mode = RepackedRuntimeTestMenuItemMode.DEX,
+            )
             val native = requireNotNull(recipe.native)
             val target = requireNotNull(targets[native.targetId]) {
                 "У рецепта «${recipe.title}» отсутствует точная IL2CPP-привязка."

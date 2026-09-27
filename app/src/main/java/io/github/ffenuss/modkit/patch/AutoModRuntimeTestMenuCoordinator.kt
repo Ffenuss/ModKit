@@ -14,7 +14,9 @@ import io.github.ffenuss.modkit.runtime.RepackedRuntimeInstrumentationCoordinato
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeProbeIdentityVerifier
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestAppLauncher
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestMenuStatus
+import io.github.ffenuss.modkit.runtime.RepackedRuntimeDexSwitchInjector
 import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -43,7 +45,7 @@ object AutoModRuntimeTestMenuCoordinator {
         selected: List<AutoModRecipe>? = null,
     ): AutoModRuntimeTestMenuBuild =
         withContext(Dispatchers.IO) {
-            require(preparation.sourceShaVerified) {
+            require((selected != null && selected.none { it.native != null }) || preparation.sourceShaVerified) {
                 "Исходная версия не подтверждена по SHA-256."
             }
             require(
@@ -97,44 +99,58 @@ object AutoModRuntimeTestMenuCoordinator {
                 val outputRoot =
                     File(
                         context.filesDir,
-                        "automod-runtime-test",
+                        "automod-runtime-test/" + UUID.randomUUID().toString(),
                     )
-                val instrumentation =
-                    RepackedRuntimeInstrumentationCoordinator
-                        .instrumentNativeLookup(
-                            context = context,
-                            workspace = snapshot.workspace,
-                            outputRoot = outputRoot,
-                            cancellation = cancellation,
-                        )
-                val build =
-                    RepackedRuntimeBuildCoordinator
-                        .buildNativeProbeInjected(
-                            context = context,
-                            manifestInventory =
-                                instrumentation
-                                    .base
-                                    .manifestInventory,
-                            injection =
-                                instrumentation
-                                    .nativeProbeInjection,
-                            outputRoot = outputRoot,
-                            cancellation = cancellation,
-                            progress = progress,
-                        )
-                require(
-                    build.artifactSha256.equals(
-                        result.index.artifactSha256,
-                        ignoreCase = true,
-                    ),
-                ) {
-                    "Runtime test build относится к другой версии цели."
-                }
+                try {
+                    val instrumentation =
+                        RepackedRuntimeInstrumentationCoordinator
+                            .instrumentNativeLookup(
+                                context = context,
+                                workspace = snapshot.workspace,
+                                outputRoot = outputRoot,
+                                cancellation = cancellation,
+                            )
+                    val dexSelections = selected.orEmpty().flatMap { recipe -> recipe.dex.map {
+                        DexRuntimeSelection(it, DexRuntimeSwitchRewriter.switchId(recipe.id))
+                    } }
+                    val dexInjection = if (dexSelections.isEmpty()) null else RepackedRuntimeDexSwitchInjector.inject(
+                        instrumentation.nativeProbeInjection, result.index.sources.map { it.displayName },
+                        dexSelections, outputRoot, cancellation,
+                    )
+                    val build = if (dexInjection != null) RepackedRuntimeBuildCoordinator.buildDexSwitchInjected(
+                        context, instrumentation.base.manifestInventory, dexInjection, outputRoot, cancellation, progress,
+                    ) else RepackedRuntimeBuildCoordinator.buildNativeProbeInjected(
+                                context = context,
+                                manifestInventory =
+                                    instrumentation
+                                        .base
+                                        .manifestInventory,
+                                injection =
+                                    instrumentation
+                                        .nativeProbeInjection,
+                                outputRoot = outputRoot,
+                                cancellation = cancellation,
+                                progress = progress,
+                            )
+                    require(
+                        build.artifactSha256.equals(
+                            result.index.artifactSha256,
+                            ignoreCase = true,
+                        ),
+                    ) {
+                        "Runtime test build относится к другой версии цели."
+                    }
 
-                AutoModRuntimeTestMenuBuild(
-                    build = build,
-                    menu = menu,
-                )
+                    RepackedRuntimeInstrumentationCoordinator.cleanup(instrumentation.base, outputRoot)
+                    AutoModRuntimeTestMenuBuild(
+                        build = build,
+                        menu = menu,
+                    )
+                } catch (failure: Throwable) {
+                    // This directory belongs only to this attempt; earlier builds remain installable.
+                    outputRoot.deleteRecursively()
+                    throw failure
+                }
             }
         }
 

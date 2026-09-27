@@ -11,8 +11,7 @@ data class RuntimeGameplayTestMenuSpec(
     val patchItemCount: Int
         get() =
             items.count {
-                it.mode ==
-                    RepackedRuntimeTestMenuItemMode.PATCH
+                it.mode in setOf(RepackedRuntimeTestMenuItemMode.PATCH, RepackedRuntimeTestMenuItemMode.DEX)
             }
 
     val infoItemCount: Int

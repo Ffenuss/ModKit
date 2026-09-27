@@ -208,6 +208,7 @@ object RepackedRuntimeInstrumentationCoordinator {
             File(testRoot, "manifest-rewrite"),
             File(testRoot, "probe-injection"),
             File(testRoot, "native-probe-injection"),
+            File(testRoot, "dex-switch-injection"),
         )
         var success = true
         owned.forEach { directory ->

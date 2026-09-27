@@ -1,0 +1,185 @@
+package io.github.ffenuss.modkit
+
+import android.app.Instrumentation
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
+import androidx.test.uiautomator.By
+import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.Until
+import io.github.ffenuss.modkit.analysis.*
+import io.github.ffenuss.modkit.patch.*
+import io.github.ffenuss.modkit.runtime.*
+import io.github.ffenuss.modkit.ui.AutoModBuildRecord
+import java.io.File
+import java.security.MessageDigest
+import java.util.regex.Pattern
+import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.*
+
+/** Tests real ART execution, not a simulated DEX interpreter. Only our disposable fixture is removed. */
+class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, private val device: UiDevice) {
+    private val context = instrumentation.targetContext
+    private val fixture = "dev.modkit.fixture"
+    private val authority = fixture + BinaryAndroidManifestProbeInjector.AUTHORITY_SUFFIX
+    private val transport = AndroidRepackedRuntimeProbeTransport(context)
+    private val signal = AtomicCancellationSignal()
+    private val progress = ProgressSink { android.util.Log.i("DexOverlayTest", it.currentTask.orEmpty()) }
+    private val events = JSONArray()
+    private val bubble = By.desc("Открыть мод-меню ModKit")
+
+    fun run(evidence: (String, (File) -> Unit) -> Unit, install: (RepackedRuntimeInstallPlan) -> Unit) = runBlocking {
+        var stage = "build"
+        try {
+            val root = File(context.filesDir, "dex-overlay-validation").apply { mkdirs() }
+            val source = File(root, "fixture.apk")
+            instrumentation.context.assets.open("fixture.apk").use { input -> source.outputStream().use { input.copyTo(it) } }
+            val analysis = FastArtifactIndexer.index(listOf(source), signal, progress)
+            val scan = DexLocalPatchEngine.scanApks(listOf(source), false, signal)
+            val recipes = DexRecipeCatalog.create(scan)
+            val health = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getHealth" } }
+            val sprint = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "canSprint" } }
+            assertEquals(2, health.dex.size)
+            val prepared = AutoModRuntimeTestMenuCoordinator.build(context,
+                AnalysisTargetDescriptor.FileUri(Uri.fromFile(source).toString(), "Owned DEX fixture"), analysis,
+                PatchPreparationPlan(analysis.index.artifactSha256, false, System.currentTimeMillis(), emptyList(), emptyList()),
+                signal, progress, listOf(health, sprint))
+            assertTrue(prepared.menu.items.all { it.mode == RepackedRuntimeTestMenuItemMode.DEX })
+            assertEquals(2, prepared.menu.patchItemCount)
+            val plan = RepackedRuntimeInstallPlanner.plan(prepared.build, signal)
+            // A later attempt with different selections must not replace the first APK.
+            val second = AutoModRuntimeTestMenuCoordinator.build(context,
+                AnalysisTargetDescriptor.FileUri(Uri.fromFile(source).toString(), "Owned DEX fixture"), analysis,
+                PatchPreparationPlan(analysis.index.artifactSha256, false, System.currentTimeMillis(), emptyList(), emptyList()),
+                signal, progress, listOf(health))
+            assertEquals(1, second.menu.patchItemCount)
+            plan.apks.forEach { apk ->
+                val bytes = File(apk.signedPath).readBytes()
+                assertEquals(apk.expectedSha256, MessageDigest.getInstance("SHA-256").digest(bytes)
+                    .joinToString("") { "%02x".format(it.toInt() and 0xff) })
+                assertFalse(second.build.signedApks.any { it.signedPath == apk.signedPath })
+            }
+            events.put(JSONObject().put("event", "previous-build-preserved").put("observed", plan.apks.size))
+            stage = "install"
+            device.executeShellCommand("pm uninstall $fixture")
+            install(plan)
+            RepackedRuntimeProbeIdentityVerifier.verify(prepared.build, requireNotNull(transport.inspectInstalled(fixture, authority)))
+            assertEquals(2, transport.configureTestMenu(authority, prepared.menu.items).patchItemCount)
+            AutoModBuildRecord(plan, System.currentTimeMillis(), listOf(health.title, sprint.title), prepared.build.reportPath,
+                runtimeMenuItems = prepared.menu.items).save(context)
+            assertEquals(prepared.menu.items, requireNotNull(AutoModBuildRecord.load(context, plan.artifactSha256)).runtimeMenuItems)
+            device.executeShellCommand("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
+            context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            device.waitForIdle()
+            ModKitRuntimeOverlayService.start(context, plan.artifactSha256)
+            requireNotNull(device.wait(Until.findObject(bubble), 15_000))
+            launch()
+
+            stage = "baseline"
+            expect("ALIVE | Health: 20", "baseline-health")
+            repeat(3) { action("Sprint") }
+            expect("Distance: 2", "baseline-sprint-limit")
+            repeat(3) { action("Take damage") }
+            expect("GAME OVER | Health: 0", "baseline-death")
+            action("Reset")
+
+            stage = "enable-health"
+            toggle(health.title, true)
+            repeat(3) { action("Take damage") }
+            expect("ALIVE | Health: 9999", "health-enabled")
+            evidence("dex-overlay-health-on.png") { device.takeScreenshot(it) }
+
+            stage = "independent-sprint"
+            repeat(3) { action("Sprint") }
+            expect("Distance: 2", "sprint-still-original")
+            toggle(sprint.title, true)
+            repeat(3) { action("Sprint") }
+            expect("Distance: 5", "sprint-enabled")
+            toggle(sprint.title, false)
+            repeat(3) { action("Sprint") }
+            expect("Distance: 5", "sprint-disabled")
+            expect("ALIVE | Health: 9999", "health-independent")
+
+            stage = "reject-unknown"
+            val unknown = prepared.menu.items.first().copy(id = "dex:" + "0".repeat(32))
+            assertFalse(transport.setTestMenuSwitch(authority, unknown.id, true))
+            assertTrue(runCatching { transport.configureTestMenu(authority, listOf(unknown)) }.isFailure)
+            assertTrue(transport.testMenuSwitchSnapshot(authority).enabledById.getValue(DexRuntimeSwitchRewriter.switchId(health.id)))
+
+            stage = "disable-health"
+            toggle(health.title, false)
+            action("Sprint") // refresh display without modifying health
+            expect("ALIVE | Health: 9992", "off-preserves-game-data")
+            action("Reset")
+            repeat(3) { action("Take damage") }
+            expect("GAME OVER | Health: 0", "original-death-restored")
+            evidence("dex-overlay-health-off.png") { device.takeScreenshot(it) }
+
+            stage = "process-restart"
+            toggle(health.title, true)
+            toggle(sprint.title, true)
+            val pid = transport.testMenuSwitchSnapshot(authority).pid
+            device.executeShellCommand("am force-stop $fixture")
+            launch()
+            openPanel()
+            assertSwitch(health.title, false)
+            assertSwitch(sprint.title, false)
+            device.findObject(bubble).click()
+            assertNotEquals(pid, transport.testMenuSwitchSnapshot(authority).pid)
+            expect("ALIVE | Health: 20", "process-restart-default-off")
+
+            stage = "reconfigure"
+            toggle(health.title, true)
+            transport.configureTestMenu(authority, prepared.menu.items)
+            openPanel(); assertSwitch(health.title, false); device.findObject(bubble).click()
+            action("Reset")
+            expect("ALIVE | Health: 20", "reconfigured-original")
+
+            stage = "clear"
+            toggle(health.title, true)
+            transport.clearTestMenu(authority)
+            assertTrue(transport.testMenuSwitchSnapshot(authority).enabledById.isEmpty())
+            action("Reset")
+            expect("ALIVE | Health: 20", "cleared-original")
+            stage = "complete"
+        } finally {
+            evidence("dex-overlay-final.png") { device.takeScreenshot(it) }
+            evidence("dex-overlay-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+            evidence("dex-overlay-metrics.json") { it.writeText(JSONObject().put("stage", stage).put("api", Build.VERSION.SDK_INT)
+                .put("events", events).put("scope", "owned DEX fixture; two automatically discovered recipes, three instrumented methods").toString(2)) }
+            context.stopService(Intent(context, ModKitRuntimeOverlayService::class.java))
+            device.executeShellCommand("pm uninstall $fixture")
+        }
+    }
+
+    private fun launch() {
+        context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(fixture)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        assertTrue(device.wait(Until.hasObject(By.textContains("Health:")), 15_000))
+    }
+    private fun openPanel() {
+        if (!device.hasObject(By.text("ModKit · моды"))) requireNotNull(device.wait(Until.findObject(bubble), 10_000)).click()
+    }
+    private fun toggle(label: String, value: Boolean) {
+        openPanel()
+        val selector = By.desc("Мод: $label")
+        val node = requireNotNull(device.wait(Until.findObject(selector.enabled(true)), 15_000))
+        assertEquals(!value, node.isChecked)
+        node.click()
+        assertSwitch(label, value)
+        device.findObject(bubble).click() // free the game controls under the panel
+    }
+    private fun assertSwitch(label: String, value: Boolean) {
+        assertTrue("DEX switch $label must be acknowledged as $value",
+            device.wait(Until.hasObject(By.desc("Мод: $label").enabled(true).checked(value)), 15_000))
+    }
+    private fun action(text: String) {
+        requireNotNull(device.wait(Until.findObject(By.text(Pattern.compile(Pattern.quote(text), Pattern.CASE_INSENSITIVE))), 10_000)).click()
+        device.waitForIdle()
+    }
+    private fun expect(text: String, event: String) {
+        assertTrue("$event: $text", device.wait(Until.hasObject(By.text(text)), 10_000))
+        events.put(JSONObject().put("event", event).put("observed", text))
+    }
+}
