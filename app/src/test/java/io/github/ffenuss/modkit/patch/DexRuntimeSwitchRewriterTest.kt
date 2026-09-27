@@ -28,7 +28,7 @@ class DexRuntimeSwitchRewriterTest {
         owner, name, emptyList(), type, flags, emptySet(), emptySet(),
         ImmutableMethodImplementation(registers, instructions.toList(), emptyList(), emptyList()))
 
-    private fun getter(name: String) = method(name, "I", instructions = arrayOf(
+    private fun getter(name: String) = method(name, "I", instructions = arrayOf<Instruction>(
         ImmutableInstruction22c(Opcode.IGET, 0, 1, field("health")), ImmutableInstruction11x(Opcode.RETURN, 0)))
 
     private fun dex(methods: List<Method>, interfaceType: Boolean = false): ByteArray {
