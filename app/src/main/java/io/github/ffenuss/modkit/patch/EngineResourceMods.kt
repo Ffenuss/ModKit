@@ -153,6 +153,9 @@ object EngineResourceModCoordinator {
         if (runtimes.none { it == "flutter" || it == "unreal" }) {
             return@withContext EngineResourceScan(emptyList(), 0, emptyList())
         }
+        if (analysis.index.entries.none { EngineResourceMods.format(it.path, runtimes) != null }) {
+            return@withContext EngineResourceMods.scan(AnalysisWorkspace(analysis.index, emptyList()), cancellation, progress)
+        }
         PatchWorkspaceProvider.open(context, target, analysis, EngineResultCache(File(context.filesDir, "analysis-cache")),
             cancellation, progress).use { EngineResourceMods.scan(it.workspace, cancellation, progress) }
     }

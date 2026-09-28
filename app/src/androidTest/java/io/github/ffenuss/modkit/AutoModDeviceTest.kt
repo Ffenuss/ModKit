@@ -303,15 +303,24 @@ class AutoModDeviceTest {
         fun launch() {
             val intent = requireNotNull(context.packageManager.getLaunchIntentForPackage(pkg))
             context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }
-        fun visible(label: String) = device.wait(Until.hasObject(By.desc(label)), 30_000)
-        fun damage() {
-            requireNotNull(device.wait(Until.findObject(By.desc("Take damage")), 10_000)).click()
+            assertTrue(device.wait(Until.hasObject(By.descStartsWith("Health:")), 30_000))
+            // Flutter publishes its semantics before Android removes the launch
+            // splash. A physical tap during that interval is discarded by Android.
+            val deadline = System.currentTimeMillis() + 15_000
+            while (System.currentTimeMillis() < deadline && instrumentation.uiAutomation.windows.any {
+                it.title?.toString()?.contains("Splash Screen") == true
+            }) android.os.SystemClock.sleep(100)
             device.waitForIdle()
         }
+        fun visible(label: String) = device.wait(Until.hasObject(By.desc(label)), 30_000)
+        fun damage(expectedHealth: Int) {
+            requireNotNull(device.wait(Until.findObject(By.desc("Take damage")), 10_000)).click()
+            assertTrue("Flutter must finish handling each tap", visible("Health: $expectedHealth"))
+        }
+        try {
         launch()
         assertTrue("Real Flutter fixture must read the original JSON", visible("Health: 20"))
-        repeat(3) { damage() }
+        listOf(13, 6, 0).forEach { damage(it) }
         assertTrue(visible("GAME OVER"))
         evidence("flutter-original.png") { device.takeScreenshot(it) }
         val installed = requireNotNull(io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(pkg))
@@ -344,7 +353,7 @@ class AutoModDeviceTest {
         launch()
         assertTrue("Patched Flutter rootBundle must read 99", visible("Health: 99"))
         assertTrue("Unselected damage must stay 7", visible("Damage: 7"))
-        repeat(3) { damage() }
+        listOf(92, 85, 78).forEach { damage(it) }
         assertTrue("The resource must change actual game state", visible("Health: 78"))
         assertTrue(visible("ALIVE"))
         evidence("flutter-modified.png") { device.takeScreenshot(it) }
@@ -358,6 +367,10 @@ class AutoModDeviceTest {
             .put("runtimeSwitches", built.menu.items.size).put("originalAfterThreeHits", 0)
             .put("modifiedAfterThreeHits", 78).put("unchangedDamage", 7).put("healthAfterRestart", 99)
             .put("runtimeConfirmedRecipesInOwnedFixture", 1).put("unrealRuntimeConfirmed", false).toString(2)) }
+        } finally {
+            evidence("flutter-final.png") { device.takeScreenshot(it) }
+            evidence("flutter-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+        }
     }
 
     @Test fun c_installButtonInstallsTheUiBuildAfterTheOriginalConflictIsResolved() {

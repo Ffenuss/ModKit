@@ -88,8 +88,11 @@ internal class EngineResourceDocument private constructor(
             for (line in text.splitToSequence('\n')) {
                 checkCancelled(signal)
                 val trimmed = line.trim()
-                if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-                    section = trimmed.substring(1, trimmed.length - 1).takeIf { it.isNotBlank() }
+                if (trimmed.isNotEmpty() && !trimmed.startsWith(';') && !trimmed.startsWith('#')) {
+                    require(!trimmed.endsWith('\\')) { "INI line continuations are not supported." }
+                }
+                if (trimmed.startsWith('[')) {
+                    section = if (trimmed.endsWith(']')) trimmed.substring(1, trimmed.length - 1).takeIf { it.isNotBlank() } else null
                 } else if (section != null && trimmed.isNotBlank() && !trimmed.startsWith(';') && !trimmed.startsWith('#')) {
                     val equal = line.indexOf('=')
                     if (equal >= 0) {
@@ -167,8 +170,9 @@ internal class EngineResourceDocument private constructor(
                         'b' -> '\b'; 'f' -> '\u000c'; 'n' -> '\n'; 'r' -> '\r'; 't' -> '\t'
                         'u' -> {
                             require(position + 4 <= text.length)
-                            val code = text.substring(position, position + 4).toIntOrNull(16)
-                            require(code != null) { "Invalid JSON unicode escape." }
+                            val hex = text.substring(position, position + 4)
+                            require(hex.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) { "Invalid JSON unicode escape." }
+                            val code = hex.toInt(16)
                             position += 4; code.toChar()
                         }
                         else -> error("Invalid JSON escape.")

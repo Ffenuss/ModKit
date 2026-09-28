@@ -30,7 +30,7 @@ class EngineResourceModsTest {
     }
 
     @Test fun rejectsDuplicateDecodedJsonKeysAndMalformedInputs() {
-        for (input in listOf("{\"a\":1,\"\\u0061\":2}", "{\"x\":01}", "{\"x\":NaN}", "[1,]", "{\"a\":true}x", "{\"a\":TRUE}", "{\"x\":\"\\q\"}")) {
+        for (input in listOf("{\"a\":1,\"\\u0061\":2}", "{\"x\":01}", "{\"x\":NaN}", "[1,]", "{\"a\":true}x", "{\"a\":TRUE}", "{\"x\":\"\\q\"}", "{\"\\u-123\":2}")) {
             assertTrue(input, runCatching { discover(input) }.isFailure)
         }
         assertTrue(runCatching { discover("[".repeat(34) + "1" + "]".repeat(34)) }.isFailure)
@@ -69,6 +69,11 @@ class EngineResourceModsTest {
         val cancelled = AtomicCancellationSignal().also { it.cancel() }
         assertThrows(AnalysisCancelledException::class.java) { EngineResourceMods.discover(sha, 0, "base.apk", "assets/flutter_assets/a.json", EngineResourceFormat.FLUTTER_JSON, "[1]".toByteArray(), cancelled) }
         assertThrows(IllegalArgumentException::class.java) { EngineResourceMods.read(ByteArray(EngineResourceDocument.MAX_BYTES + 1).inputStream(), signal) }
+    }
+
+    @Test fun iniUnknownSectionsAndContinuedLinesCannotBorrowPreviousSection() {
+        assertTrue(discover("[Player]\n[Invalid\nHealth=20\n", EngineResourceFormat.UNREAL_INI).isEmpty())
+        assertThrows(IllegalArgumentException::class.java) { discover("[Player]\nTitle=abc\\\nHealth=20\n", EngineResourceFormat.UNREAL_INI) }
     }
 
     @Test fun discoversBothEnginesAcrossApkSplitsAndRejectsAmbiguousPaths() {
