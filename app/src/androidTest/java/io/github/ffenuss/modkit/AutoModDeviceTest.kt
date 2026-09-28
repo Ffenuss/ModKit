@@ -405,7 +405,8 @@ class AutoModDeviceTest {
         }
         fun visible(label: String) = device.wait(Until.hasObject(By.text(label)), 20_000)
         fun damage(expectedHealth: Int) {
-            requireNotNull(device.wait(Until.findObject(By.text("Take damage")), 10_000)).click()
+            val hit = device.wait(Until.findObject(By.text(Pattern.compile("take damage", Pattern.CASE_INSENSITIVE))), 10_000)
+            requireNotNull(hit) { "Owned INI fixture damage button is missing" }.click()
             assertTrue("Owned INI consumer must apply damage", visible("Health: $expectedHealth"))
         }
 
