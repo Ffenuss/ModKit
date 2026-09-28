@@ -817,6 +817,7 @@ object PatchLabDiagnosticReportWriter {
             writer.line("staticVerified=${recipes.count { it.verification.staticVerified }}")
             writer.line("apkBuilt=${recipes.count { it.verification.apkBuilt }}")
             writer.line("runtimeConfirmed=${recipes.count { it.verification.runtimeConfirmed }}")
+            writer.line("staticResourceRecipes=${recipes.count { it.resource != null }}")
             writer.line("Native windows contain up to 1024 bytes per candidate, not complete APKs/libraries or runtime memory.")
         }
         writeTextEntry(zip, "automod/recipes.tsv") { writer ->
@@ -828,6 +829,17 @@ object PatchLabDiagnosticReportWriter {
                     recipe.native?.targetId ?: recipe.dex.joinToString(";") { it.className + "->" + it.methodName + it.signature },
                     recipe.verification.recipePrepared, recipe.verification.staticVerified, recipe.verification.apkBuilt,
                     recipe.verification.runtimeConfirmed, recipe.verification.purposeConfirmed).joinToString("\t") { tsv(it) })
+            }
+        }
+        writeTextEntry(zip, "automod/resource-recipes.tsv") { writer ->
+            writer.line("recipeId\tengine\tapkIndex\tsource\tentry\tsourceSha256\tkey\toldValue\tnewValue\tapplicationMode")
+            recipes.forEach { recipe ->
+                if (cancellation?.isCancelled() == true) throw AnalysisCancelledException()
+                recipe.resource?.let { resource ->
+                    writer.line(listOf(recipe.id, resource.format.name, resource.apkIndex, resource.sourceName,
+                        resource.entry, resource.sourceSha256, resource.key.replace('\u001f', '·'), resource.oldValue,
+                        resource.value, "BUILD_TIME").joinToString("\t") { tsv(it) })
+                }
             }
         }
         if (analysisRoot == null) return

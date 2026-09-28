@@ -23,6 +23,8 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.view.ViewCompat
+import androidx.core.view.doOnNextLayout
 import io.github.ffenuss.modkit.MainActivity
 import io.github.ffenuss.modkit.ui.AutoModBuildRecord
 import kotlinx.coroutines.CoroutineScope
@@ -154,6 +156,7 @@ class ModKitRuntimeOverlayService : Service() {
             isFillViewport = false
             addView(panel)
         }
+        ViewCompat.setAccessibilityPaneTitle(scroll, "Переключатели ModKit")
         val maxWidth = (resources.displayMetrics.widthPixels - pixels(30))
             .coerceAtMost(pixels(335))
         host.addView(
@@ -171,9 +174,18 @@ class ModKitRuntimeOverlayService : Service() {
         var snapshot: RepackedRuntimeSwitchSnapshot? = null
 
         fun announceSwitches() {
-            host.sendAccessibilityEventUnchecked(AccessibilityEvent.obtain(
-                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-            ).apply { contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE })
+            // The collapsed overlay has no scroll subtree in the accessibility
+            // cache. Announce the settled layout, not its zero-sized/GONE nodes.
+            host.post {
+                if (generation == overlayGeneration && host.isAttachedToWindow) {
+                    host.sendAccessibilityEventUnchecked(AccessibilityEvent.obtain(
+                        AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
+                    ).apply {
+                        setSource(host)
+                        contentChangeTypes = AccessibilityEvent.CONTENT_CHANGE_TYPE_SUBTREE
+                    })
+                }
+            }
         }
 
         fun disconnected(message: String) {
@@ -261,6 +273,7 @@ class ModKitRuntimeOverlayService : Service() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
         ))
         bubble.setOnClickListener {
+            scroll.doOnNextLayout { announceSwitches() }
             scroll.visibility = if (scroll.visibility == View.GONE) View.VISIBLE else View.GONE
             refreshJob?.cancel()
             if (scroll.visibility == View.VISIBLE) {

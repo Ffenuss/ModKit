@@ -446,11 +446,16 @@ object RepackedRuntimeBuildCoordinator {
                 appendLine("originalBodiesPreserved: true")
                 appendLine("defaultEnabled: false")
                 appendLine("runtimeEffectConfirmed: false")
+                appendLine("staticResourceChanges: ${injection.resourceChanges.size}")
+                injection.resourceChanges.forEach { change ->
+                    appendLine("  ${change.format}: ${change.sourceName}:${change.entry} ${change.key.replace('\u001f', '·')} ${change.oldValue} -> ${change.value}")
+                }
                 injection.sources.forEach { source ->
                     appendLine("- dexStageSource: ${source.sourceDisplayName}")
                     appendLine("  inputSha256: ${source.inputSha256}")
                     appendLine("  outputSha256: ${source.outputSha256}")
                     source.rewrittenDexSha256.forEach { (entry, sha) -> appendLine("  $entry: $sha") }
+                    source.rewrittenResourceSha256.forEach { (entry, sha) -> appendLine("  resource $entry: $sha") }
                 }
             })
         }

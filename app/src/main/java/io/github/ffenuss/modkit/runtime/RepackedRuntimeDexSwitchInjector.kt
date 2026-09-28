@@ -4,6 +4,8 @@ import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.patch.DexRuntimeSelection
 import io.github.ffenuss.modkit.patch.DexRuntimeSwitchRewriter
+import io.github.ffenuss.modkit.patch.EngineResourceChange
+import io.github.ffenuss.modkit.patch.EngineResourceMods
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -20,6 +22,7 @@ data class RuntimeDexApkSource(
     val outputPath: String,
     val outputSha256: String,
     val rewrittenDexSha256: Map<String, String>,
+    val rewrittenResourceSha256: Map<String, String> = emptyMap(),
 )
 
 /** Separate provenance stage; a changed DEX must not masquerade as an unchanged native injection. */
@@ -28,6 +31,7 @@ data class RepackedRuntimeDexSwitchInjection(
     val sources: List<RuntimeDexApkSource>,
     val switchIds: Set<String>,
     val instrumentedMethods: Int,
+    val resourceChanges: List<EngineResourceChange> = emptyList(),
 )
 
 object RepackedRuntimeDexSwitchInjector {
@@ -40,12 +44,15 @@ object RepackedRuntimeDexSwitchInjector {
         selections: List<DexRuntimeSelection>,
         outputRoot: File,
         cancellation: CancellationSignal,
+        resourceChanges: List<EngineResourceChange> = emptyList(),
     ): RepackedRuntimeDexSwitchInjection {
-        require(selections.isNotEmpty() && selections.map { it.method.id }.distinct().size == selections.size)
+        require((selections.isNotEmpty() || resourceChanges.isNotEmpty()) && selections.map { it.method.id }.distinct().size == selections.size)
         require(nativeInjection.sources.map { it.sourceDisplayName } == sourceNames) { "APK-set order changed before DEX instrumentation." }
         require(selections.all { it.method.apkIndex in sourceNames.indices }) { "DEX source APK is missing." }
+        require(resourceChanges.all { it.artifactSha256 == nativeInjection.artifactSha256 &&
+            it.apkIndex in sourceNames.indices && sourceNames[it.apkIndex] == it.sourceName }) { "Resource belongs to a different APK-set." }
         val switchIds = selections.map { it.switchId }.toSet()
-        require(switchIds.size in 1..24 && switchIds.all { it.matches(Regex("dex:[0-9a-f]{32}")) })
+        require(switchIds.size <= 24 && switchIds.all { it.matches(Regex("dex:[0-9a-f]{32}")) })
         val catalog = (switchIds.sorted().joinToString("\n") + "\n").toByteArray(Charsets.UTF_8)
         val root = File(outputRoot, nativeInjection.artifactSha256 + "/repacked-test/dex-switch-injection").apply { mkdirs() }
         try {
@@ -56,6 +63,7 @@ object RepackedRuntimeDexSwitchInjector {
                 val byEntry = selections.filter { it.method.apkIndex == index }.groupBy { it.method.dexEntry }
                 val isBase = source.sourceDisplayName == nativeInjection.baseSourceDisplayName
                 val replacement = linkedMapOf<String, ByteArray>()
+                val resourceHashes = linkedMapOf<String, String>()
                 ZipFile(input).use { zip ->
                     require(zip.getEntry(CATALOG) == null) { "APK already contains a DEX switch catalog. Use the original APK." }
                     byEntry.forEach { (name, chosen) ->
@@ -81,16 +89,26 @@ object RepackedRuntimeDexSwitchInjector {
                         replacement[name] = rewritten.file.readBytes()
                         rewritten.file.delete()
                     }
+                    resourceChanges.filter { it.apkIndex == index }.groupBy { it.entry }.forEach { (name, changes) ->
+                        require(zip.entries().asSequence().count { it.name == name } == 1) { "Resource entry is missing or duplicated: $name" }
+                        val entry = requireNotNull(zip.getEntry(name))
+                        require(entry.size == changes.first().sourceSize.toLong()) { "Resource size changed." }
+                        val original = zip.getInputStream(entry).use { EngineResourceMods.read(it, cancellation) }
+                        val rewritten = EngineResourceMods.rewrite(original, changes, cancellation)
+                        replacement[name] = rewritten
+                        resourceHashes[name] = hash(rewritten)
+                    }
                 }
-                val dexHashes = replacement.mapValues { hash(it.value) }
-                if (isBase) replacement[CATALOG] = catalog
+                val dexHashes = replacement.filterKeys { it !in resourceHashes }.mapValues { hash(it.value) }
+                val addCatalog = isBase && switchIds.isNotEmpty()
+                if (addCatalog) replacement[CATALOG] = catalog
                 val output = if (replacement.isEmpty()) input else File(root, "$index.apk").also {
-                    rewriteApk(input, it, replacement, if (isBase) CATALOG else null, cancellation)
+                    rewriteApk(input, it, replacement, if (addCatalog) CATALOG else null, cancellation)
                 }
                 RuntimeDexApkSource(source.sourceDisplayName, input.absolutePath, source.outputSha256,
-                    output.absolutePath, hash(output.inputStream(), cancellation), dexHashes)
+                    output.absolutePath, hash(output.inputStream(), cancellation), dexHashes, resourceHashes)
             }
-            return RepackedRuntimeDexSwitchInjection(nativeInjection, sources, switchIds, selections.size)
+            return RepackedRuntimeDexSwitchInjection(nativeInjection, sources, switchIds, selections.size, resourceChanges)
                 .also { verify(it, cancellation) }
         } catch (failure: Throwable) {
             root.deleteRecursively()

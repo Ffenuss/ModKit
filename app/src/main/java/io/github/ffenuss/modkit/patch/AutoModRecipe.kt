@@ -25,11 +25,13 @@ data class AutoModRecipe(
     val verification: ModificationVerification = ModificationVerification(),
     val scalarValues: List<ScalarRecipeValue> = emptyList(),
     val scalarValue: String? = null,
+    val resource: EngineResourceChange? = null,
 ) {
-    val selectable: Boolean get() = blocker == null && (dex.isNotEmpty() || native != null)
+    val selectable: Boolean get() = blocker == null && (dex.isNotEmpty() || native != null || resource != null)
 
     fun withScalarValue(value: String): AutoModRecipe {
         val choice = scalarValues.singleOrNull { it.value == value } ?: return this
+        if (resource != null) return copy(scalarValue = value, resource = resource.copy(value = value))
         return copy(scalarValue = value, native = native?.copy(replacementHex = choice.replacementHex),
             title = title.substringBefore(" · значение ") + " · значение $value")
     }

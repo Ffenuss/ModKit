@@ -114,7 +114,7 @@ object EngineRouter {
             targeted(
                 "flutter.dart-aot",
                 "Flutter evidence",
-                missingText = "Dart AOT gameplay decoder and reversible mod backend unavailable; resource inventory supported",
+                missingText = "Dart AOT gameplay decoder unavailable; JSON resource edits are supported at APK build time",
             )
         }
         if ("react_native_hermes" in runtimes) targeted("hermes.bytecode", "Hermes evidence", missingText = "Hermes deep backend pending review")
@@ -128,7 +128,7 @@ object EngineRouter {
             targeted(
                 "unreal.deep",
                 "Unreal evidence",
-                missingText = "Unreal Blueprint/IoStore gameplay decoder not yet supported; container inventory is available",
+                missingText = "Unreal Blueprint/IoStore modification is not supported; loose INI edits are available at APK build time",
             )
         }
         if ("godot" in runtimes) targeted("godot.deep", "Godot evidence", missingText = "Godot binary PCK/resources remain incomplete")
