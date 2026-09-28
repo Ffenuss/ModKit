@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -313,9 +314,30 @@ class AutoModDeviceTest {
             device.waitForIdle()
         }
         fun visible(label: String) = device.wait(Until.hasObject(By.desc(label)), 30_000)
+        fun accessibilityClick(label: String): Boolean {
+            val root = instrumentation.uiAutomation.rootInActiveWindow ?: return false
+            fun visit(node: AccessibilityNodeInfo): Boolean {
+                if (node.contentDescription?.toString() == label && node.isClickable) {
+                    return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                }
+                for (index in 0 until node.childCount) {
+                    val child = node.getChild(index) ?: continue
+                    if (visit(child)) return true
+                }
+                return false
+            }
+            return visit(root)
+        }
         fun damage(expectedHealth: Int) {
-            requireNotNull(device.wait(Until.findObject(By.desc("Take damage")), 10_000)).click()
-            assertTrue("Flutter must finish handling each tap", visible("Health: $expectedHealth"))
+            // Flutter can publish semantics a few hundred milliseconds before the
+            // Android window becomes touchable. PR23's failed API29/API35 runs
+            // showed InputDispatcher dropping UiObject2 coordinate taps while the
+            // same button was already exposed as a clickable semantics node.
+            // Invoke the real Flutter semantics ACTION_CLICK instead of retrying a
+            // dropped pointer event; the state assertion below remains unchanged.
+            assertTrue("Flutter damage action must be clickable through semantics",
+                accessibilityClick("Take damage"))
+            assertTrue("Flutter must finish handling each action", visible("Health: $expectedHealth"))
         }
         try {
         launch()
