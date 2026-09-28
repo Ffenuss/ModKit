@@ -395,6 +395,111 @@ class AutoModDeviceTest {
         }
     }
 
+    @Test fun g_unrealLooseIniExecutorChangesOwnedConsumerAndSurvivesRestart() = runBlocking {
+        val pkg = "dev.modkit.unrealfixture"
+        fun launch() {
+            val intent = requireNotNull(context.packageManager.getLaunchIntentForPackage(pkg))
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+            assertTrue("Owned INI fixture must launch", device.wait(Until.hasObject(By.textStartsWith("Health:")), 20_000))
+            device.waitForIdle()
+        }
+        fun visible(label: String) = device.wait(Until.hasObject(By.text(label)), 20_000)
+        fun damage(expectedHealth: Int) {
+            requireNotNull(device.wait(Until.findObject(By.text("Take damage")), 10_000)).click()
+            assertTrue("Owned INI consumer must apply damage", visible("Health: $expectedHealth"))
+        }
+
+        try {
+            launch()
+            assertTrue("Fixture must consume original loose INI", visible("Health: 20"))
+            assertTrue(visible("Damage: 7"))
+            listOf(13, 6, 0).forEach { damage(it) }
+            assertTrue(visible("GAME OVER"))
+            evidence("unreal-ini-original.png") { device.takeScreenshot(it) }
+
+            val installed = requireNotNull(io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(pkg))
+            val target = AnalysisTargetDescriptor.InstalledPackage(pkg, "Owned Unreal-shaped loose INI fixture")
+            val analysis = FastArtifactIndexer.index(installed.apkFiles, signal, progress)
+            assertTrue(
+                "Valid libUnreal.so must route the owned fixture through Unreal resource analysis",
+                analysis.index.runtimeProfiles.any { it.runtimeId == "unreal" },
+            )
+            val scan = EngineResourceModCoordinator.scan(context, target, analysis, signal, progress)
+            val key = "player\u001fhealth"
+            val recipe = scan.recipes.single { it.resource?.key == key }.withScalarValue("99")
+            assertEquals(EngineResourceFormat.UNREAL_INI, recipe.resource!!.format)
+            assertFalse("A prepared INI edit is not yet observed runtime gameplay evidence",
+                recipe.verification.runtimeConfirmed)
+
+            val originalBytes = ZipFile(installed.apkFiles[recipe.resource.apkIndex]).use { zip ->
+                zip.getInputStream(zip.getEntry(recipe.resource.entry)).readBytes()
+            }
+            val preparation = PatchPreparationPlan(
+                analysis.index.artifactSha256, true, System.currentTimeMillis(),
+                emptyList(), emptyList(),
+            )
+            val built = AutoModRuntimeTestMenuCoordinator.build(
+                context, target, analysis, preparation, signal, progress, listOf(recipe),
+            )
+            assertTrue(
+                "Static loose-INI resources must not masquerade as runtime overlay switches",
+                built.menu.items.isEmpty(),
+            )
+            val plan = RepackedRuntimeInstallPlanner.plan(built.build, signal)
+            assertTrue(plan.blockers.joinToString(), plan.ready)
+            val sourceAfter = ZipFile(installed.apkFiles[recipe.resource.apkIndex]).use { zip ->
+                zip.getInputStream(zip.getEntry(recipe.resource.entry)).readBytes()
+            }
+            assertArrayEquals("Original owned APK must remain byte-identical", originalBytes, sourceAfter)
+
+            // Only this disposable owned fixture is removed because the rebuilt APK uses ModKit's test signer.
+            assertTrue(device.executeShellCommand("pm uninstall $pkg").contains("Success"))
+            context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            device.waitForIdle()
+            device.executeShellCommand("appops set " + context.packageName + " REQUEST_INSTALL_PACKAGES allow")
+            val attemptedAt = System.currentTimeMillis()
+            val submitted = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+            assertEquals(
+                RepackedRuntimeInstallStatusKind.SUCCESS,
+                awaitInstallResult(attemptedAt, 100_000, submitted.sessionId).kind,
+            )
+
+            launch()
+            assertTrue("Rebuilt package must consume changed INI health", visible("Health: 99"))
+            assertTrue("Unselected INI damage must stay unchanged", visible("Damage: 7"))
+            listOf(92, 85, 78).forEach { damage(it) }
+            assertTrue(visible("ALIVE"))
+            evidence("unreal-ini-modified.png") { device.takeScreenshot(it) }
+
+            device.executeShellCommand("am force-stop $pkg")
+            launch()
+            assertTrue("Packaged INI change must survive a fresh process", visible("Health: 99"))
+            evidence("unreal-ini-resource-metrics.json") { file ->
+                file.writeText(
+                    JSONObject()
+                        .put("fixture", "owned loose-INI consumer with valid libUnreal.so fingerprint")
+                        .put("actualUnrealEngineRuntime", false)
+                        .put("api", Build.VERSION.SDK_INT)
+                        .put("sourceArtifactSha256", analysis.index.artifactSha256)
+                        .put("examinedResourceFiles", scan.examinedFiles)
+                        .put("resourceRecipes", scan.recipes.size)
+                        .put("selectedResourceChanges", 1)
+                        .put("runtimeSwitches", built.menu.items.size)
+                        .put("originalAfterThreeHits", 0)
+                        .put("modifiedAfterThreeHits", 78)
+                        .put("unchangedDamage", 7)
+                        .put("healthAfterRestart", 99)
+                        .put("executorRuntimeEffectObserved", true)
+                        .put("unrealEngineGameplayEffectConfirmed", false)
+                        .toString(2),
+                )
+            }
+        } finally {
+            evidence("unreal-ini-final.png") { device.takeScreenshot(it) }
+            evidence("unreal-ini-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+        }
+    }
+
     @Test fun c_installButtonInstallsTheUiBuildAfterTheOriginalConflictIsResolved() {
         // The original certificate conflict was checked in b. The app produced by a
         // uses the same persistent ModKit key and can now update our owned fixture.
