@@ -298,6 +298,81 @@ class AutoModDeviceTest {
         }
     }
 
+    @Test fun f_flutterResourceModChangesActualAssetBundleAndSurvivesRestart() = runBlocking {
+        val pkg = "dev.modkit.enginefixture"
+        fun launch() {
+            val intent = requireNotNull(context.packageManager.getLaunchIntentForPackage(pkg))
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            assertTrue(device.wait(Until.hasObject(By.descStartsWith("Health:")), 30_000))
+            // Flutter publishes its semantics before Android removes the launch
+            // splash. A physical tap during that interval is discarded by Android.
+            val deadline = System.currentTimeMillis() + 15_000
+            while (System.currentTimeMillis() < deadline && instrumentation.uiAutomation.windows.any {
+                it.title?.toString()?.contains("Splash Screen") == true
+            }) android.os.SystemClock.sleep(100)
+            device.waitForIdle()
+        }
+        fun visible(label: String) = device.wait(Until.hasObject(By.desc(label)), 30_000)
+        fun damage(expectedHealth: Int) {
+            requireNotNull(device.wait(Until.findObject(By.desc("Take damage")), 10_000)).click()
+            assertTrue("Flutter must finish handling each tap", visible("Health: $expectedHealth"))
+        }
+        try {
+        launch()
+        assertTrue("Real Flutter fixture must read the original JSON", visible("Health: 20"))
+        listOf(13, 6, 0).forEach { damage(it) }
+        assertTrue(visible("GAME OVER"))
+        evidence("flutter-original.png") { device.takeScreenshot(it) }
+        val installed = requireNotNull(io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(pkg))
+        val target = AnalysisTargetDescriptor.InstalledPackage(pkg, "Flutter resource fixture")
+        val analysis = FastArtifactIndexer.index(installed.apkFiles, signal, progress)
+        assertTrue(analysis.index.runtimeProfiles.any { it.runtimeId == "flutter" })
+        val scan = EngineResourceModCoordinator.scan(context, target, analysis, signal, progress)
+        val recipe = scan.recipes.single { it.resource?.key == "/health" }.withScalarValue("99")
+        assertFalse(recipe.verification.runtimeConfirmed)
+        val originalBytes = ZipFile(installed.apkFiles[recipe.resource!!.apkIndex]).use { zip ->
+            zip.getInputStream(zip.getEntry(recipe.resource.entry)).readBytes()
+        }
+        val preparation = PatchPreparationPlan(analysis.index.artifactSha256, true, System.currentTimeMillis(), emptyList(), emptyList())
+        val built = AutoModRuntimeTestMenuCoordinator.build(context, target, analysis, preparation, signal, progress, listOf(recipe))
+        assertTrue("Static resources must not become nonfunctional menu switches", built.menu.items.isEmpty())
+        val plan = RepackedRuntimeInstallPlanner.plan(built.build, signal)
+        assertTrue(plan.blockers.joinToString(), plan.ready)
+        val sourceAfter = ZipFile(installed.apkFiles[recipe.resource.apkIndex]).use { zip ->
+            zip.getInputStream(zip.getEntry(recipe.resource.entry)).readBytes()
+        }
+        assertArrayEquals("Original APK must be preserved", originalBytes, sourceAfter)
+        // Only our disposable Flutter fixture is removed for its signing-key change.
+        assertTrue(device.executeShellCommand("pm uninstall $pkg").contains("Success"))
+        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        device.waitForIdle()
+        device.executeShellCommand("appops set ${context.packageName} REQUEST_INSTALL_PACKAGES allow")
+        val attemptedAt = System.currentTimeMillis()
+        val submitted = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+        assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, awaitInstallResult(attemptedAt, 100_000, submitted.sessionId).kind)
+        launch()
+        assertTrue("Patched Flutter rootBundle must read 99", visible("Health: 99"))
+        assertTrue("Unselected damage must stay 7", visible("Damage: 7"))
+        listOf(92, 85, 78).forEach { damage(it) }
+        assertTrue("The resource must change actual game state", visible("Health: 78"))
+        assertTrue(visible("ALIVE"))
+        evidence("flutter-modified.png") { device.takeScreenshot(it) }
+        device.executeShellCommand("am force-stop $pkg")
+        launch()
+        assertTrue("Resource changes must survive a fresh Flutter process", visible("Health: 99"))
+        evidence("flutter-resource-metrics.json") { file -> file.writeText(JSONObject()
+            .put("engine", "Flutter 3.35.4 debug x86_64").put("api", Build.VERSION.SDK_INT)
+            .put("sourceArtifactSha256", analysis.index.artifactSha256).put("examinedResourceFiles", scan.examinedFiles)
+            .put("resourceRecipes", scan.recipes.size).put("selectedResourceChanges", 1)
+            .put("runtimeSwitches", built.menu.items.size).put("originalAfterThreeHits", 0)
+            .put("modifiedAfterThreeHits", 78).put("unchangedDamage", 7).put("healthAfterRestart", 99)
+            .put("runtimeConfirmedRecipesInOwnedFixture", 1).put("unrealRuntimeConfirmed", false).toString(2)) }
+        } finally {
+            evidence("flutter-final.png") { device.takeScreenshot(it) }
+            evidence("flutter-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+        }
+    }
+
     @Test fun c_installButtonInstallsTheUiBuildAfterTheOriginalConflictIsResolved() {
         // The original certificate conflict was checked in b. The app produced by a
         // uses the same persistent ModKit key and can now update our owned fixture.

@@ -98,4 +98,52 @@ class RepackedRuntimeDexSwitchInjectorTest {
             }
         } finally { root.deleteRecursively() }
     }
+
+    @Test fun staticResourceOnlyBuildChangesSelectedSplitWithoutAddingSwitches() {
+        val root = Files.createTempDirectory("resource-runtime-apk").toFile()
+        try {
+            val base = File(root, "base.apk"); val split = File(root, "config.apk")
+            val bytes = "{\"health\":20, \"untouched\":7}".toByteArray()
+            val path = "assets/flutter_assets/game.json"
+            zip(base, mapOf("classes.dex" to dex()))
+            zip(split, mapOf(path to bytes, "assets/keep" to byteArrayOf(4, 5)))
+            val previous = previous(listOf(base, split))
+            val selected = EngineResourceMods.discover(previous.artifactSha256, 1, split.name, path,
+                EngineResourceFormat.FLUTTER_JSON, bytes, signal).first().withScalarValue("99").resource!!
+            val result = RepackedRuntimeDexSwitchInjector.inject(previous, listOf(base.name, split.name), emptyList(), File(root, "out"), signal, listOf(selected))
+            assertTrue(result.switchIds.isEmpty())
+            assertEquals(0, result.instrumentedMethods)
+            assertEquals(base.path, result.sources.first().outputPath)
+            ZipFile(result.sources.last().outputPath).use { z ->
+                assertNull(z.getEntry(RepackedRuntimeDexSwitchInjector.CATALOG))
+                assertEquals("{\"health\":99, \"untouched\":7}", z.getInputStream(z.getEntry(path)).reader().readText())
+                assertArrayEquals(byteArrayOf(4, 5), z.getInputStream(z.getEntry("assets/keep")).readBytes())
+            }
+            assertEquals(previous.sources.map { it.outputSha256 }, listOf(base, split).map(::hash))
+            assertThrows(IllegalArgumentException::class.java) { RepackedRuntimeDexSwitchInjector.inject(previous,
+                listOf(base.name, split.name), emptyList(), File(root, "wrong"), signal, listOf(selected.copy(artifactSha256 = "b".repeat(64)))) }
+        } finally { root.deleteRecursively() }
+    }
+
+    @Test fun combinesResourcesWithReversibleDexWithoutChangingOriginalValuesInDex() {
+        val root = Files.createTempDirectory("mixed-resource-dex-apk").toFile()
+        try {
+            val base = File(root, "base.apk"); val bytes = dex()
+            val path = "assets/Game/Config/DefaultGame.ini"
+            val data = "[Player]\nHealth=20\n".toByteArray()
+            zip(base, mapOf("classes.dex" to bytes, path to data))
+            val previous = previous(listOf(base))
+            val change = EngineResourceMods.discover(previous.artifactSha256, 0, base.name, path,
+                EngineResourceFormat.UNREAL_INI, data, signal).single().withScalarValue("99").resource!!
+            val result = RepackedRuntimeDexSwitchInjector.inject(previous, listOf(base.name), listOf(selection(bytes, 0)), File(root, "out"), signal, listOf(change))
+            assertEquals(1, result.switchIds.size)
+            assertEquals(1, result.instrumentedMethods)
+            assertEquals(1, result.resourceChanges.size)
+            assertEquals(setOf(path), result.sources.single().rewrittenResourceSha256.keys)
+            ZipFile(result.sources.single().outputPath).use { z ->
+                assertNotNull(z.getEntry(RepackedRuntimeDexSwitchInjector.CATALOG))
+                assertEquals("[Player]\nHealth=99\n", z.getInputStream(z.getEntry(path)).reader().readText())
+            }
+        } finally { root.deleteRecursively() }
+    }
 }
