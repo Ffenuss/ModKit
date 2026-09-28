@@ -140,7 +140,7 @@ jobs:
       - name: Build real Flutter fixture
         run: bash tools/build_flutter_fixture.sh
       - name: Build owned fixture and instrumentation
-        run: gradle --no-daemon :testgame:assembleDebug :nativefixture:assembleDebug :app:assembleDebug :app:assembleDebugAndroidTest
+        run: gradle --no-daemon :testgame:assembleDebug :nativefixture:assembleDebug :unrealfixture:assembleDebug :app:assembleDebug :app:assembleDebugAndroidTest
       - name: Run actual Android workflow
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -152,6 +152,7 @@ jobs:
           script: |
             bash tools/install_device_fixture.sh ${{ matrix.fixture }}
             adb install -r enginefixture/build/flutter-fixture.apk
+            adb install -r unrealfixture/build/outputs/apk/debug/unrealfixture-debug.apk
             adb logcat -c
             set +e; gradle --no-daemon :app:connectedDebugAndroidTest; RESULT=$?; adb logcat -d > device-logcat.txt; adb pull /sdcard/Download/ModKit-validation device-validation || true; exit $RESULT
       - name: Upload device evidence
