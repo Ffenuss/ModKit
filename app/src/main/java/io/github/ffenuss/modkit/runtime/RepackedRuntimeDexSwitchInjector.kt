@@ -4,6 +4,7 @@ import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.patch.DexRuntimeSelection
 import io.github.ffenuss.modkit.patch.DexRuntimeSwitchRewriter
+import io.github.ffenuss.modkit.patch.DexInstallerCompatibilityRewriter
 import io.github.ffenuss.modkit.patch.EngineResourceChange
 import io.github.ffenuss.modkit.patch.EngineResourceMods
 import java.io.File
@@ -23,6 +24,9 @@ data class RuntimeDexApkSource(
     val outputSha256: String,
     val rewrittenDexSha256: Map<String, String>,
     val rewrittenResourceSha256: Map<String, String> = emptyMap(),
+    val installerRedirectedCalls: Int = 0,
+    val installerConfirmedChecks: Int = 0,
+    val installerQueryOnlyChecks: Int = 0,
 )
 
 /** Separate provenance stage; a changed DEX must not masquerade as an unchanged native injection. */
@@ -32,7 +36,12 @@ data class RepackedRuntimeDexSwitchInjection(
     val switchIds: Set<String>,
     val instrumentedMethods: Int,
     val resourceChanges: List<EngineResourceChange> = emptyList(),
-)
+    val originalInstaller: OriginalInstallerRecord? = null,
+) {
+    val installerRedirectedCalls: Int get() = sources.sumOf { it.installerRedirectedCalls }
+    val installerConfirmedChecks: Int get() = sources.sumOf { it.installerConfirmedChecks }
+    val installerQueryOnlyChecks: Int get() = sources.sumOf { it.installerQueryOnlyChecks }
+}
 
 object RepackedRuntimeDexSwitchInjector {
     const val CATALOG = "assets/modkit-dex-switches.txt"
@@ -45,12 +54,22 @@ object RepackedRuntimeDexSwitchInjector {
         outputRoot: File,
         cancellation: CancellationSignal,
         resourceChanges: List<EngineResourceChange> = emptyList(),
+        originalInstaller: OriginalInstallerRecord? = null,
     ): RepackedRuntimeDexSwitchInjection {
-        require((selections.isNotEmpty() || resourceChanges.isNotEmpty()) && selections.map { it.method.id }.distinct().size == selections.size)
+        require((selections.isNotEmpty() || resourceChanges.isNotEmpty() || originalInstaller != null) &&
+            selections.map { it.method.id }.distinct().size == selections.size)
         require(nativeInjection.sources.map { it.sourceDisplayName } == sourceNames) { "APK-set order changed before DEX instrumentation." }
         require(selections.all { it.method.apkIndex in sourceNames.indices }) { "DEX source APK is missing." }
         require(resourceChanges.all { it.artifactSha256 == nativeInjection.artifactSha256 &&
             it.apkIndex in sourceNames.indices && sourceNames[it.apkIndex] == it.sourceName }) { "Resource belongs to a different APK-set." }
+        if (originalInstaller != null) {
+            require(originalInstaller.artifactSha256 == nativeInjection.artifactSha256) {
+                "Installer observation belongs to a different APK-set."
+            }
+            require(originalInstaller.packageName == nativeInjection.packageName) {
+                "Installer observation belongs to a different package."
+            }
+        }
         val switchIds = selections.map { it.switchId }.toSet()
         require(switchIds.size <= 24 && switchIds.all { it.matches(Regex("dex:[0-9a-f]{32}")) })
         val catalog = (switchIds.sorted().joinToString("\n") + "\n").toByteArray(Charsets.UTF_8)
