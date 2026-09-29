@@ -79,13 +79,13 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
         }
         val saved = preferences.getStringSet(analysis.index.artifactSha256, emptySet()).orEmpty()
         mutable.update { it.copy(recipes = recipes, methodsExamined = dex.methodsExamined,
-            selected = saved.intersect(recipes.filter { r -> r.selectable }.map { r -> r.id }.toSet()),
+            selected = saved.intersect(recipes.filter(SimpleModeRecipePolicy::supports).map { r -> r.id }.toSet()),
             built = it.built ?: restored, showingResult = restored != null,
             notice = (resources.warnings + dex.warnings + analysis.engineWarnings).distinct().joinToString("\n").ifEmpty { null }) }
     }
 
     fun toggle(id: String) {
-        if (state.value.busy || state.value.recipes.none { it.id == id && it.selectable }) return
+        if (state.value.busy || state.value.recipes.none { it.id == id && SimpleModeRecipePolicy.supports(it) }) return
         mutable.update { it.copy(selected = if (id in it.selected) it.selected - id else it.selected + id) }
         context.getSharedPreferences("automod-selection", 0).edit()
             .putStringSet(analysis.index.artifactSha256, state.value.selected).apply()
@@ -106,8 +106,8 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
         run {
             // No selected native change is written into the output APK.
             // Runtime patches are initially OFF and only toggled with consent.
-            require(selected.all { it.resource != null || RuntimeRecipeSelectionPolicy.supports(it) }) {
-                "Часть выбранных модов пока не поддерживает отключение в игре. Уберите их из выбора."
+            require(selected.all(SimpleModeRecipePolicy::supports)) {
+                "В простом режиме доступны только моды с проверенным выключением и восстановлением. Уберите статические или неподдерживаемые рецепты."
             }
             val result = AutoModRuntimeTestMenuCoordinator.build(
                 context = context,
@@ -125,12 +125,10 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
             record = AutoModBuildRecord(
                 plan = plan,
                 builtAt = result.build.completedAtEpochMs,
-                changes = selected.map { recipe -> recipe.resource?.let {
-                    "${recipe.title}: ${it.oldValue} → ${it.value} · при сборке · ${recipe.targetLabel}"
-                } ?: (recipe.title + " · в меню MK · " + recipe.targetLabel) },
+                changes = selected.map { recipe -> recipe.title + " · в меню MK · " + recipe.targetLabel },
                 reportPath = result.build.reportPath,
                 runtimeMenuItems = result.menu.items,
-                resourceChangeCount = selected.count { it.resource != null },
+                resourceChangeCount = 0,
             )
         }
         withContext(Dispatchers.IO) { record.save(context) }
@@ -138,11 +136,7 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
             built = record,
             showingResult = true,
             installSession = null,
-            notice = if (record.runtimeMenuItems.isNotEmpty()) {
-                "Переключателей MK: ${record.runtimeMenuItems.size} (выключены). Изменений ресурсов при сборке: ${record.resourceChangeCount}."
-            } else {
-                "Изменений ресурсов при сборке: ${record.resourceChangeCount}. Установите APK и проверьте результат в приложении."
-            },
+            notice = "Переключателей MK: ${record.runtimeMenuItems.size} (изначально выключены). Статические ресурсные изменения в простом режиме не применяются.",
             recipes = current.recipes.map { recipe ->
                 if (recipe.id in current.selected) recipe.copy(
                     verification = recipe.verification.copy(staticVerified = true, apkBuilt = true),
