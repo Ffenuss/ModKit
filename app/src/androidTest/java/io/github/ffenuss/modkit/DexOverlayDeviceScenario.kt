@@ -131,14 +131,14 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             openPanel()
             assertSwitch(health.title, false)
             assertSwitch(sprint.title, false)
-            device.findObject(bubble).click()
+            closePanel()
             assertNotEquals(pid, transport.testMenuSwitchSnapshot(authority).pid)
             expect("ALIVE | Health: 20", "process-restart-default-off")
 
             stage = "reconfigure"
             toggle(health.title, true)
             transport.configureTestMenu(authority, prepared.menu.items, embeddedMenu = false)
-            openPanel(); assertSwitch(health.title, false); device.findObject(bubble).click()
+            openPanel(); assertSwitch(health.title, false); closePanel()
             action("Reset")
             expect("ALIVE | Health: 20", "reconfigured-original")
 
@@ -193,6 +193,15 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
     private fun openPanel() {
         if (!device.hasObject(By.text("ModKit · моды"))) requireNotNull(device.wait(Until.findObject(bubble), 10_000)).click()
     }
+    private fun closePanel() {
+        val node = requireNotNull(device.wait(Until.findObject(bubble), 10_000)) {
+            "External MK bubble disappeared while its panel was open."
+        }
+        node.click()
+        assertTrue("External MK panel must close after tapping the bubble",
+            device.wait(Until.gone(By.text("ModKit · моды")), 10_000))
+    }
+
     private fun assertExternalOnly(event: String) {
         assertTrue(device.wait(Until.hasObject(bubble), 10_000))
         assertTrue(device.wait(Until.gone(embeddedBubble), 10_000))
@@ -207,7 +216,7 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
         assertEquals(!value, node.isChecked)
         node.click()
         assertSwitch(label, value)
-        device.findObject(bubble).click() // free the game controls under the panel
+        closePanel() // free the game controls under the panel
     }
     private fun assertSwitch(label: String, value: Boolean) {
         assertTrue("DEX switch $label must be acknowledged as $value",
