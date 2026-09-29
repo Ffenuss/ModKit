@@ -45,6 +45,10 @@ object AutoModRuntimeTestMenuCoordinator {
         selected: List<AutoModRecipe>? = null,
     ): AutoModRuntimeTestMenuBuild =
         withContext(Dispatchers.IO) {
+            val resources = selected.orEmpty().mapNotNull { it.resource }
+            val runtimeSelected = selected?.filter { it.resource == null }
+            require(selected == null || selected.all { it.selectable && (it.resource == null || (it.dex.isEmpty() && it.native == null)) })
+            require(selected == null || selected.map { it.id }.distinct().size == selected.size)
             require((selected != null && selected.none { it.native != null }) || preparation.sourceShaVerified) {
                 "Исходная версия не подтверждена по SHA-256."
             }
@@ -65,17 +69,19 @@ object AutoModRuntimeTestMenuCoordinator {
                     analysisResultsRoot = File(context.filesDir, "analysis-results"),
                     stagingRoot = File(context.filesDir, "runtime-menu-staging"),
                 )
+            } else if (runtimeSelected.isNullOrEmpty()) {
+                RuntimeGameplayTestMenuSpec(emptyList())
             } else {
-                // The simple AutoMod build must include only the user's
-                // selected switches. It must never bake in static changes.
+                // Only selected DEX/native recipes become reversible switches.
+                // Resource edits are applied separately and explicitly labeled in the UI.
                 SelectedRuntimeMenuBuilder.build(
                     result = result,
-                    selected = selected,
+                    selected = runtimeSelected,
                     analysisResultsRoot = File(context.filesDir, "analysis-results"),
                     cancellation = cancellation,
                 )
             }
-            require(menu.items.isNotEmpty()) {
+            require(menu.items.isNotEmpty() || resources.isNotEmpty()) {
                 "ModKit пока не нашёл ни одной цели для runtime test menu."
             }
 
@@ -113,9 +119,9 @@ object AutoModRuntimeTestMenuCoordinator {
                     val dexSelections = selected.orEmpty().flatMap { recipe -> recipe.dex.map {
                         DexRuntimeSelection(it, DexRuntimeSwitchRewriter.switchId(recipe.id))
                     } }
-                    val dexInjection = if (dexSelections.isEmpty()) null else RepackedRuntimeDexSwitchInjector.inject(
+                    val dexInjection = if (dexSelections.isEmpty() && resources.isEmpty()) null else RepackedRuntimeDexSwitchInjector.inject(
                         instrumentation.nativeProbeInjection, result.index.sources.map { it.displayName },
-                        dexSelections, outputRoot, cancellation,
+                        dexSelections, outputRoot, cancellation, resources,
                     )
                     val build = if (dexInjection != null) RepackedRuntimeBuildCoordinator.buildDexSwitchInjected(
                         context, instrumentation.base.manifestInventory, dexInjection, outputRoot, cancellation, progress,

@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
@@ -295,6 +296,208 @@ class AutoModDeviceTest {
             val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
             val result = awaitInstallResult(attemptedAt, 100_000L, expectedSessionId = submission.sessionId)
             assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, result.kind)
+        }
+    }
+
+    @Test fun f_flutterResourceModChangesActualAssetBundleAndSurvivesRestart() = runBlocking {
+        val pkg = "dev.modkit.enginefixture"
+        fun launch() {
+            val intent = requireNotNull(context.packageManager.getLaunchIntentForPackage(pkg))
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            assertTrue(device.wait(Until.hasObject(By.descStartsWith("Health:")), 30_000))
+            // Flutter publishes its semantics before Android removes the launch
+            // splash. A physical tap during that interval is discarded by Android.
+            val deadline = System.currentTimeMillis() + 15_000
+            while (System.currentTimeMillis() < deadline && instrumentation.uiAutomation.windows.any {
+                it.title?.toString()?.contains("Splash Screen") == true
+            }) android.os.SystemClock.sleep(100)
+            device.waitForIdle()
+        }
+        fun visible(label: String) = device.wait(Until.hasObject(By.desc(label)), 30_000)
+        fun accessibilityClick(label: String): Boolean {
+            val root = instrumentation.uiAutomation.rootInActiveWindow ?: return false
+            fun visit(node: AccessibilityNodeInfo): Boolean {
+                if (node.contentDescription?.toString() == label && node.isClickable) {
+                    return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                }
+                for (index in 0 until node.childCount) {
+                    val child = node.getChild(index) ?: continue
+                    if (visit(child)) return true
+                }
+                return false
+            }
+            return visit(root)
+        }
+        fun damage(expectedHealth: Int) {
+            // Flutter can publish semantics a few hundred milliseconds before the
+            // Android window becomes touchable. PR23's failed API29/API35 runs
+            // showed InputDispatcher dropping UiObject2 coordinate taps while the
+            // same button was already exposed as a clickable semantics node.
+            // Invoke the real Flutter semantics ACTION_CLICK instead of retrying a
+            // dropped pointer event; the state assertion below remains unchanged.
+            assertTrue("Flutter damage action must be clickable through semantics",
+                accessibilityClick("Take damage"))
+            assertTrue("Flutter must finish handling each action", visible("Health: $expectedHealth"))
+        }
+        try {
+        launch()
+        assertTrue("Real Flutter fixture must read the original JSON", visible("Health: 20"))
+        listOf(13, 6, 0).forEach { damage(it) }
+        assertTrue(visible("GAME OVER"))
+        evidence("flutter-original.png") { device.takeScreenshot(it) }
+        val installed = requireNotNull(io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(pkg))
+        val target = AnalysisTargetDescriptor.InstalledPackage(pkg, "Flutter resource fixture")
+        val analysis = FastArtifactIndexer.index(installed.apkFiles, signal, progress)
+        assertTrue(analysis.index.runtimeProfiles.any { it.runtimeId == "flutter" })
+        val scan = EngineResourceModCoordinator.scan(context, target, analysis, signal, progress)
+        val recipe = scan.recipes.single { it.resource?.key == "/health" }.withScalarValue("99")
+        assertFalse(recipe.verification.runtimeConfirmed)
+        val originalBytes = ZipFile(installed.apkFiles[recipe.resource!!.apkIndex]).use { zip ->
+            zip.getInputStream(zip.getEntry(recipe.resource.entry)).readBytes()
+        }
+        val preparation = PatchPreparationPlan(analysis.index.artifactSha256, true, System.currentTimeMillis(), emptyList(), emptyList())
+        val built = AutoModRuntimeTestMenuCoordinator.build(context, target, analysis, preparation, signal, progress, listOf(recipe))
+        assertTrue("Static resources must not become nonfunctional menu switches", built.menu.items.isEmpty())
+        val plan = RepackedRuntimeInstallPlanner.plan(built.build, signal)
+        assertTrue(plan.blockers.joinToString(), plan.ready)
+        val sourceAfter = ZipFile(installed.apkFiles[recipe.resource.apkIndex]).use { zip ->
+            zip.getInputStream(zip.getEntry(recipe.resource.entry)).readBytes()
+        }
+        assertArrayEquals("Original APK must be preserved", originalBytes, sourceAfter)
+        // Only our disposable Flutter fixture is removed for its signing-key change.
+        assertTrue(device.executeShellCommand("pm uninstall $pkg").contains("Success"))
+        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        device.waitForIdle()
+        device.executeShellCommand("appops set ${context.packageName} REQUEST_INSTALL_PACKAGES allow")
+        val attemptedAt = System.currentTimeMillis()
+        val submitted = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+        assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, awaitInstallResult(attemptedAt, 100_000, submitted.sessionId).kind)
+        launch()
+        assertTrue("Patched Flutter rootBundle must read 99", visible("Health: 99"))
+        assertTrue("Unselected damage must stay 7", visible("Damage: 7"))
+        listOf(92, 85, 78).forEach { damage(it) }
+        assertTrue("The resource must change actual game state", visible("Health: 78"))
+        assertTrue(visible("ALIVE"))
+        evidence("flutter-modified.png") { device.takeScreenshot(it) }
+        device.executeShellCommand("am force-stop $pkg")
+        launch()
+        assertTrue("Resource changes must survive a fresh Flutter process", visible("Health: 99"))
+        evidence("flutter-resource-metrics.json") { file -> file.writeText(JSONObject()
+            .put("engine", "Flutter 3.35.4 debug x86_64").put("api", Build.VERSION.SDK_INT)
+            .put("sourceArtifactSha256", analysis.index.artifactSha256).put("examinedResourceFiles", scan.examinedFiles)
+            .put("resourceRecipes", scan.recipes.size).put("selectedResourceChanges", 1)
+            .put("runtimeSwitches", built.menu.items.size).put("originalAfterThreeHits", 0)
+            .put("modifiedAfterThreeHits", 78).put("unchangedDamage", 7).put("healthAfterRestart", 99)
+            .put("runtimeConfirmedRecipesInOwnedFixture", 1).put("unrealRuntimeConfirmed", false).toString(2)) }
+        } finally {
+            evidence("flutter-final.png") { device.takeScreenshot(it) }
+            evidence("flutter-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+        }
+    }
+
+    @Test fun g_unrealLooseIniExecutorChangesOwnedConsumerAndSurvivesRestart() = runBlocking {
+        val pkg = "dev.modkit.unrealfixture"
+        fun launch() {
+            val intent = requireNotNull(context.packageManager.getLaunchIntentForPackage(pkg))
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+            assertTrue("Owned INI fixture must launch", device.wait(Until.hasObject(By.textStartsWith("Health:")), 20_000))
+            device.waitForIdle()
+        }
+        fun visible(label: String) = device.wait(Until.hasObject(By.text(label)), 20_000)
+        fun damage(expectedHealth: Int) {
+            val hit = device.wait(Until.findObject(By.text(Pattern.compile("take damage", Pattern.CASE_INSENSITIVE))), 10_000)
+            requireNotNull(hit) { "Owned INI fixture damage button is missing" }.click()
+            assertTrue("Owned INI consumer must apply damage", visible("Health: $expectedHealth"))
+        }
+
+        try {
+            launch()
+            assertTrue("Fixture must consume original loose INI", visible("Health: 20"))
+            assertTrue(visible("Damage: 7"))
+            listOf(13, 6, 0).forEach { damage(it) }
+            assertTrue(visible("GAME OVER"))
+            evidence("unreal-ini-original.png") { device.takeScreenshot(it) }
+
+            val installed = requireNotNull(io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(pkg))
+            val target = AnalysisTargetDescriptor.InstalledPackage(pkg, "Owned Unreal-shaped loose INI fixture")
+            val analysis = FastArtifactIndexer.index(installed.apkFiles, signal, progress)
+            assertTrue(
+                "Valid libUnreal.so must route the owned fixture through Unreal resource analysis",
+                analysis.index.runtimeProfiles.any { it.runtimeId == "unreal" },
+            )
+            val scan = EngineResourceModCoordinator.scan(context, target, analysis, signal, progress)
+            val key = "player\u001fhealth"
+            val recipe = scan.recipes.single { it.resource?.key == key }.withScalarValue("99")
+            assertEquals(EngineResourceFormat.UNREAL_INI, recipe.resource!!.format)
+            assertFalse("A prepared INI edit is not yet observed runtime gameplay evidence",
+                recipe.verification.runtimeConfirmed)
+
+            val originalBytes = ZipFile(installed.apkFiles[recipe.resource.apkIndex]).use { zip ->
+                zip.getInputStream(zip.getEntry(recipe.resource.entry)).readBytes()
+            }
+            val preparation = PatchPreparationPlan(
+                analysis.index.artifactSha256, true, System.currentTimeMillis(),
+                emptyList(), emptyList(),
+            )
+            val built = AutoModRuntimeTestMenuCoordinator.build(
+                context, target, analysis, preparation, signal, progress, listOf(recipe),
+            )
+            assertTrue(
+                "Static loose-INI resources must not masquerade as runtime overlay switches",
+                built.menu.items.isEmpty(),
+            )
+            val plan = RepackedRuntimeInstallPlanner.plan(built.build, signal)
+            assertTrue(plan.blockers.joinToString(), plan.ready)
+            val sourceAfter = ZipFile(installed.apkFiles[recipe.resource.apkIndex]).use { zip ->
+                zip.getInputStream(zip.getEntry(recipe.resource.entry)).readBytes()
+            }
+            assertArrayEquals("Original owned APK must remain byte-identical", originalBytes, sourceAfter)
+
+            // Only this disposable owned fixture is removed because the rebuilt APK uses ModKit's test signer.
+            assertTrue(device.executeShellCommand("pm uninstall $pkg").contains("Success"))
+            context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            device.waitForIdle()
+            device.executeShellCommand("appops set " + context.packageName + " REQUEST_INSTALL_PACKAGES allow")
+            val attemptedAt = System.currentTimeMillis()
+            val submitted = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+            assertEquals(
+                RepackedRuntimeInstallStatusKind.SUCCESS,
+                awaitInstallResult(attemptedAt, 100_000, submitted.sessionId).kind,
+            )
+
+            launch()
+            assertTrue("Rebuilt package must consume changed INI health", visible("Health: 99"))
+            assertTrue("Unselected INI damage must stay unchanged", visible("Damage: 7"))
+            listOf(92, 85, 78).forEach { damage(it) }
+            assertTrue(visible("ALIVE"))
+            evidence("unreal-ini-modified.png") { device.takeScreenshot(it) }
+
+            device.executeShellCommand("am force-stop $pkg")
+            launch()
+            assertTrue("Packaged INI change must survive a fresh process", visible("Health: 99"))
+            evidence("unreal-ini-resource-metrics.json") { file ->
+                file.writeText(
+                    JSONObject()
+                        .put("fixture", "owned loose-INI consumer with valid libUnreal.so fingerprint")
+                        .put("actualUnrealEngineRuntime", false)
+                        .put("api", Build.VERSION.SDK_INT)
+                        .put("sourceArtifactSha256", analysis.index.artifactSha256)
+                        .put("examinedResourceFiles", scan.examinedFiles)
+                        .put("resourceRecipes", scan.recipes.size)
+                        .put("selectedResourceChanges", 1)
+                        .put("runtimeSwitches", built.menu.items.size)
+                        .put("originalAfterThreeHits", 0)
+                        .put("modifiedAfterThreeHits", 78)
+                        .put("unchangedDamage", 7)
+                        .put("healthAfterRestart", 99)
+                        .put("executorRuntimeEffectObserved", true)
+                        .put("unrealEngineGameplayEffectConfirmed", false)
+                        .toString(2),
+                )
+            }
+        } finally {
+            evidence("unreal-ini-final.png") { device.takeScreenshot(it) }
+            evidence("unreal-ini-hierarchy.xml") { device.dumpWindowHierarchy(it) }
         }
     }
 

@@ -170,13 +170,13 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                             Text("Сборка создана", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                             Text(if (record!!.plan.apks.size == 1) "Один подписанный APK" else "Комплект из ${record.plan.apks.size} APK — установка вместе")
                             Text(if (runtimeBuild)
-                                "Создан APK с ${record.runtimeMenuItems.size} переключателями. Моды выключены до вашего нажатия в меню MK."
-                            else "Прежняя статическая DEX-сборка. Создайте новую для переключателей.",
+                                "Переключателей MK: ${record.runtimeMenuItems.size} (изначально выключены). Изменений ресурсов при сборке: ${record.resourceChangeCount}."
+                            else "Изменения применены к файлам внутри APK. Для изменения или отмены соберите APK заново из оригинала.",
                                 style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }
-                item { Text(if (runtimeBuild) "Добавлено в меню (изначально выключено)" else "Применено статически",
+                item { Text("Выбранные изменения",
                     style = MaterialTheme.typography.titleMedium) }
                 items(record!!.changes) { Text("✓  $it", style = MaterialTheme.typography.bodyMedium) }
                 item {
@@ -205,7 +205,13 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                     Spacer(Modifier.height(6.dp))
                     Text("DEX и нативные ARM64-рецепты изначально выключены. Включайте их через мод-меню; эффект проверяйте в приложении.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (state.recipes.any { it.resource != null }) Text(
+                        "Ресурсы Flutter / Unreal изменяются при сборке APK. Переключение этих значений в игре пока недоступно.",
+                        style = MaterialTheme.typography.bodyMedium)
                     Text("Доступно переключателей: ${state.recipes.count(RuntimeRecipeSelectionPolicy::supports)}",
+                        style = MaterialTheme.typography.labelMedium)
+                    if (state.recipes.any { it.resource != null }) Text(
+                        "Доступно изменений ресурсов: ${state.recipes.count { it.resource != null && it.selectable }}",
                         style = MaterialTheme.typography.labelMedium)
                 }
                 result.il2cppBinaryBinding?.let { binding ->
@@ -242,7 +248,7 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                             Text(
-                                "Проверены ресурсы и нативные компоненты. " +
+                                "Поддерживаются числовые и логические значения в JSON-ресурсах. " +
                                     "Анализ игровой логики Dart AOT пока недоступен.",
                                 style = MaterialTheme.typography.bodySmall,
                             )
@@ -256,8 +262,8 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                             Text(
-                                "Проверка Blueprint и игровых объектов ещё не поддерживается. " +
-                                    "Этот результат — инвентаризация, а не найденные моды.",
+                                "Поддерживаются значения в открытых INI-файлах. " +
+                                    "Изменение PAK, IoStore и Blueprint пока не поддерживается.",
                                 style = MaterialTheme.typography.bodySmall,
                             )
                             if (inventory.records.isEmpty()) Text(
@@ -315,7 +321,8 @@ private fun RecipeCard(recipe: AutoModRecipe, selected: Boolean, enabled: Boolea
                             onClick = { valuesOpen = false; setValue(choice.value) }) }
                     }
                 }
-                Text(if (RuntimeRecipeSelectionPolicy.supports(recipe)) "Переключатель в игре · Эффект не проверен"
+                Text(if (recipe.resource != null) "Ресурс · Применяется при сборке · Эффект не проверен"
+                    else if (RuntimeRecipeSelectionPolicy.supports(recipe)) "Переключатель в игре · Эффект не проверен"
                     else if (recipe.selectable && recipe.dex.isNotEmpty()) "DEX-переключатель · Изначально выключен"
                     else if (recipe.selectable) "Нет поддержки runtime-переключателя"
                     else "Нужен дополнительный анализ",
