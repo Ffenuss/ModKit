@@ -15,6 +15,7 @@ import io.github.ffenuss.modkit.runtime.RepackedRuntimeProbeIdentityVerifier
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestAppLauncher
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestMenuStatus
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeDexSwitchInjector
+import io.github.ffenuss.modkit.runtime.OriginalInstallerRecord
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -119,10 +120,24 @@ object AutoModRuntimeTestMenuCoordinator {
                     val dexSelections = selected.orEmpty().flatMap { recipe -> recipe.dex.map {
                         DexRuntimeSelection(it, DexRuntimeSwitchRewriter.switchId(recipe.id))
                     } }
-                    val dexInjection = if (dexSelections.isEmpty() && resources.isEmpty()) null else RepackedRuntimeDexSwitchInjector.inject(
-                        instrumentation.nativeProbeInjection, result.index.sources.map { it.displayName },
-                        dexSelections, outputRoot, cancellation, resources,
+                    val originalInstaller = OriginalInstallerRecord.capture(
+                        context = context,
+                        target = target,
+                        packageName = instrumentation.nativeProbeInjection.packageName,
+                        artifactSha256 = result.index.artifactSha256,
+                        verifiedSourceFiles = snapshot.workspace.sources.map { it.file },
                     )
+                    val dexInjection =
+                        if (dexSelections.isEmpty() && resources.isEmpty() && originalInstaller == null) null
+                        else RepackedRuntimeDexSwitchInjector.inject(
+                            instrumentation.nativeProbeInjection,
+                            result.index.sources.map { it.displayName },
+                            dexSelections,
+                            outputRoot,
+                            cancellation,
+                            resources,
+                            originalInstaller,
+                        )
                     val build = if (dexInjection != null) RepackedRuntimeBuildCoordinator.buildDexSwitchInjected(
                         context, instrumentation.base.manifestInventory, dexInjection, outputRoot, cancellation, progress,
                     ) else RepackedRuntimeBuildCoordinator.buildNativeProbeInjected(
