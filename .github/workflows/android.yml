@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ main, audit/automod-reliability-20260924, fix/api29-packageinstaller-confirmation-20260925, fix/il2cpp-extraction-progress-20260925, feature/native-runtime-overlay-20260925, fix/il2cpp-validated-metadata-routing-20260925, feat/il2cpp-unbounded-disk-bindings-20260925, feat/unreal-asset-inventory-20260925, feat/flutter-asset-manifest-20260925, fix/elf-progress-watchdog-20260925, release/0.0.31-integrated-analyzers-20260926, feature/engine-run-diagnostics-20260926, feature/native-overlay-e2e-20260926, feature/dex-runtime-overlay-20260927, fix/single-overlay-menu-20260927, integration/road-to-1.0-20260929, fix/flutter-resource-e2e-20260929 ]
+    branches: [ main, audit/automod-reliability-20260924, fix/api29-packageinstaller-confirmation-20260925, fix/il2cpp-extraction-progress-20260925, feature/native-runtime-overlay-20260925, fix/il2cpp-validated-metadata-routing-20260925, feat/il2cpp-unbounded-disk-bindings-20260925, feat/unreal-asset-inventory-20260925, feat/flutter-asset-manifest-20260925, fix/elf-progress-watchdog-20260925, release/0.0.31-integrated-analyzers-20260926, feature/engine-run-diagnostics-20260926, feature/native-overlay-e2e-20260926, feature/dex-runtime-overlay-20260927, fix/single-overlay-menu-20260927, integration/road-to-1.0-20260929, fix/flutter-resource-e2e-20260929, fix/simple-mode-reversible-only-20260929 ]
   workflow_dispatch:
 
 permissions:
