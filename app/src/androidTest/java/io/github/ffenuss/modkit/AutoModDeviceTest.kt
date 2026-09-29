@@ -582,21 +582,30 @@ class AutoModDeviceTest {
         val actual = context.packageManager.getInstallerPackageName(fixturePackage)
         assertEquals("Android must retain the real installer of the repacked build",
             context.packageName, actual)
-        val modern = if (Build.VERSION.SDK_INT >= 30) "com.android.shell" else "unavailable"
-        val modernGate = if (Build.VERSION.SDK_INT >= 30) "ALLOWED" else "unavailable"
-        val expected =
-            "Installer direct: com.android.shell | gate: ALLOWED | actual: $actual\n" +
-                "InstallSource direct: $modern | gate: $modernGate"
-        assertTrue("Only confirmed local installer checks should preserve the original source",
-            device.wait(Until.hasObject(By.text(expected)), 15_000))
+        val node = requireNotNull(
+            device.wait(Until.findObject(By.textContains("Installer direct:")), 15_000),
+        ) { "Owned fixture must expose installer compatibility evidence." }
+        val localView = node.text.orEmpty()
+        assertTrue("Legacy local check must see the verified original installer: $localView",
+            localView.contains("Installer direct: com.android.shell | gate: ALLOWED"))
+        assertTrue("Reflection must still expose Android's real installer: $localView",
+            localView.contains("actual: $actual"))
+        if (Build.VERSION.SDK_INT >= 30) {
+            assertTrue("Modern local check must see the verified original installer: $localView",
+                localView.contains("InstallSource direct: com.android.shell | gate: ALLOWED"))
+        } else {
+            assertTrue("API29 must retain the explicit unavailable modern state: $localView",
+                localView.contains("InstallSource direct: unavailable | gate: unavailable"))
+        }
         evidence("installer-compatibility-$stage.json") {
             it.writeText(JSONObject()
                 .put("api", Build.VERSION.SDK_INT)
                 .put("observedOriginal", "com.android.shell")
                 .put("actualInstaller", actual)
-                .put("localView", expected)
+                .put("localView", localView)
                 .put("stage", stage)
                 .toString(2))
         }
+        evidence("installer-compatibility-$stage.png") { device.takeScreenshot(it) }
     }
 }
