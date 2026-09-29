@@ -25,6 +25,7 @@ import io.github.ffenuss.modkit.analysis.AnalysisTargetDescriptor
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.patch.AutoModRecipe
 import io.github.ffenuss.modkit.patch.RuntimeRecipeSelectionPolicy
+import io.github.ffenuss.modkit.patch.SimpleModeRecipePolicy
 import io.github.ffenuss.modkit.runtime.*
 import io.github.ffenuss.modkit.ui.AutoModViewModel
 
@@ -206,12 +207,9 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                     Text("DEX и нативные ARM64-рецепты изначально выключены. Включайте их через мод-меню; эффект проверяйте в приложении.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (state.recipes.any { it.resource != null }) Text(
-                        "Ресурсы Flutter / Unreal изменяются при сборке APK. Переключение этих значений в игре пока недоступно.",
+                        "Статические Flutter / Unreal ресурсы найдены, но простой режим их не применяет: у них пока нет выключения и восстановления во время игры.",
                         style = MaterialTheme.typography.bodyMedium)
-                    Text("Доступно переключателей: ${state.recipes.count(RuntimeRecipeSelectionPolicy::supports)}",
-                        style = MaterialTheme.typography.labelMedium)
-                    if (state.recipes.any { it.resource != null }) Text(
-                        "Доступно изменений ресурсов: ${state.recipes.count { it.resource != null && it.selectable }}",
+                    Text("Доступно переключателей: ${state.recipes.count(SimpleModeRecipePolicy::supports)}",
                         style = MaterialTheme.typography.labelMedium)
                 }
                 result.il2cppBinaryBinding?.let { binding ->
@@ -281,15 +279,17 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                     item {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Switch(showUnavailable, { showUnavailable = it })
-                            Text("Показать недоступные (${state.recipes.count { !it.selectable }})", Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodySmall)
+                            Text("Показать недоступные (${state.recipes.count { !SimpleModeRecipePolicy.supports(it) }})", Modifier.padding(start = 10.dp), style = MaterialTheme.typography.bodySmall)
                         }
                     }
-                    val visible = state.recipes.filter { (showUnavailable || it.selectable) &&
+                    val visible = state.recipes.filter { (showUnavailable || SimpleModeRecipePolicy.supports(it)) &&
                         (query.isBlank() || "${it.title} ${it.category} ${it.targetLabel}".contains(query, true)) }
                     visible.groupBy { it.category }.forEach { (category, recipes) ->
                         item(key = "category:$category") { Text(category, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
                         items(recipes, key = { it.id }) { recipe ->
                             RecipeCard(recipe, recipe.id in state.selected, !state.busy,
+                                SimpleModeRecipePolicy.supports(recipe),
+                                SimpleModeRecipePolicy.blocker(recipe),
                                 { model.setScalarValue(recipe.id, it) }) { model.toggle(recipe.id) }
                         }
                     }
@@ -304,29 +304,37 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
 }
 
 @Composable
-private fun RecipeCard(recipe: AutoModRecipe, selected: Boolean, enabled: Boolean, setValue: (String) -> Unit, toggle: () -> Unit) {
+private fun RecipeCard(
+    recipe: AutoModRecipe,
+    selected: Boolean,
+    enabled: Boolean,
+    simpleSelectable: Boolean,
+    simpleBlocker: String?,
+    setValue: (String) -> Unit,
+    toggle: () -> Unit,
+) {
     var valuesOpen by remember { mutableStateOf(false) }
-    Card(Modifier.fillMaxWidth().clickable(enabled && recipe.selectable, onClick = toggle),
+    Card(Modifier.fillMaxWidth().clickable(enabled && simpleSelectable, onClick = toggle),
         colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
-            Checkbox(selected, onCheckedChange = { toggle() }, enabled = enabled && recipe.selectable)
+            Checkbox(selected, onCheckedChange = { toggle() }, enabled = enabled && simpleSelectable)
             Column(Modifier.weight(1f).padding(start = 4.dp, top = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(recipe.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
                 Text(recipe.targetLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(recipe.blocker ?: recipe.description, style = MaterialTheme.typography.bodySmall)
-                if (recipe.selectable && recipe.scalarValues.isNotEmpty()) Box {
+                Text(simpleBlocker ?: recipe.description, style = MaterialTheme.typography.bodySmall)
+                if (simpleSelectable && recipe.scalarValues.isNotEmpty()) Box {
                     TextButton(onClick = { valuesOpen = true }, enabled = enabled) { Text("Значение: ${recipe.scalarValue}") }
                     DropdownMenu(valuesOpen, { valuesOpen = false }) {
                         recipe.scalarValues.forEach { choice -> DropdownMenuItem(text = { Text(choice.value) },
                             onClick = { valuesOpen = false; setValue(choice.value) }) }
                     }
                 }
-                Text(if (recipe.resource != null) "Ресурс · Применяется при сборке · Эффект не проверен"
-                    else if (RuntimeRecipeSelectionPolicy.supports(recipe)) "Переключатель в игре · Эффект не проверен"
-                    else if (recipe.selectable && recipe.dex.isNotEmpty()) "DEX-переключатель · Изначально выключен"
-                    else if (recipe.selectable) "Нет поддержки runtime-переключателя"
+                Text(if (recipe.resource != null) "Статический ресурс · Только экспертный/тестовый backend"
+                    else if (RuntimeRecipeSelectionPolicy.supports(recipe)) "Переключатель в игре · Изначально выключен"
+                    else if (recipe.selectable) "Нет проверенного OFF/restore"
                     else "Нужен дополнительный анализ",
-                    style = MaterialTheme.typography.labelSmall, color = if (recipe.selectable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (simpleSelectable) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

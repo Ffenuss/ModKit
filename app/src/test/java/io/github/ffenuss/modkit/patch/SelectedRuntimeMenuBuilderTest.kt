@@ -71,6 +71,34 @@ class SelectedRuntimeMenuBuilderTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test fun simpleModeRejectsStaticResourceRecipesEvenWhenResourceRewriteIsPrepared() {
+        val resource = EngineResourceChange(
+            artifactSha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            apkIndex = 0,
+            sourceName = "base.apk",
+            entry = "assets/flutter_assets/assets/game.json",
+            format = EngineResourceFormat.FLUTTER_JSON,
+            sourceSha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            sourceSize = 32,
+            key = "/health",
+            oldValue = "20",
+            value = "99",
+        )
+        val recipe = AutoModRecipe(
+            id = "resource:health",
+            category = "Ресурс",
+            title = "Health 99",
+            description = "Prepared static resource rewrite",
+            targetLabel = "game.json",
+            resource = resource,
+            verification = ModificationVerification(recipePrepared = true),
+        )
+        assertTrue(recipe.selectable)
+        assertFalse("Simple mode must expose only OFF/restore-capable mods",
+            SimpleModeRecipePolicy.supports(recipe))
+        assertTrue(SimpleModeRecipePolicy.blocker(recipe).orEmpty().contains("статическое", ignoreCase = true))
+    }
+
     private data class Fixture(
         val result: FastAnalysisResult,
         val recipe: AutoModRecipe,

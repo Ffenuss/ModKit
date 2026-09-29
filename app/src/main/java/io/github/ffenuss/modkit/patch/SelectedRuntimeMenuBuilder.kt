@@ -41,6 +41,26 @@ object RuntimeRecipeSelectionPolicy {
             } == true
 }
 
+/**
+ * Simple mode is intentionally stricter than the underlying recipe catalog:
+ * every visible selectable item must have a real runtime OFF/restore path.
+ * Static resource rewrites stay available to expert/testing code but are not
+ * presented as ordinary one-tap mods.
+ */
+object SimpleModeRecipePolicy {
+    fun supports(recipe: AutoModRecipe): Boolean =
+        recipe.resource == null && RuntimeRecipeSelectionPolicy.supports(recipe)
+
+    fun blocker(recipe: AutoModRecipe): String? = when {
+        supports(recipe) -> null
+        recipe.resource != null ->
+            "Это статическое изменение ресурса. В простом режиме оно недоступно, пока нет runtime-исполнителя с выключением и восстановлением."
+        recipe.selectable ->
+            "Для этого рецепта пока нет проверенного runtime-переключателя с восстановлением исходного состояния."
+        else -> recipe.blocker ?: "Нужен дополнительный анализ."
+    }
+}
+
 object SelectedRuntimeMenuBuilder {
     private const val MAX_SWITCHES = 24
     private const val MAX_PATCH_BYTES = 64
