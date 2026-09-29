@@ -200,6 +200,19 @@ object RepackedRuntimeDexSwitchInjector {
             require(source.inputPath == prior.outputPath && source.inputSha256 == prior.outputSha256)
             require(hash(File(source.inputPath).inputStream(), cancellation) == source.inputSha256) { "Previous runtime stage changed." }
             require(hash(File(source.outputPath).inputStream(), cancellation) == source.outputSha256) { "DEX-switch APK changed before signing." }
+            if (result.originalInstaller != null) {
+                ZipFile(source.outputPath).use { zip ->
+                    val observed = zip.getEntry(OriginalInstallerRecord.ENTRY)
+                    if (source.sourceDisplayName == result.nativeInjection.baseSourceDisplayName) {
+                        requireNotNull(observed) { "Installer observation is missing from the repacked base APK." }
+                        require(zip.getInputStream(observed).readBytes().contentEquals(result.originalInstaller.encode())) {
+                            "Installer observation changed before signing."
+                        }
+                    } else {
+                        require(observed == null) { "Installer observation must exist only in the base APK." }
+                    }
+                }
+            }
         }
     }
 
