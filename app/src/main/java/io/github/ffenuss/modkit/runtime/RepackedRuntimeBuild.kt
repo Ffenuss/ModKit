@@ -447,7 +447,7 @@ object RepackedRuntimeBuildCoordinator {
                 appendLine("defaultEnabled: false")
                 appendLine("runtimeEffectConfirmed: false")
                 appendLine("staticResourceChanges: ${injection.resourceChanges.size}")
-                appendLine("installerObservation: ${injection.originalInstaller?.installerPackageName ?: \"unknown\"}")
+                appendLine("installerObservation: ${injection.originalInstaller?.installerPackageName ?: "unknown"}")
                 appendLine("installerConfirmedChecks: ${injection.installerConfirmedChecks}")
                 appendLine("installerQueryOnlyChecks: ${injection.installerQueryOnlyChecks}")
                 appendLine("installerRedirectedCalls: ${injection.installerRedirectedCalls}")
