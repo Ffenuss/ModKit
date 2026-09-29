@@ -238,8 +238,8 @@ class InstallerCompatibilityInjectionTest {
             artifactSha256 = "a".repeat(64),
             packageName = "dev.game",
             baseSourceDisplayName = files.first().name,
-            injectedAbis = setOf("x86_64"),
-            nativeProbeSha256ByAbi = mapOf("x86_64" to "b".repeat(64)),
+            selectedAbis = setOf("x86_64"),
+            payloadSha256ByAbi = mapOf("x86_64" to "b".repeat(64)),
             sources = files.mapIndexed { index, file ->
                 RepackedRuntimeNativeProbeInjectedSource(
                     sourceDisplayName = file.name,
@@ -247,10 +247,10 @@ class InstallerCompatibilityInjectionTest {
                     inputSha256 = hash(file),
                     outputPath = file.path,
                     outputSha256 = hash(file),
-                    injectedAbis = if (index == 0) setOf("x86_64") else emptySet(),
+                    nativePayloadAbis = if (index == 0) setOf("x86_64") else emptySet(),
                 )
             },
-            outputRoot = files.first().parent,
+            outputRootPath = files.first().parent,
         )
 
     private fun zip(file: File, entries: Map<String, ByteArray>) {
