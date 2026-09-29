@@ -99,7 +99,7 @@ object DexInstallerCompatibilityRewriter {
 
                     val rewritten: Instruction = when (instruction) {
                         is Instruction35c -> {
-                            require(instruction.registerCount == target.parameterTypes.size) {
+                            require(instruction.registerCount == reference.parameterTypes.size + 1) {
                                 "Malformed installer invocation."
                             }
                             ImmutableInstruction35c(
@@ -114,7 +114,7 @@ object DexInstallerCompatibilityRewriter {
                             )
                         }
                         is Instruction3rc -> {
-                            require(instruction.registerCount == target.parameterTypes.size) {
+                            require(instruction.registerCount == reference.parameterTypes.size + 1) {
                                 "Malformed installer range invocation."
                             }
                             ImmutableInstruction3rc(
