@@ -4,7 +4,7 @@ set -euo pipefail
 MODE="${1:-single}"
 BASE="testgame/build/outputs/apk/debug/testgame-debug.apk"
 if [[ "$MODE" == single ]]; then
-  adb install -r "$BASE"
+  adb install -i com.android.shell -r "$BASE"
 else
   FIXTURE_OUTPUT="testgame/build/fixture-splits"
   mkdir -p "$FIXTURE_OUTPUT"
@@ -21,5 +21,5 @@ XML
     "$ANDROID_HOME/build-tools/36.0.0/zipalign" -f 4 "$FIXTURE_OUTPUT/raw-$INDEX.apk" "$FIXTURE_OUTPUT/aligned-$INDEX.apk"
     "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign --ks "$FIXTURE_KEY" --ks-pass pass:android --key-pass pass:android --out "$FIXTURE_OUTPUT/config.fixture$INDEX.apk" "$FIXTURE_OUTPUT/aligned-$INDEX.apk"
   done
-  adb install-multiple -r "$FIXTURE_OUTPUT/base.apk" "$FIXTURE_OUTPUT"/config.fixture*.apk
+  adb install-multiple -i com.android.shell -r "$FIXTURE_OUTPUT/base.apk" "$FIXTURE_OUTPUT"/config.fixture*.apk
 fi
