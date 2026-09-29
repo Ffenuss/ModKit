@@ -23,10 +23,14 @@ data class InstallSourceCheckEvidence(
     val methodName: String,
     val signature: String,
     val api: String,
+    val instructionIndex: Int,
     val confidence: InstallSourceCheckConfidence,
     val expectedInstallerLiteral: String? = null,
     val detail: String,
-)
+) {
+    val methodIdentity: String
+        get() = "$className->$methodName$signature"
+}
 
 data class InstallSourceCheckScan(
     val evidence: List<InstallSourceCheckEvidence>,
@@ -83,17 +87,17 @@ object InstallSourceCheckDetector {
             val resultIndex = index + 1
             val move = code.getOrNull(resultIndex)
             if (move?.opcode != Opcode.MOVE_RESULT_OBJECT || move !is OneRegisterInstruction) {
-                found += evidence(method, query, InstallSourceCheckConfidence.QUERY_ONLY, null,
+                found += evidence(method, query, index, InstallSourceCheckConfidence.QUERY_ONLY, null,
                     "Точный API источника установки найден, но локальный поток результата не доказан.")
                 continue
             }
             val resultRegister = move.registerA
             val decision = findDecision(code, resultIndex + 1, resultRegister)
             found += if (decision != null) {
-                evidence(method, query, InstallSourceCheckConfidence.LOCAL_BRANCH_CONFIRMED,
+                evidence(method, query, index, InstallSourceCheckConfidence.LOCAL_BRANCH_CONFIRMED,
                     decision.literal, decision.detail)
             } else {
-                evidence(method, query, InstallSourceCheckConfidence.QUERY_ONLY, null,
+                evidence(method, query, index, InstallSourceCheckConfidence.QUERY_ONLY, null,
                     "Источник установки читается, но сравнение/ветвление в этом методе не подтверждено.")
             }
         }
@@ -220,6 +224,7 @@ object InstallSourceCheckDetector {
     private fun evidence(
         method: Method,
         api: String,
+        instructionIndex: Int,
         confidence: InstallSourceCheckConfidence,
         literal: String?,
         detail: String,
@@ -228,6 +233,7 @@ object InstallSourceCheckDetector {
         methodName = method.name,
         signature = "(" + method.parameterTypes.joinToString("") + ")" + method.returnType,
         api = api,
+        instructionIndex = instructionIndex,
         confidence = confidence,
         expectedInstallerLiteral = literal,
         detail = detail,
