@@ -223,24 +223,42 @@ object InstallSourceCheckDetector {
 
     private fun findInstallSourceProducer(code: List<Instruction>, installingNameIndex: Int): List<Int> {
         val call = code[installingNameIndex]
-        val sourceRegister = invokeRegisters(call).firstOrNull() ?: return emptyList()
+        var wantedRegister = invokeRegisters(call).firstOrNull() ?: return emptyList()
         val start = maxOf(0, installingNameIndex - MAX_FORWARD)
-        for (index in installingNameIndex - 1 downTo start) {
-            val move = code.getOrNull(index + 1)
-            if (move?.opcode != Opcode.MOVE_RESULT_OBJECT ||
-                move !is OneRegisterInstruction ||
-                move.registerA != sourceRegister
-            ) continue
-            val ref = (code[index] as? ReferenceInstruction)?.reference as? MethodReference ?: continue
-            if (code[index].opcode !in setOf(Opcode.INVOKE_VIRTUAL, Opcode.INVOKE_VIRTUAL_RANGE)) continue
-            val params = ref.parameterTypes.map { it.toString() }
-            if (ref.definingClass == PACKAGE_MANAGER &&
-                ref.name == "getInstallSourceInfo" &&
-                params == listOf(STRING) &&
-                ref.returnType == INSTALL_SOURCE
+        var index = installingNameIndex - 1
+        while (index >= start) {
+            val instruction = code[index]
+            if (instruction.opcode in setOf(
+                    Opcode.MOVE_OBJECT,
+                    Opcode.MOVE_OBJECT_FROM16,
+                    Opcode.MOVE_OBJECT_16,
+                ) &&
+                instruction is org.jf.dexlib2.iface.instruction.TwoRegisterInstruction &&
+                instruction.registerA == wantedRegister
             ) {
-                return listOf(index)
+                wantedRegister = instruction.registerB
+                index--
+                continue
             }
+            if (instruction.opcode == Opcode.MOVE_RESULT_OBJECT &&
+                instruction is OneRegisterInstruction &&
+                instruction.registerA == wantedRegister
+            ) {
+                val producerIndex = index - 1
+                if (producerIndex < start) return emptyList()
+                val producer = code[producerIndex]
+                val ref = (producer as? ReferenceInstruction)?.reference as? MethodReference
+                    ?: return emptyList()
+                val params = ref.parameterTypes.map { it.toString() }
+                return if (
+                    producer.opcode in setOf(Opcode.INVOKE_VIRTUAL, Opcode.INVOKE_VIRTUAL_RANGE) &&
+                    ref.definingClass == PACKAGE_MANAGER &&
+                    ref.name == "getInstallSourceInfo" &&
+                    params == listOf(STRING) &&
+                    ref.returnType == INSTALL_SOURCE
+                ) listOf(producerIndex) else emptyList()
+            }
+            index--
         }
         return emptyList()
     }
