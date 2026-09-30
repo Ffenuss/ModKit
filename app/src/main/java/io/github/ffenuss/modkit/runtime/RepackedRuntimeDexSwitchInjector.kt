@@ -227,8 +227,19 @@ object RepackedRuntimeDexSwitchInjector {
                 effectiveInstaller,
             ).also {
                 require(it.installerConfirmedChecks == confirmedInstallerChecks)
-                require(it.installerRedirectedCalls > 0 || confirmedInstallerChecks == 0) {
+                require(
+                    it.installerRedirectedCalls > 0 ||
+                        confirmedInstallerChecks == 0 ||
+                        installerCompatibilityPolicy == InstallerCompatibilityPolicy.DIAGNOSTIC_ONLY,
+                ) {
                     "Confirmed installer-source checks were not adapted."
+                }
+                if (installerCompatibilityPolicy == InstallerCompatibilityPolicy.DIAGNOSTIC_ONLY &&
+                    effectiveInstaller == null
+                ) {
+                    require(it.installerRedirectedCalls == 0) {
+                        "Diagnostic-only mode must never fabricate installer provenance."
+                    }
                 }
                 verify(it, cancellation)
             }
