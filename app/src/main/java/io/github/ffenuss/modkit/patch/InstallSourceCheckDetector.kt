@@ -24,6 +24,7 @@ data class InstallSourceCheckEvidence(
     val signature: String,
     val api: String,
     val instructionIndex: Int,
+    val supportingInstructionIndexes: List<Int> = emptyList(),
     val confidence: InstallSourceCheckConfidence,
     val expectedInstallerLiteral: String? = null,
     val detail: String,
@@ -84,6 +85,9 @@ object InstallSourceCheckDetector {
         for (index in code.indices) {
             if (cancellation.isCancelled()) throw AnalysisCancelledException()
             val query = queryApi(code[index]) ?: continue
+            val supporting = if (query == "InstallSourceInfo.getInstallingPackageName") {
+                findInstallSourceProducer(code, index)
+            } else emptyList()
             val resultIndex = index + 1
             val move = code.getOrNull(resultIndex)
             if (move?.opcode != Opcode.MOVE_RESULT_OBJECT || move !is OneRegisterInstruction) {
@@ -94,10 +98,10 @@ object InstallSourceCheckDetector {
             val resultRegister = move.registerA
             val decision = findDecision(code, resultIndex + 1, resultRegister)
             found += if (decision != null) {
-                evidence(method, query, index, InstallSourceCheckConfidence.LOCAL_BRANCH_CONFIRMED,
+                evidence(method, query, index, supporting, InstallSourceCheckConfidence.LOCAL_BRANCH_CONFIRMED,
                     decision.literal, decision.detail)
             } else {
-                evidence(method, query, index, InstallSourceCheckConfidence.QUERY_ONLY, null,
+                evidence(method, query, index, supporting, InstallSourceCheckConfidence.QUERY_ONLY, null,
                     "Источник установки читается, но сравнение/ветвление в этом методе не подтверждено.")
             }
         }
@@ -196,6 +200,30 @@ object InstallSourceCheckDetector {
         }
     }
 
+    private fun findInstallSourceProducer(code: List<Instruction>, installingNameIndex: Int): List<Int> {
+        val call = code[installingNameIndex]
+        val sourceRegister = invokeRegisters(call).firstOrNull() ?: return emptyList()
+        val start = maxOf(0, installingNameIndex - MAX_FORWARD)
+        for (index in installingNameIndex - 1 downTo start) {
+            val move = code.getOrNull(index + 1)
+            if (move?.opcode != Opcode.MOVE_RESULT_OBJECT ||
+                move !is OneRegisterInstruction ||
+                move.registerA != sourceRegister
+            ) continue
+            val ref = (code[index] as? ReferenceInstruction)?.reference as? MethodReference ?: continue
+            if (code[index].opcode !in setOf(Opcode.INVOKE_VIRTUAL, Opcode.INVOKE_VIRTUAL_RANGE)) continue
+            val params = ref.parameterTypes.map { it.toString() }
+            if (ref.definingClass == PACKAGE_MANAGER &&
+                ref.name == "getInstallSourceInfo" &&
+                params == listOf(STRING) &&
+                ref.returnType == INSTALL_SOURCE
+            ) {
+                return listOf(index)
+            }
+        }
+        return emptyList()
+    }
+
     private fun isEquality(ref: MethodReference): Boolean {
         val params = ref.parameterTypes.map { it.toString() }
         return (ref.definingClass == STRING && ref.name == "equals" &&
@@ -225,6 +253,7 @@ object InstallSourceCheckDetector {
         method: Method,
         api: String,
         instructionIndex: Int,
+        supportingInstructionIndexes: List<Int>,
         confidence: InstallSourceCheckConfidence,
         literal: String?,
         detail: String,
@@ -234,6 +263,7 @@ object InstallSourceCheckDetector {
         signature = "(" + method.parameterTypes.joinToString("") + ")" + method.returnType,
         api = api,
         instructionIndex = instructionIndex,
+        supportingInstructionIndexes = supportingInstructionIndexes,
         confidence = confidence,
         expectedInstallerLiteral = literal,
         detail = detail,
