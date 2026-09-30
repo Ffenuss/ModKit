@@ -15,6 +15,8 @@ import io.github.ffenuss.modkit.runtime.RepackedRuntimeProbeIdentityVerifier
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestAppLauncher
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestMenuStatus
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeDexSwitchInjector
+import io.github.ffenuss.modkit.runtime.OriginalInstallerRecord
+import io.github.ffenuss.modkit.runtime.InstallerCompatibilityPolicy
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +45,7 @@ object AutoModRuntimeTestMenuCoordinator {
         cancellation: CancellationSignal,
         progress: ProgressSink,
         selected: List<AutoModRecipe>? = null,
+        installerCompatibilityPolicy: InstallerCompatibilityPolicy = InstallerCompatibilityPolicy.STRICT,
     ): AutoModRuntimeTestMenuBuild =
         withContext(Dispatchers.IO) {
             val resources = selected.orEmpty().mapNotNull { it.resource }
@@ -119,25 +122,31 @@ object AutoModRuntimeTestMenuCoordinator {
                     val dexSelections = selected.orEmpty().flatMap { recipe -> recipe.dex.map {
                         DexRuntimeSelection(it, DexRuntimeSwitchRewriter.switchId(recipe.id))
                     } }
-                    val dexInjection = if (dexSelections.isEmpty() && resources.isEmpty()) null else RepackedRuntimeDexSwitchInjector.inject(
-                        instrumentation.nativeProbeInjection, result.index.sources.map { it.displayName },
-                        dexSelections, outputRoot, cancellation, resources,
+                    val originalInstaller = OriginalInstallerRecord.capture(
+                        context = context,
+                        target = target,
+                        packageName = instrumentation.nativeProbeInjection.packageName,
+                        artifactSha256 = result.index.artifactSha256,
+                        verifiedSourceFiles = snapshot.workspace.sources.map { it.file },
                     )
-                    val build = if (dexInjection != null) RepackedRuntimeBuildCoordinator.buildDexSwitchInjected(
-                        context, instrumentation.base.manifestInventory, dexInjection, outputRoot, cancellation, progress,
-                    ) else RepackedRuntimeBuildCoordinator.buildNativeProbeInjected(
-                                context = context,
-                                manifestInventory =
-                                    instrumentation
-                                        .base
-                                        .manifestInventory,
-                                injection =
-                                    instrumentation
-                                        .nativeProbeInjection,
-                                outputRoot = outputRoot,
-                                cancellation = cancellation,
-                                progress = progress,
-                            )
+                    val dexInjection = RepackedRuntimeDexSwitchInjector.inject(
+                        instrumentation.nativeProbeInjection,
+                        result.index.sources.map { it.displayName },
+                        dexSelections,
+                        outputRoot,
+                        cancellation,
+                        resources,
+                        originalInstaller,
+                        installerCompatibilityPolicy,
+                    )
+                    val build = RepackedRuntimeBuildCoordinator.buildDexSwitchInjected(
+                        context,
+                        instrumentation.base.manifestInventory,
+                        dexInjection,
+                        outputRoot,
+                        cancellation,
+                        progress,
+                    )
                     require(
                         build.artifactSha256.equals(
                             result.index.artifactSha256,

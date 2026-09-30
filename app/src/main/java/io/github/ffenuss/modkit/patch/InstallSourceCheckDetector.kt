@@ -23,10 +23,15 @@ data class InstallSourceCheckEvidence(
     val methodName: String,
     val signature: String,
     val api: String,
+    val instructionIndex: Int,
+    val supportingInstructionIndexes: List<Int> = emptyList(),
     val confidence: InstallSourceCheckConfidence,
     val expectedInstallerLiteral: String? = null,
     val detail: String,
-)
+) {
+    val methodIdentity: String
+        get() = "$className->$methodName$signature"
+}
 
 data class InstallSourceCheckScan(
     val evidence: List<InstallSourceCheckEvidence>,
@@ -51,6 +56,7 @@ object InstallSourceCheckDetector {
     private const val STRING = "Ljava/lang/String;"
     private const val TEXT_UTILS = "Landroid/text/TextUtils;"
     private const val OBJECTS = "Ljava/util/Objects;"
+    private const val INTRINSICS = "Lkotlin/jvm/internal/Intrinsics;"
     private const val RUNTIME_PROBE = "Lio/github/ffenuss/modkit/runtimeprobe/"
     private const val MAX_FORWARD = 16
 
@@ -80,20 +86,23 @@ object InstallSourceCheckDetector {
         for (index in code.indices) {
             if (cancellation.isCancelled()) throw AnalysisCancelledException()
             val query = queryApi(code[index]) ?: continue
+            val supporting = if (query == "InstallSourceInfo.getInstallingPackageName") {
+                findInstallSourceProducer(code, index)
+            } else emptyList()
             val resultIndex = index + 1
             val move = code.getOrNull(resultIndex)
             if (move?.opcode != Opcode.MOVE_RESULT_OBJECT || move !is OneRegisterInstruction) {
-                found += evidence(method, query, InstallSourceCheckConfidence.QUERY_ONLY, null,
+                found += evidence(method, query, index, supporting, InstallSourceCheckConfidence.QUERY_ONLY, null,
                     "Точный API источника установки найден, но локальный поток результата не доказан.")
                 continue
             }
             val resultRegister = move.registerA
             val decision = findDecision(code, resultIndex + 1, resultRegister)
             found += if (decision != null) {
-                evidence(method, query, InstallSourceCheckConfidence.LOCAL_BRANCH_CONFIRMED,
+                evidence(method, query, index, supporting, InstallSourceCheckConfidence.LOCAL_BRANCH_CONFIRMED,
                     decision.literal, decision.detail)
             } else {
-                evidence(method, query, InstallSourceCheckConfidence.QUERY_ONLY, null,
+                evidence(method, query, index, supporting, InstallSourceCheckConfidence.QUERY_ONLY, null,
                     "Источник установки читается, но сравнение/ветвление в этом методе не подтверждено.")
             }
         }
@@ -105,6 +114,16 @@ object InstallSourceCheckDetector {
     private fun findDecision(code: List<Instruction>, start: Int, installerRegister: Int): Decision? {
         val end = minOf(code.size, start + MAX_FORWARD)
         val literals = HashMap<Int, String>()
+        val literalStart = maxOf(0, start - MAX_FORWARD)
+        for (i in literalStart until start) {
+            val instruction = code[i]
+            if (instruction.opcode in setOf(Opcode.CONST_STRING, Opcode.CONST_STRING_JUMBO) &&
+                instruction is OneRegisterInstruction && instruction is ReferenceInstruction
+            ) {
+                val value = instruction.reference as? StringReference
+                if (value != null) literals[instruction.registerA] = value.string
+            }
+        }
         var booleanRegister: Int? = null
         var pendingComparisonLiteral: String? = null
 
@@ -124,6 +143,16 @@ object InstallSourceCheckDetector {
             ) {
                 return Decision(null,
                     "Результат запроса источника установки напрямую управляет локальным if-ветвлением.")
+            }
+            if (op in setOf(Opcode.IF_EQ, Opcode.IF_NE) &&
+                instruction is org.jf.dexlib2.iface.instruction.TwoRegisterInstruction &&
+                (instruction.registerA == installerRegister || instruction.registerB == installerRegister)
+            ) {
+                val other = if (instruction.registerA == installerRegister) instruction.registerB else instruction.registerA
+                return Decision(
+                    literals[other],
+                    "Результат источника установки напрямую сравнивается в локальной if-ветке.",
+                )
             }
 
             val reference = (instruction as? ReferenceInstruction)?.reference as? MethodReference
@@ -192,6 +221,48 @@ object InstallSourceCheckDetector {
         }
     }
 
+    private fun findInstallSourceProducer(code: List<Instruction>, installingNameIndex: Int): List<Int> {
+        val call = code[installingNameIndex]
+        var wantedRegister = invokeRegisters(call).firstOrNull() ?: return emptyList()
+        val start = maxOf(0, installingNameIndex - MAX_FORWARD)
+        var index = installingNameIndex - 1
+        while (index >= start) {
+            val instruction = code[index]
+            if (instruction.opcode in setOf(
+                    Opcode.MOVE_OBJECT,
+                    Opcode.MOVE_OBJECT_FROM16,
+                    Opcode.MOVE_OBJECT_16,
+                ) &&
+                instruction is org.jf.dexlib2.iface.instruction.TwoRegisterInstruction &&
+                instruction.registerA == wantedRegister
+            ) {
+                wantedRegister = instruction.registerB
+                index--
+                continue
+            }
+            if (instruction.opcode == Opcode.MOVE_RESULT_OBJECT &&
+                instruction is OneRegisterInstruction &&
+                instruction.registerA == wantedRegister
+            ) {
+                val producerIndex = index - 1
+                if (producerIndex < start) return emptyList()
+                val producer = code[producerIndex]
+                val ref = (producer as? ReferenceInstruction)?.reference as? MethodReference
+                    ?: return emptyList()
+                val params = ref.parameterTypes.map { it.toString() }
+                return if (
+                    producer.opcode in setOf(Opcode.INVOKE_VIRTUAL, Opcode.INVOKE_VIRTUAL_RANGE) &&
+                    ref.definingClass == PACKAGE_MANAGER &&
+                    ref.name == "getInstallSourceInfo" &&
+                    params == listOf(STRING) &&
+                    ref.returnType == INSTALL_SOURCE
+                ) listOf(producerIndex) else emptyList()
+            }
+            index--
+        }
+        return emptyList()
+    }
+
     private fun isEquality(ref: MethodReference): Boolean {
         val params = ref.parameterTypes.map { it.toString() }
         return (ref.definingClass == STRING && ref.name == "equals" &&
@@ -200,6 +271,9 @@ object InstallSourceCheckDetector {
                 params == listOf("Ljava/lang/CharSequence;", "Ljava/lang/CharSequence;") &&
                 ref.returnType == "Z") ||
             (ref.definingClass == OBJECTS && ref.name == "equals" &&
+                params == listOf("Ljava/lang/Object;", "Ljava/lang/Object;") &&
+                ref.returnType == "Z") ||
+            (ref.definingClass == INTRINSICS && ref.name == "areEqual" &&
                 params == listOf("Ljava/lang/Object;", "Ljava/lang/Object;") &&
                 ref.returnType == "Z")
     }
@@ -220,6 +294,8 @@ object InstallSourceCheckDetector {
     private fun evidence(
         method: Method,
         api: String,
+        instructionIndex: Int,
+        supportingInstructionIndexes: List<Int>,
         confidence: InstallSourceCheckConfidence,
         literal: String?,
         detail: String,
@@ -228,6 +304,8 @@ object InstallSourceCheckDetector {
         methodName = method.name,
         signature = "(" + method.parameterTypes.joinToString("") + ")" + method.returnType,
         api = api,
+        instructionIndex = instructionIndex,
+        supportingInstructionIndexes = supportingInstructionIndexes,
         confidence = confidence,
         expectedInstallerLiteral = literal,
         detail = detail,

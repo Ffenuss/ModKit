@@ -447,6 +447,17 @@ object RepackedRuntimeBuildCoordinator {
                 appendLine("defaultEnabled: false")
                 appendLine("runtimeEffectConfirmed: false")
                 appendLine("staticResourceChanges: ${injection.resourceChanges.size}")
+                appendLine("installerObservation: ${injection.originalInstaller?.installerPackageName ?: "unknown"}")
+                appendLine("installerConfirmedChecks: ${injection.installerConfirmedChecks}")
+                appendLine("installerQueryOnlyChecks: ${injection.installerQueryOnlyChecks}")
+                appendLine("installerRedirectedCalls: ${injection.installerRedirectedCalls}")
+                appendLine("signingApiReferences: ${injection.signingApiReferences}")
+                appendLine("playAttestationReferences: ${injection.playAttestationReferences}")
+                appendLine("reflectionDynamicReferences: ${injection.reflectionDynamicReferences}")
+                appendLine("nativeMethodCompatibilitySurfaces: ${injection.nativeMethodSurfaces}")
+                appendLine("systemInstallerRecordChanged: false")
+                appendLine("signingBypassClaimed: false")
+                appendLine("remoteAttestationBypassClaimed: false")
                 injection.resourceChanges.forEach { change ->
                     appendLine("  ${change.format}: ${change.sourceName}:${change.entry} ${change.key.replace('\u001f', '·')} ${change.oldValue} -> ${change.value}")
                 }
