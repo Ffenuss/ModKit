@@ -91,7 +91,7 @@ object InstallSourceCheckDetector {
             val resultIndex = index + 1
             val move = code.getOrNull(resultIndex)
             if (move?.opcode != Opcode.MOVE_RESULT_OBJECT || move !is OneRegisterInstruction) {
-                found += evidence(method, query, index, InstallSourceCheckConfidence.QUERY_ONLY, null,
+                found += evidence(method, query, index, supporting, InstallSourceCheckConfidence.QUERY_ONLY, null,
                     "Точный API источника установки найден, но локальный поток результата не доказан.")
                 continue
             }
