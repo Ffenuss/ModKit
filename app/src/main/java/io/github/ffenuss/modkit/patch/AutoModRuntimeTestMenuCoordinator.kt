@@ -127,32 +127,23 @@ object AutoModRuntimeTestMenuCoordinator {
                         artifactSha256 = result.index.artifactSha256,
                         verifiedSourceFiles = snapshot.workspace.sources.map { it.file },
                     )
-                    val dexInjection =
-                        if (dexSelections.isEmpty() && resources.isEmpty() && originalInstaller == null) null
-                        else RepackedRuntimeDexSwitchInjector.inject(
-                            instrumentation.nativeProbeInjection,
-                            result.index.sources.map { it.displayName },
-                            dexSelections,
-                            outputRoot,
-                            cancellation,
-                            resources,
-                            originalInstaller,
-                        )
-                    val build = if (dexInjection != null) RepackedRuntimeBuildCoordinator.buildDexSwitchInjected(
-                        context, instrumentation.base.manifestInventory, dexInjection, outputRoot, cancellation, progress,
-                    ) else RepackedRuntimeBuildCoordinator.buildNativeProbeInjected(
-                                context = context,
-                                manifestInventory =
-                                    instrumentation
-                                        .base
-                                        .manifestInventory,
-                                injection =
-                                    instrumentation
-                                        .nativeProbeInjection,
-                                outputRoot = outputRoot,
-                                cancellation = cancellation,
-                                progress = progress,
-                            )
+                    val dexInjection = RepackedRuntimeDexSwitchInjector.inject(
+                        instrumentation.nativeProbeInjection,
+                        result.index.sources.map { it.displayName },
+                        dexSelections,
+                        outputRoot,
+                        cancellation,
+                        resources,
+                        originalInstaller,
+                    )
+                    val build = RepackedRuntimeBuildCoordinator.buildDexSwitchInjected(
+                        context,
+                        instrumentation.base.manifestInventory,
+                        dexInjection,
+                        outputRoot,
+                        cancellation,
+                        progress,
+                    )
                     require(
                         build.artifactSha256.equals(
                             result.index.artifactSha256,
