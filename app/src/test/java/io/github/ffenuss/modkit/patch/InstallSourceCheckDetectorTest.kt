@@ -97,6 +97,75 @@ class InstallSourceCheckDetectorTest {
         assertTrue(scan.evidence.single().detail.contains("ветвлением"))
     }
 
+    @Test
+    fun modernSourceChainKeepsExactProducerIndexForTargetedRewrite() {
+        val source = "Landroid/content/pm/InstallSourceInfo;"
+        val getSource = ImmutableMethodReference(
+            pm, "getInstallSourceInfo", listOf(string), source,
+        )
+        val getInstaller = ImmutableMethodReference(
+            source, "getInstallingPackageName", emptyList(), string,
+        )
+        val areEqual = ImmutableMethodReference(
+            "Lkotlin/jvm/internal/Intrinsics;",
+            "areEqual",
+            listOf("Ljava/lang/Object;", "Ljava/lang/Object;"),
+            "Z",
+        )
+        val code: List<Instruction> = listOf(
+            ImmutableInstruction35c(Opcode.INVOKE_VIRTUAL, 2, 0, 1, 0, 0, 0, getSource),
+            ImmutableInstruction11x(Opcode.MOVE_RESULT_OBJECT, 2),
+            ImmutableInstruction35c(Opcode.INVOKE_VIRTUAL, 1, 2, 0, 0, 0, 0, getInstaller),
+            ImmutableInstruction11x(Opcode.MOVE_RESULT_OBJECT, 3),
+            ImmutableInstruction21c(
+                Opcode.CONST_STRING, 4,
+                ImmutableStringReference("com.android.vending"),
+            ),
+            ImmutableInstruction35c(Opcode.INVOKE_STATIC, 2, 3, 4, 0, 0, 0, areEqual),
+            ImmutableInstruction11x(Opcode.MOVE_RESULT, 2),
+            ImmutableInstruction21t(Opcode.IF_EQZ, 2, 3),
+            ImmutableInstruction11n(Opcode.CONST_4, 0, 1),
+            ImmutableInstruction11x(Opcode.RETURN, 0),
+            ImmutableInstruction11n(Opcode.CONST_4, 0, 0),
+            ImmutableInstruction11x(Opcode.RETURN, 0),
+        )
+        val scan = InstallSourceCheckDetector.scan(dex(code, "Z"), AtomicCancellationSignal())
+        val evidence = scan.evidence.single()
+        assertEquals(InstallSourceCheckConfidence.LOCAL_BRANCH_CONFIRMED, evidence.confidence)
+        assertEquals("InstallSourceInfo.getInstallingPackageName", evidence.api)
+        assertEquals(2, evidence.instructionIndex)
+        assertEquals(listOf(0), evidence.supportingInstructionIndexes)
+        assertEquals("com.android.vending", evidence.expectedInstallerLiteral)
+    }
+
+    @Test
+    fun literalLoadedBeforeInstallerQueryIsStillAttributedToTheDecision() {
+        val query = ImmutableMethodReference(
+            pm, "getInstallerPackageName", listOf(string), string,
+        )
+        val equals = ImmutableMethodReference(
+            string, "equals", listOf("Ljava/lang/Object;"), "Z",
+        )
+        val code: List<Instruction> = listOf(
+            ImmutableInstruction21c(
+                Opcode.CONST_STRING, 3,
+                ImmutableStringReference("com.android.vending"),
+            ),
+            ImmutableInstruction35c(Opcode.INVOKE_VIRTUAL, 2, 0, 1, 0, 0, 0, query),
+            ImmutableInstruction11x(Opcode.MOVE_RESULT_OBJECT, 2),
+            ImmutableInstruction35c(Opcode.INVOKE_VIRTUAL, 2, 2, 3, 0, 0, 0, equals),
+            ImmutableInstruction11x(Opcode.MOVE_RESULT, 4),
+            ImmutableInstruction21t(Opcode.IF_NEZ, 4, 3),
+            ImmutableInstruction11n(Opcode.CONST_4, 0, 0),
+            ImmutableInstruction11x(Opcode.RETURN, 0),
+            ImmutableInstruction11n(Opcode.CONST_4, 0, 1),
+            ImmutableInstruction11x(Opcode.RETURN, 0),
+        )
+        val scan = InstallSourceCheckDetector.scan(dex(code, "Z"), AtomicCancellationSignal())
+        assertEquals(1, scan.confirmedCount)
+        assertEquals("com.android.vending", scan.evidence.single().expectedInstallerLiteral)
+    }
+
     private fun dex(code: List<Instruction>, returnType: String): ByteArray {
         val parameters = listOf(
             ImmutableMethodParameter(pm, emptySet(), null),
