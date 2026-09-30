@@ -2,7 +2,6 @@ package io.github.ffenuss.modkit
 
 import android.app.Instrumentation
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
@@ -34,17 +33,22 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
     fun run(evidence: (String, (File) -> Unit) -> Unit, install: (RepackedRuntimeInstallPlan) -> Unit) = runBlocking {
         var stage = "build"
         try {
-            val root = File(context.filesDir, "dex-overlay-validation").apply { mkdirs() }
-            val source = File(root, "fixture.apk")
-            instrumentation.context.assets.open("fixture.apk").use { input -> source.outputStream().use { input.copyTo(it) } }
-            val analysis = FastArtifactIndexer.index(listOf(source), signal, progress)
-            val scan = DexLocalPatchEngine.scanApks(listOf(source), false, signal)
+            val installed = requireNotNull(
+                io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(fixture),
+            ) { "Owned DEX fixture must be installed before the overlay scenario." }
+            val sourceFiles = installed.apkFiles
+            val target = AnalysisTargetDescriptor.InstalledPackage(
+                fixture,
+                "Owned installed DEX fixture",
+            )
+            val analysis = FastArtifactIndexer.index(sourceFiles, signal, progress)
+            val scan = DexLocalPatchEngine.scanApks(sourceFiles, false, signal)
             val recipes = DexRecipeCatalog.create(scan)
             val health = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getHealth" } }
             val sprint = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "canSprint" } }
             assertEquals(2, health.dex.size)
             val prepared = AutoModRuntimeTestMenuCoordinator.build(context,
-                AnalysisTargetDescriptor.FileUri(Uri.fromFile(source).toString(), "Owned DEX fixture"), analysis,
+                target, analysis,
                 PatchPreparationPlan(analysis.index.artifactSha256, false, System.currentTimeMillis(), emptyList(), emptyList()),
                 signal, progress, listOf(health, sprint))
             assertTrue(prepared.menu.items.all { it.mode == RepackedRuntimeTestMenuItemMode.DEX })
@@ -52,7 +56,7 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             val plan = RepackedRuntimeInstallPlanner.plan(prepared.build, signal)
             // A later attempt with different selections must not replace the first APK.
             val second = AutoModRuntimeTestMenuCoordinator.build(context,
-                AnalysisTargetDescriptor.FileUri(Uri.fromFile(source).toString(), "Owned DEX fixture"), analysis,
+                target, analysis,
                 PatchPreparationPlan(analysis.index.artifactSha256, false, System.currentTimeMillis(), emptyList(), emptyList()),
                 signal, progress, listOf(health))
             assertEquals(1, second.menu.patchItemCount)
