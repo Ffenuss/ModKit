@@ -54,10 +54,9 @@ object DexInstallerCompatibilityRewriter {
         }
 
         val exactByMethod = confirmed.groupBy { it.methodIdentity }
-            .mapValues { (_, items) -> items.map { it.instructionIndex }.toSet() }
-        val modernMethods = confirmed.filter {
-            it.api == "InstallSourceInfo.getInstallingPackageName"
-        }.map { it.methodIdentity }.toSet()
+            .mapValues { (_, items) ->
+                items.flatMap { listOf(it.instructionIndex) + it.supportingInstructionIndexes }.toSet()
+            }
 
         val source = DexBackedDexFile(null, bytes)
         var calls = 0
@@ -76,8 +75,7 @@ object DexInstallerCompatibilityRewriter {
                 val impl = method.implementation ?: return method
                 val methodKey = key(method)
                 val exactIndices = exactByMethod[methodKey].orEmpty()
-                val modern = methodKey in modernMethods
-                if (exactIndices.isEmpty() && !modern) return method
+                if (exactIndices.isEmpty()) return method
 
                 var methodCalls = 0
                 val instructions: List<Instruction> = impl.instructions.mapIndexed { index, instruction ->
@@ -85,9 +83,7 @@ object DexInstallerCompatibilityRewriter {
                     val reference =
                         (instruction as? ReferenceInstruction)?.reference as? MethodReference
                     val target = reference?.let(::bridge) ?: return@mapIndexed instruction
-                    val shouldRewrite =
-                        index in exactIndices ||
-                            (modern && isInstallSourceProducer(reference))
+                    val shouldRewrite = index in exactIndices
                     if (!shouldRewrite ||
                         instruction.opcode !in setOf(
                             Opcode.INVOKE_VIRTUAL,
@@ -231,12 +227,6 @@ object DexInstallerCompatibilityRewriter {
             null
         }
     }
-
-    private fun isInstallSourceProducer(reference: MethodReference): Boolean =
-        reference.definingClass == PM &&
-            reference.name == "getInstallSourceInfo" &&
-            reference.parameterTypes.map { it.toString() } == listOf(STRING) &&
-            reference.returnType == SOURCE
 
     private fun canonical(
         method: Method,
