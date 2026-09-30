@@ -141,6 +141,38 @@ class InstallerCompatibilityInjectionTest {
         }
     }
 
+    @Test
+    fun confirmedInstallerCheckWithoutObservedInstalledSourceFailsClosed() {
+        val root = Files.createTempDirectory("installer-compat-no-origin").toFile()
+        try {
+            val base = File(root, "base.apk")
+            zip(base, mapOf("classes.dex" to installerDex()))
+            val previous = previous(listOf(base))
+
+            val failure = assertThrows(IllegalArgumentException::class.java) {
+                RepackedRuntimeDexSwitchInjector.inject(
+                    previous,
+                    listOf(base.name),
+                    emptyList(),
+                    File(root, "out"),
+                    signal,
+                    originalInstaller = null,
+                )
+            }
+            assertTrue(
+                failure.message.orEmpty().contains("исходный установщик", ignoreCase = true),
+            )
+            assertArrayEquals(
+                installerDex(),
+                ZipFile(base).use { zip ->
+                    zip.getInputStream(zip.getEntry("classes.dex")).readBytes()
+                },
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun installerDex(): ByteArray {
         val query = ImmutableMethodReference(
             pm,
