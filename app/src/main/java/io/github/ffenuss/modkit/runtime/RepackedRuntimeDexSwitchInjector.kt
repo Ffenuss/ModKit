@@ -73,7 +73,7 @@ object RepackedRuntimeDexSwitchInjector {
         require(selections.all { it.method.apkIndex in sourceNames.indices }) { "DEX source APK is missing." }
         require(resourceChanges.all { it.artifactSha256 == nativeInjection.artifactSha256 &&
             it.apkIndex in sourceNames.indices && sourceNames[it.apkIndex] == it.sourceName }) { "Resource belongs to a different APK-set." }
-        if (effectiveInstaller != null) {
+        if (originalInstaller != null) {
             require(originalInstaller.artifactSha256 == nativeInjection.artifactSha256) {
                 "Installer observation belongs to a different APK-set."
             }
