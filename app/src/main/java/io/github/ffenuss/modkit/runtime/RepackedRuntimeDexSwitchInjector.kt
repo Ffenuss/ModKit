@@ -19,6 +19,13 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
+enum class InstallerCompatibilityPolicy {
+    /** Simple/default path: a proven local source gate must have observed source provenance. */
+    STRICT,
+    /** Expert/test path: report a known unresolved gate but do not fabricate installer provenance. */
+    DIAGNOSTIC_ONLY,
+}
+
 data class RuntimeDexApkSource(
     val sourceDisplayName: String,
     val inputPath: String,
@@ -66,6 +73,7 @@ object RepackedRuntimeDexSwitchInjector {
         cancellation: CancellationSignal,
         resourceChanges: List<EngineResourceChange> = emptyList(),
         originalInstaller: OriginalInstallerRecord? = null,
+        installerCompatibilityPolicy: InstallerCompatibilityPolicy = InstallerCompatibilityPolicy.STRICT,
     ): RepackedRuntimeDexSwitchInjection {
         require(selections.map { it.method.id }.distinct().size == selections.size)
         require(nativeInjection.sources.map { it.sourceDisplayName } == sourceNames) { "APK-set order changed before DEX instrumentation." }
@@ -88,9 +96,13 @@ object RepackedRuntimeDexSwitchInjector {
             scanCompatibility(input, cancellation)
         }
         val confirmedInstallerChecks = compatibilityPreflight.sumOf { it.installerConfirmedChecks }
-        require(confirmedInstallerChecks == 0 || originalInstaller != null) {
+        require(
+            confirmedInstallerChecks == 0 ||
+                originalInstaller != null ||
+                installerCompatibilityPolicy == InstallerCompatibilityPolicy.DIAGNOSTIC_ONLY,
+        ) {
             "Найдена локальная проверка источника установки, но исходный установщик не подтверждён. " +
-                "Анализируйте установленную SHA-проверенную версию или отключите этот неподдерживаемый рецепт."
+                "Анализируйте установленную SHA-проверенную версию или используйте экспертный диагностический режим."
         }
         val effectiveInstaller = originalInstaller?.takeIf { confirmedInstallerChecks > 0 }
 
