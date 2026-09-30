@@ -56,6 +56,7 @@ object InstallSourceCheckDetector {
     private const val STRING = "Ljava/lang/String;"
     private const val TEXT_UTILS = "Landroid/text/TextUtils;"
     private const val OBJECTS = "Ljava/util/Objects;"
+    private const val INTRINSICS = "Lkotlin/jvm/internal/Intrinsics;"
     private const val RUNTIME_PROBE = "Lio/github/ffenuss/modkit/runtimeprobe/"
     private const val MAX_FORWARD = 16
 
@@ -113,6 +114,16 @@ object InstallSourceCheckDetector {
     private fun findDecision(code: List<Instruction>, start: Int, installerRegister: Int): Decision? {
         val end = minOf(code.size, start + MAX_FORWARD)
         val literals = HashMap<Int, String>()
+        val literalStart = maxOf(0, start - MAX_FORWARD)
+        for (i in literalStart until start) {
+            val instruction = code[i]
+            if (instruction.opcode in setOf(Opcode.CONST_STRING, Opcode.CONST_STRING_JUMBO) &&
+                instruction is OneRegisterInstruction && instruction is ReferenceInstruction
+            ) {
+                val value = instruction.reference as? StringReference
+                if (value != null) literals[instruction.registerA] = value.string
+            }
+        }
         var booleanRegister: Int? = null
         var pendingComparisonLiteral: String? = null
 
@@ -132,6 +143,16 @@ object InstallSourceCheckDetector {
             ) {
                 return Decision(null,
                     "Результат запроса источника установки напрямую управляет локальным if-ветвлением.")
+            }
+            if (op in setOf(Opcode.IF_EQ, Opcode.IF_NE) &&
+                instruction is org.jf.dexlib2.iface.instruction.TwoRegisterInstruction &&
+                (instruction.registerA == installerRegister || instruction.registerB == installerRegister)
+            ) {
+                val other = if (instruction.registerA == installerRegister) instruction.registerB else instruction.registerA
+                return Decision(
+                    literals[other],
+                    "Результат источника установки напрямую сравнивается в локальной if-ветке.",
+                )
             }
 
             val reference = (instruction as? ReferenceInstruction)?.reference as? MethodReference
@@ -232,6 +253,9 @@ object InstallSourceCheckDetector {
                 params == listOf("Ljava/lang/CharSequence;", "Ljava/lang/CharSequence;") &&
                 ref.returnType == "Z") ||
             (ref.definingClass == OBJECTS && ref.name == "equals" &&
+                params == listOf("Ljava/lang/Object;", "Ljava/lang/Object;") &&
+                ref.returnType == "Z") ||
+            (ref.definingClass == INTRINSICS && ref.name == "areEqual" &&
                 params == listOf("Ljava/lang/Object;", "Ljava/lang/Object;") &&
                 ref.returnType == "Z")
     }
