@@ -5,6 +5,9 @@ import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.patch.DexRuntimeSelection
 import io.github.ffenuss.modkit.patch.DexRuntimeSwitchRewriter
 import io.github.ffenuss.modkit.patch.DexInstallerCompatibilityRewriter
+import io.github.ffenuss.modkit.patch.InstallSourceCheckDetector
+import io.github.ffenuss.modkit.patch.InstallCompatibilitySurfaceDetector
+import io.github.ffenuss.modkit.patch.InstallCompatibilitySurfaceKind
 import io.github.ffenuss.modkit.patch.EngineResourceChange
 import io.github.ffenuss.modkit.patch.EngineResourceMods
 import java.io.File
@@ -27,6 +30,10 @@ data class RuntimeDexApkSource(
     val installerRedirectedCalls: Int = 0,
     val installerConfirmedChecks: Int = 0,
     val installerQueryOnlyChecks: Int = 0,
+    val signingApiReferences: Int = 0,
+    val playAttestationReferences: Int = 0,
+    val reflectionDynamicReferences: Int = 0,
+    val nativeMethodSurfaces: Int = 0,
 )
 
 /** Separate provenance stage; a changed DEX must not masquerade as an unchanged native injection. */
@@ -41,6 +48,10 @@ data class RepackedRuntimeDexSwitchInjection(
     val installerRedirectedCalls: Int get() = sources.sumOf { it.installerRedirectedCalls }
     val installerConfirmedChecks: Int get() = sources.sumOf { it.installerConfirmedChecks }
     val installerQueryOnlyChecks: Int get() = sources.sumOf { it.installerQueryOnlyChecks }
+    val signingApiReferences: Int get() = sources.sumOf { it.signingApiReferences }
+    val playAttestationReferences: Int get() = sources.sumOf { it.playAttestationReferences }
+    val reflectionDynamicReferences: Int get() = sources.sumOf { it.reflectionDynamicReferences }
+    val nativeMethodSurfaces: Int get() = sources.sumOf { it.nativeMethodSurfaces }
 }
 
 object RepackedRuntimeDexSwitchInjector {
