@@ -67,8 +67,7 @@ object RepackedRuntimeDexSwitchInjector {
         resourceChanges: List<EngineResourceChange> = emptyList(),
         originalInstaller: OriginalInstallerRecord? = null,
     ): RepackedRuntimeDexSwitchInjection {
-        require((selections.isNotEmpty() || resourceChanges.isNotEmpty() || originalInstaller != null) &&
-            selections.map { it.method.id }.distinct().size == selections.size)
+        require(selections.map { it.method.id }.distinct().size == selections.size)
         require(nativeInjection.sources.map { it.sourceDisplayName } == sourceNames) { "APK-set order changed before DEX instrumentation." }
         require(selections.all { it.method.apkIndex in sourceNames.indices }) { "DEX source APK is missing." }
         require(resourceChanges.all { it.artifactSha256 == nativeInjection.artifactSha256 &&
