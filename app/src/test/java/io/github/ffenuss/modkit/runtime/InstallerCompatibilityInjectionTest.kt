@@ -173,6 +173,37 @@ class InstallerCompatibilityInjectionTest {
         }
     }
 
+    @Test
+    fun diagnosticOnlyFileInputReportsConfirmedGateWithoutRewritingIt() {
+        val root = Files.createTempDirectory("installer-compat-diagnostic-only").toFile()
+        try {
+            val base = File(root, "base.apk")
+            val originalDex = installerDex()
+            zip(base, mapOf("classes.dex" to originalDex))
+            val previous = previous(listOf(base))
+
+            val result = RepackedRuntimeDexSwitchInjector.inject(
+                previous,
+                listOf(base.name),
+                emptyList(),
+                File(root, "out"),
+                signal,
+                originalInstaller = null,
+                installerCompatibilityPolicy = InstallerCompatibilityPolicy.DIAGNOSTIC_ONLY,
+            )
+
+            assertEquals(1, result.installerConfirmedChecks)
+            assertEquals(0, result.installerRedirectedCalls)
+            assertNull(result.originalInstaller)
+            ZipFile(result.sources.single().outputPath).use { zip ->
+                assertArrayEquals(originalDex, zip.getInputStream(zip.getEntry("classes.dex")).readBytes())
+                assertNull(zip.getEntry(OriginalInstallerRecord.ENTRY))
+            }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun installerDex(): ByteArray {
         val query = ImmutableMethodReference(
             pm,
