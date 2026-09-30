@@ -16,6 +16,7 @@ import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestAppLauncher
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestMenuStatus
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeDexSwitchInjector
 import io.github.ffenuss.modkit.runtime.OriginalInstallerRecord
+import io.github.ffenuss.modkit.runtime.InstallerCompatibilityPolicy
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -44,6 +45,7 @@ object AutoModRuntimeTestMenuCoordinator {
         cancellation: CancellationSignal,
         progress: ProgressSink,
         selected: List<AutoModRecipe>? = null,
+        installerCompatibilityPolicy: InstallerCompatibilityPolicy = InstallerCompatibilityPolicy.STRICT,
     ): AutoModRuntimeTestMenuBuild =
         withContext(Dispatchers.IO) {
             val resources = selected.orEmpty().mapNotNull { it.resource }
@@ -135,6 +137,7 @@ object AutoModRuntimeTestMenuCoordinator {
                         cancellation,
                         resources,
                         originalInstaller,
+                        installerCompatibilityPolicy,
                     )
                     val build = RepackedRuntimeBuildCoordinator.buildDexSwitchInjected(
                         context,
