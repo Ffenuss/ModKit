@@ -406,9 +406,29 @@ fun ModKitApp() {
                             screen = Screen.ROOT_PROCESS
                         },
                         onOpenAniimoQuickStart = {
-                            rootInitialPackageName =
-                                AniimoRuntimeProfile.PACKAGE_NAME
-                            screen = Screen.ROOT_PROCESS
+                            scope.launch {
+                                val installedAniimo =
+                                    withContext(
+                                        Dispatchers.IO,
+                                    ) {
+                                        AniimoRuntimeProfile
+                                            .PACKAGE_CANDIDATES
+                                            .firstNotNullOfOrNull {
+                                                packageName ->
+                                                installedRepository
+                                                    .find(
+                                                        packageName,
+                                                    )
+                                                    ?.packageName
+                                            }
+                                    }
+                                rootInitialPackageName =
+                                    installedAniimo
+                                        ?: AniimoRuntimeProfile
+                                            .PACKAGE_NAME
+                                screen =
+                                    Screen.ROOT_PROCESS
+                            }
                         },
                     )
 
