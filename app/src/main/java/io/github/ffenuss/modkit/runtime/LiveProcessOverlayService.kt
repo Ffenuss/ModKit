@@ -877,6 +877,9 @@ class LiveProcessOverlayService : Service() {
                 "⚔ Урон моей атаки" to
                     BehavioralActionHint
                         .ATTACK,
+                "⚔ Скорость атаки" to
+                    BehavioralActionHint
+                        .ATTACK_SPEED,
                 "🏃 Движение / скорость" to
                     BehavioralActionHint
                         .MOVEMENT,
@@ -886,6 +889,15 @@ class LiveProcessOverlayService : Service() {
                 "⏱ Cooldown / перезарядка" to
                     BehavioralActionHint
                         .COOLDOWN,
+                "✨ Ultimate / энергия способности" to
+                    BehavioralActionHint
+                        .ULTIMATE_ENERGY,
+                "📈 Опыт / уровень" to
+                    BehavioralActionHint
+                        .PROGRESSION,
+                "🟣 Поимка / приручение" to
+                    BehavioralActionHint
+                        .CAPTURE,
                 "⬆ Прыжок / гравитация" to
                     BehavioralActionHint
                         .JUMP,
