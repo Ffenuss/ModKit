@@ -1432,18 +1432,12 @@ fun RootProcessLabScreen(
             )
             return@LaunchedEffect
         }
-        if (
-            !processesLoading &&
-            processItems.isNotEmpty() ||
-            launchableApps.isNotEmpty()
-        ) {
-            quickStartAttempted = true
-            error =
-                "Aniimo Quick Start: package " +
-                    requestedPackage +
-                    " не найден среди доступных игр. " +
-                    "Проверьте, что Aniimo установлена для текущего Android user."
-        }
+        quickStartAttempted = true
+        error =
+            "Aniimo Quick Start: package " +
+                requestedPackage +
+                " не найден среди доступных игр. " +
+                "Проверьте, что Aniimo установлена для текущего Android user."
     }
 
     val normalizedQuery =
