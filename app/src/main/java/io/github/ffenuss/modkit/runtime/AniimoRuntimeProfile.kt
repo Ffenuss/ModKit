@@ -17,6 +17,23 @@ data class AniimoRuntimeProfileResult(
  */
 object AniimoRuntimeProfile {
     const val PACKAGE_NAME = "com.x.aniimos"
+    const val RU_PACKAGE_NAME = "com.x.aniimos.ru"
+
+    val PACKAGE_CANDIDATES: List<String> =
+        listOf(
+            PACKAGE_NAME,
+            RU_PACKAGE_NAME,
+        )
+
+    fun isSupportedPackage(
+        packageName: String,
+    ): Boolean =
+        PACKAGE_CANDIDATES.any {
+            it.equals(
+                packageName,
+                ignoreCase = true,
+            )
+        }
 
     fun inspect(
         packageName: String,
@@ -24,9 +41,8 @@ object AniimoRuntimeProfile {
         archiveEntries: Collection<String> = emptyList(),
     ): AniimoRuntimeProfileResult {
         val packageMatched =
-            packageName.equals(
-                PACKAGE_NAME,
-                ignoreCase = true,
+            isSupportedPackage(
+                packageName,
             )
 
         val names =
