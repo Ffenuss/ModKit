@@ -44,6 +44,15 @@
             android:exported="false" />
 
         <service
+            android:name=".sandbox.ModMenuOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-started floating controls for an explicitly launched ModKit sandbox session" />
+        </service>
+
+        <service
             android:name=".runtime.LiveProcessOverlayService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
