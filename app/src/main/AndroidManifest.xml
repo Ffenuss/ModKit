@@ -2,6 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <!-- Needed to list user-installed games and regular applications. -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
@@ -38,6 +42,15 @@
         <receiver
             android:name=".runtime.RepackedInstallStatusReceiver"
             android:exported="false" />
+
+        <service
+            android:name=".runtime.LiveProcessOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-started root live scanner and floating controls for an explicitly selected game process" />
+        </service>
 
         <activity
             android:name=".MainActivity"
