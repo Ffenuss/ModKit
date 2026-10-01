@@ -20,11 +20,13 @@ import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.dump.InstalledPackageDumper
+import io.github.ffenuss.modkit.runtime.AniimoRuntimeProfile
 import io.github.ffenuss.modkit.ui.screens.AnalysisScreen
 import io.github.ffenuss.modkit.ui.screens.AutoModScreen
 import io.github.ffenuss.modkit.ui.screens.InstalledAppsScreen
 import io.github.ffenuss.modkit.ui.screens.InstalledTargetKind
 import io.github.ffenuss.modkit.ui.screens.RecoveryScreen
+import io.github.ffenuss.modkit.ui.screens.RootProcessLabScreen
 import io.github.ffenuss.modkit.ui.screens.RestoringPartialScreen
 import io.github.ffenuss.modkit.ui.screens.TargetSelectionScreen
 import java.io.File
@@ -35,6 +37,7 @@ import kotlinx.coroutines.withContext
 private enum class Screen {
     TARGET,
     INSTALLED_APPS,
+    ROOT_PROCESS,
     AUTOMOD,
 }
 
@@ -91,6 +94,9 @@ fun ModKitApp() {
         mutableStateOf<String?>(null)
     }
     var dumpNotice by remember {
+        mutableStateOf<String?>(null)
+    }
+    var rootInitialPackageName by remember {
         mutableStateOf<String?>(null)
     }
 
@@ -395,6 +401,15 @@ fun ModKitApp() {
                                 ),
                             )
                         },
+                        onOpenRootProcessLab = {
+                            rootInitialPackageName = null
+                            screen = Screen.ROOT_PROCESS
+                        },
+                        onOpenAniimoQuickStart = {
+                            rootInitialPackageName =
+                                AniimoRuntimeProfile.PACKAGE_NAME
+                            screen = Screen.ROOT_PROCESS
+                        },
                     )
 
                 Screen.INSTALLED_APPS ->
@@ -467,6 +482,16 @@ fun ModKitApp() {
                                 }
                             }
                         },
+                    )
+
+                Screen.ROOT_PROCESS ->
+                    RootProcessLabScreen(
+                        onBack = {
+                            rootInitialPackageName = null
+                            screen = Screen.TARGET
+                        },
+                        initialPackageName =
+                            rootInitialPackageName,
                     )
 
                 Screen.AUTOMOD -> {
