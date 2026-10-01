@@ -60,9 +60,9 @@ fun TargetSelectionScreen(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    "Открывает Root Process Lab уже отфильтрованным по Aniimo. " +
-                        "Нажмите установленную Aniimo: ModKit запустит игру, дождётся " +
-                        "основного PID и поднимет плавающий MK overlay.",
+                    "Один запуск: ModKit сам найдёт установленную Aniimo, проверит root, " +
+                        "запустит или подключит основной процесс и поднимет плавающий MK overlay. " +
+                        "После attach автоматически стартует поиск локальных runtime-кандидатов.",
                     style =
                         MaterialTheme.typography.bodySmall,
                 )
