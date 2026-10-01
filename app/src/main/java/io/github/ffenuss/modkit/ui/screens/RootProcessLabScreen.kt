@@ -724,7 +724,8 @@ fun RootProcessLabScreen(
                 saveMessage =
                     "Подключено к PID " +
                         overlay.pid +
-                        ". Игра выведена на передний план; MK overlay готов для автоскана, обучения действий и ручного поиска."
+                        ". Игра выведена на передний план; MK overlay готов. Запускаю автоматический поиск модификаций."
+                discoverMods(item)
             } catch (_: AnalysisCancelledException) {
                 error =
                     "Подключение к процессу отменено."
@@ -778,12 +779,13 @@ fun RootProcessLabScreen(
                             )
                     }
                 clearRuntimeState()
-                selected =
+                val selectedItem =
                     RootProcessUiItem(
                         process =
                             result.process,
                         app = app,
                     )
+                selected = selectedItem
                 attachedPid =
                     result.process.pid
                 attachedMapsCount =
@@ -795,7 +797,8 @@ fun RootProcessLabScreen(
                 saveMessage =
                     "Игра запущена и подключена к PID " +
                         result.process.pid +
-                        ". MK overlay уже поверх игры."
+                        ". MK overlay уже поверх игры; запускаю автоматический поиск модификаций."
+                discoverMods(selectedItem)
             } catch (
                 _: AnalysisCancelledException,
             ) {
