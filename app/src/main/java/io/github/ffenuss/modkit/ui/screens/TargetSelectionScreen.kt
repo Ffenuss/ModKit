@@ -21,6 +21,8 @@ fun TargetSelectionScreen(
     onSelectGames: () -> Unit,
     onSelectApps: () -> Unit,
     onSelectFile: () -> Unit,
+    onOpenRootProcessLab: () -> Unit,
+    onOpenAniimoQuickStart: () -> Unit,
 ) {
     Column(
         modifier =
@@ -38,11 +40,70 @@ fun TargetSelectionScreen(
         )
         Text("v" + BuildConfig.VERSION_NAME)
         Text(
-            "Выберите, что нужно открыть. ModKit работает без root: " +
-                "можно анализировать установленную игру, обычное приложение " +
-                "или APK-файл.",
+            "Без root: анализ и repack. С root: запуск оригинального приложения, " +
+                "подключение к его процессу и MK overlay без переподписи исходного APK.",
             style = MaterialTheme.typography.bodyMedium,
         )
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement =
+                    Arrangement.spacedBy(9.dp),
+            ) {
+                Text(
+                    "Aniimo Quick Start",
+                    style =
+                        MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Открывает Root Process Lab уже отфильтрованным по Aniimo. " +
+                        "Нажмите установленную Aniimo: ModKit запустит игру, дождётся " +
+                        "основного PID и поднимет плавающий MK overlay.",
+                    style =
+                        MaterialTheme.typography.bodySmall,
+                )
+                Button(
+                    onClick = onOpenAniimoQuickStart,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Открыть Aniimo Loader")
+                }
+            }
+        }
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement =
+                    Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "Root / Live",
+                    style =
+                        MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Список процессов и установленных приложений, live value scan, " +
+                        "изменение и Freeze подтверждённых локальных значений, " +
+                        "поведенческое обучение и runtime-профили.",
+                    style =
+                        MaterialTheme.typography.bodySmall,
+                )
+                Button(
+                    onClick = onOpenRootProcessLab,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Root Process Lab")
+                }
+            }
+        }
 
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -60,8 +121,7 @@ fun TargetSelectionScreen(
                 )
                 Text(
                     "Игры и обычные приложения показываются отдельно. " +
-                        "Для любого выбранного пакета доступен анализ и " +
-                        "дамп установочного набора APK на устройство.",
+                        "Для выбранного пакета доступен анализ и дамп APK-набора.",
                     style =
                         MaterialTheme.typography.bodySmall,
                 )
@@ -106,28 +166,6 @@ fun TargetSelectionScreen(
                 ) {
                     Text("Выбрать APK / файл")
                 }
-            }
-        }
-
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement =
-                    Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    "Дампер приложений",
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    "Дамп сохраняет base APK и все split APK, SHA-256 " +
-                        "каждого файла и индекс содержимого APK. " +
-                        "На Android 10+ архив появляется в Downloads/ModKit.",
-                    style =
-                        MaterialTheme.typography.bodySmall,
-                )
             }
         }
     }
