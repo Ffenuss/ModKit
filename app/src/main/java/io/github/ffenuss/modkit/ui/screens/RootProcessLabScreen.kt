@@ -135,6 +135,11 @@ fun RootProcessLabScreen(
                 .orEmpty(),
         )
     }
+    var quickStartAttempted by remember(
+        initialPackageName,
+    ) {
+        mutableStateOf(false)
+    }
     var showAppsOnly by remember {
         mutableStateOf(false)
     }
@@ -1372,6 +1377,72 @@ fun RootProcessLabScreen(
             launchableApps.isEmpty()
         ) {
             loadProcesses()
+        }
+    }
+
+    LaunchedEffect(
+        initialPackageName,
+        processItems,
+        launchableApps,
+        processesLoading,
+        busy,
+        rootProbe,
+    ) {
+        val requestedPackage =
+            initialPackageName
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?: return@LaunchedEffect
+        if (
+            quickStartAttempted ||
+            processesLoading ||
+            busy ||
+            rootProbe?.available != true
+        ) {
+            return@LaunchedEffect
+        }
+
+        val runningMatches =
+            processItems.filter {
+                it.process.packageName ==
+                    requestedPackage
+            }
+        if (runningMatches.size == 1) {
+            quickStartAttempted = true
+            attach(runningMatches.single())
+            return@LaunchedEffect
+        }
+        if (runningMatches.size > 1) {
+            quickStartAttempted = true
+            error =
+                "Aniimo Quick Start: найдено несколько main PID. " +
+                    "Обновите список и выберите процесс вручную."
+            return@LaunchedEffect
+        }
+
+        val installedMatches =
+            launchableApps.filter {
+                it.packageName ==
+                    requestedPackage
+            }
+        if (installedMatches.size == 1) {
+            quickStartAttempted = true
+            launchAndAttach(
+                installedMatches.single(),
+            )
+            return@LaunchedEffect
+        }
+        if (
+            !processesLoading &&
+            processItems.isNotEmpty() ||
+            launchableApps.isNotEmpty()
+        ) {
+            quickStartAttempted = true
+            error =
+                "Aniimo Quick Start: package " +
+                    requestedPackage +
+                    " не найден среди доступных игр. " +
+                    "Проверьте, что Aniimo установлена для текущего Android user."
         }
     }
 
