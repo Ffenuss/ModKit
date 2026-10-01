@@ -255,6 +255,12 @@ class LiveProcessOverlayService : Service() {
             parsed,
         )
         scheduleProcessWatch()
+        if (
+            parsed.packageName ==
+                AniimoRuntimeProfile.PACKAGE_NAME
+        ) {
+            startAutoScan()
+        }
         return START_NOT_STICKY
     }
 
@@ -878,6 +884,18 @@ class LiveProcessOverlayService : Service() {
                 "⏱ Cooldown / перезарядка" to
                     BehavioralActionHint
                         .COOLDOWN,
+                "⬆ Прыжок / гравитация" to
+                    BehavioralActionHint
+                        .JUMP,
+                "📷 Камера / FOV / zoom" to
+                    BehavioralActionHint
+                        .CAMERA,
+                "🧲 Подбор / взаимодействие" to
+                    BehavioralActionHint
+                        .INTERACTION,
+                "🌍 Мир / время / состояние" to
+                    BehavioralActionHint
+                        .WORLD,
                 "💰 Валюта / ресурс" to
                     BehavioralActionHint
                         .RESOURCE_CHANGE,
@@ -1823,6 +1841,26 @@ class LiveProcessOverlayService : Service() {
                 BehavioralActionHint
                     .COOLDOWN ->
                 "⏱ " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .JUMP ->
+                "⬆ " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .CAMERA ->
+                "📷 " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .INTERACTION ->
+                "🧲 " +
+                    candidate.title
+            candidate.actionHint ==
+                BehavioralActionHint
+                    .WORLD ->
+                "🌍 " +
                     candidate.title
             candidate.actionHint ==
                 BehavioralActionHint
