@@ -256,8 +256,10 @@ class LiveProcessOverlayService : Service() {
         )
         scheduleProcessWatch()
         if (
-            parsed.packageName ==
-                AniimoRuntimeProfile.PACKAGE_NAME
+            AniimoRuntimeProfile
+                .isSupportedPackage(
+                    parsed.packageName,
+                )
         ) {
             startAutoScan()
         }
