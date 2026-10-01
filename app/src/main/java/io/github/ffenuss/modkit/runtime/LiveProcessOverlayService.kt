@@ -66,6 +66,9 @@ class LiveProcessOverlayService : Service() {
     private val stabilizationAttempted =
         ConcurrentHashMap
             .newKeySet<String>()
+    private val activeValueToggles =
+        ConcurrentHashMap
+            .newKeySet<String>()
 
     @Volatile
     private var artifactIdentity:
@@ -4904,6 +4907,11 @@ class LiveProcessOverlayService : Service() {
                                 written.address,
                             value =
                                 written.newValue,
+                            toggleOffValue =
+                                candidate.toggleOffValue
+                                    ?: written.oldValue,
+                            toggleOnValue =
+                                written.newValue,
                         )
                     selectedCandidate =
                         updatedCandidate
@@ -5113,6 +5121,7 @@ class LiveProcessOverlayService : Service() {
             false,
         )
         stabilizationAttempted.clear()
+        activeValueToggles.clear()
         behavioralSource =
             LearnedCandidateSource.AUTO
         behavioralActionHint = null
@@ -5298,6 +5307,10 @@ class LiveProcessOverlayService : Service() {
                                             saved.actionHint,
                                         anchor =
                                             saved.anchor,
+                                        toggleOffValue =
+                                            saved.toggleOffValue,
+                                        toggleOnValue =
+                                            saved.toggleOnValue,
                                         persistent =
                                             !migrated,
                                         requiresConfirmation =
@@ -5320,6 +5333,18 @@ class LiveProcessOverlayService : Service() {
                     (_, resolved) ->
                     learnedCandidates =
                         resolved
+                    activeValueToggles.clear()
+                    resolved
+                        .filter {
+                            it.toggleOnValue != null &&
+                                it.value ==
+                                    it.toggleOnValue
+                        }
+                        .forEach {
+                            activeValueToggles.add(
+                                it.id,
+                            )
+                        }
                     if (
                         currentPage ==
                         OverlayPage.HOME ||
@@ -5811,6 +5836,10 @@ class LiveProcessOverlayService : Service() {
                                 actionHint,
                             lastKnownValue =
                                 candidate.value,
+                            toggleOffValue =
+                                candidate.toggleOffValue,
+                            toggleOnValue =
+                                candidate.toggleOnValue,
                             anchor =
                                 anchor,
                             codeAccessSites =
@@ -6083,7 +6112,158 @@ class LiveProcessOverlayService : Service() {
                 textSize = 10f
             },
         )
+        if (
+            candidate.persistent &&
+            !candidate.requiresConfirmation &&
+            candidate.toggleOffValue != null &&
+            candidate.toggleOnValue != null
+        ) {
+            row.addView(
+                Button(this).apply {
+                    val enabled =
+                        candidate.id in
+                            activeValueToggles
+                    text =
+                        if (enabled) {
+                            "ON · нажми, чтобы выключить"
+                        } else {
+                            "OFF · нажми, чтобы включить"
+                        }
+                    setOnClickListener {
+                        togglePersistentValue(
+                            candidate,
+                        )
+                    }
+                },
+                matchWidth(),
+            )
+        }
         return row
+    }
+
+    private fun togglePersistentValue(
+        candidate: EditableRuntimeCandidate,
+    ) {
+        val cfg =
+            config ?: return
+        val offValue =
+            candidate.toggleOffValue
+                ?: return
+        val onValue =
+            candidate.toggleOnValue
+                ?: return
+        if (candidate.requiresConfirmation) {
+            setStatus(
+                "После обновления привязку нужно сначала подтвердить.",
+            )
+            return
+        }
+
+        val enable =
+            candidate.id !in
+                activeValueToggles
+        val requestedValue =
+            if (enable) {
+                onValue
+            } else {
+                offValue
+            }
+        setStatus(
+            candidate.title +
+                if (enable) {
+                    ": включаем…"
+                } else {
+                    ": выключаем…"
+                },
+        )
+        executor.execute {
+            val result =
+                runCatching {
+                    val address =
+                        resolveCandidateAddress(
+                            candidate =
+                                candidate,
+                            cfg = cfg,
+                        )
+                    RootRuntimeDirectValueCoordinator
+                        .writeValue(
+                            packageName =
+                                cfg.packageName,
+                            pid = cfg.pid,
+                            address =
+                                address,
+                            valueType =
+                                candidate.valueType,
+                            valueText =
+                                requestedValue,
+                            cancellation =
+                                AtomicCancellationSignal(),
+                        )
+                }
+            main.post {
+                result.onSuccess {
+                    written ->
+                    if (enable) {
+                        activeValueToggles.add(
+                            candidate.id,
+                        )
+                    } else {
+                        activeValueToggles.remove(
+                            candidate.id,
+                        )
+                    }
+                    learnedCandidates =
+                        learnedCandidates.map {
+                            item ->
+                            if (
+                                item.id ==
+                                candidate.id
+                            ) {
+                                item.copy(
+                                    address =
+                                        written.address,
+                                    value =
+                                        written.newValue,
+                                )
+                            } else {
+                                item
+                            }
+                        }
+                    if (
+                        selectedCandidate?.id ==
+                        candidate.id
+                    ) {
+                        selectedCandidate =
+                            candidate.copy(
+                                address =
+                                    written.address,
+                                value =
+                                    written.newValue,
+                            )
+                    }
+                    setStatus(
+                        candidate.title +
+                            if (enable) {
+                                ": ON"
+                            } else {
+                                ": OFF"
+                            },
+                    )
+                    rebuildLearnedList()
+                }.onFailure {
+                    failure ->
+                    setStatus(
+                        "Переключатель не применён: " +
+                            (
+                                failure.message
+                                    ?: failure
+                                        .javaClass
+                                        .simpleName
+                                ),
+                    )
+                }
+            }
+        }
     }
 
     private fun sectionTitle(
@@ -6367,6 +6547,8 @@ class LiveProcessOverlayService : Service() {
         val anchor: StableRuntimePointerAnchor? = null,
         val persistent: Boolean = false,
         val requiresConfirmation: Boolean = false,
+        val toggleOffValue: String? = null,
+        val toggleOnValue: String? = null,
         val learnedCodeSites:
             List<LearnedCodeAccessSite> =
             emptyList(),
