@@ -46,6 +46,23 @@ class AniimoRuntimeProfileTest {
     }
 
     @Test
+    fun acceptsRussianAniimoPackageVariant() {
+        val result =
+            AniimoRuntimeProfile.inspect(
+                packageName =
+                    AniimoRuntimeProfile.RU_PACKAGE_NAME,
+                loadedModules =
+                    listOf(
+                        "libunity.so",
+                        "libil2cpp.so",
+                    ),
+            )
+
+        assertTrue(result.packageMatched)
+        assertTrue(result.eligibleForRuntimeOverlay)
+    }
+
+    @Test
     fun refusesToTreatAnotherPackageAsAniimo() {
         val result =
             AniimoRuntimeProfile.inspect(
