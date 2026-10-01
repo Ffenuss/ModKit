@@ -41,6 +41,8 @@ data class LearnedRuntimeCandidate(
     val source: LearnedCandidateSource,
     val actionHint: BehavioralActionHint?,
     val lastKnownValue: String?,
+    val toggleOffValue: String? = null,
+    val toggleOnValue: String? = null,
     val anchor: StableRuntimePointerAnchor,
     val codeAccessSites:
         List<LearnedCodeAccessSite> =
@@ -510,6 +512,16 @@ class BehavioralProfileStore(
                                 .lastKnownValue,
                         )
                         .put(
+                            "toggleOffValue",
+                            candidate
+                                .toggleOffValue,
+                        )
+                        .put(
+                            "toggleOnValue",
+                            candidate
+                                .toggleOnValue,
+                        )
+                        .put(
                             "updatedAtEpochMs",
                             candidate
                                 .updatedAtEpochMs,
@@ -847,6 +859,38 @@ class BehavioralProfileStore(
                                     item
                                         .optString(
                                             "lastKnownValue",
+                                        )
+                                        .takeIf {
+                                            it.isNotBlank()
+                                        }
+                                },
+                            toggleOffValue =
+                                if (
+                                    item.isNull(
+                                        "toggleOffValue",
+                                    )
+                                ) {
+                                    null
+                                } else {
+                                    item
+                                        .optString(
+                                            "toggleOffValue",
+                                        )
+                                        .takeIf {
+                                            it.isNotBlank()
+                                        }
+                                },
+                            toggleOnValue =
+                                if (
+                                    item.isNull(
+                                        "toggleOnValue",
+                                    )
+                                ) {
+                                    null
+                                } else {
+                                    item
+                                        .optString(
+                                            "toggleOnValue",
                                         )
                                         .takeIf {
                                             it.isNotBlank()
