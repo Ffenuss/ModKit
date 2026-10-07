@@ -57,6 +57,9 @@ public final class SpaceHost {
     private static SourceInventory.Cancellation profileToken;
     private SpaceHost() {}
 
+    /** Called after the reference host's initialization, including its early-return path. */
+    public static void guestBootstrap(Application host) { SpaceGuestBootstrap.install(host); }
+
     public static synchronized void start(Application app) {
         if (Build.VERSION.SDK_INT < 26 || application != null || app == null || !HOST.equals(app.getPackageName()) || !isHostProcess(app)) return;
         application = app;

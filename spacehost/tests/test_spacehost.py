@@ -19,6 +19,16 @@ class BootstrapTests(unittest.TestCase):
    self.assertIn('invoke-super {p0}',a.read_text());self.assertIn('.locals 7',a.read_text())
    self.assertIn('SpaceHost;->start',a.read_text());self.assertIn('SpaceHost;->beforeLaunch',r.read_text())
    self.assertEqual(r.read_text().count('return-void'),1)
+   self.assertEqual(a.read_text().count('SpaceHost;->guestBootstrap'),1)
+ def test_guest_bootstrap_runs_after_original_setup_on_every_exit(self):
+  with tempfile.TemporaryDirectory() as td:
+   a,r=self.fixtures(Path(td))
+   a.write_text(a.read_text().replace(' return-void', ' if-eqz v0, :normal\n return-void\n :normal\n invoke-static {}, Lfixture/Original;->initialize()V\n return-void'))
+   patch_bootstrap(td)
+   text=a.read_text()
+   self.assertEqual(text.count('SpaceHost;->guestBootstrap'),2)
+   self.assertIn('Original;->initialize()V',text)
+   self.assertGreater(text.rindex('SpaceHost;->guestBootstrap'),text.index('Original;->initialize()V'))
  def test_rejects_duplicate_patch(self):
   with tempfile.TemporaryDirectory() as td:
    self.fixtures(Path(td));patch_bootstrap(td)
@@ -70,5 +80,13 @@ class ReferenceTests(unittest.TestCase):
   signatures=[('Lcom/lody/virtual/client/core/VirtualCore;','ck','(Ljava/lang/String;I)Lcom/lody/virtual/remote/InstalledAppInfo;'),('Lcom/lody/virtual/remote/InstalledAppInfo;','f','(I)Landroid/content/pm/ApplicationInfo;'),('Lcom/lody/virtual/client/core/VirtualCore;','cp','(ILjava/lang/String;)Z'),('Lcom/lody/virtual/client/h/i;','as','(ILjava/lang/String;Z)Z'),('Lcom/lody/virtual/client/core/VirtualCore;','i','()Lcom/lody/virtual/client/core/VirtualCore;')]
   for sig in signatures:
    found=[o for i,f,o in old.defined if old.methods[i]==sig];self.assertEqual(len(found),1);self.assertEqual(old.code(found[0]),new.code(found[0]))
+ def test_guest_callback_abi_and_original_dispatch_are_preserved(self):
+  old=Dex(self.original);new=Dex(patch_ads(self.original)[0])
+  signatures=[('Lcom/lody/virtual/client/core/VirtualCore;', 'ad', '()Z'),('Lcom/lody/virtual/client/core/VirtualCore;', 'bo', '()Lcom/lody/virtual/client/core/k;'),('Lcom/lody/virtual/client/core/VirtualCore;', 'ax', '(Lcom/lody/virtual/client/core/k;)V'),('Lcom/lody/virtual/client/b;', 'getCurrentPackage', '()Ljava/lang/String;'),('Lcom/lody/virtual/client/b;', 'getCurrentApplication', '()Landroid/app/Application;'),('Lcom/lody/virtual/client/b;', 'getVUid', '()I'),('Lcom/lody/virtual/os/VUserHandle;', 's', '(I)I')]
+  for sig in signatures:
+   found=[o for i,f,o in old.defined if old.methods[i]==sig]
+   self.assertEqual(len(found),1,sig);self.assertEqual(old.code(found[0]),new.code(found[0]),sig)
+  for name,args in [('b','Landroid/app/Application;'),('d','Landroid/app/Application;'),('c','Landroid/content/Intent;')]:
+   self.assertIn(('Lcom/lody/virtual/client/core/k;',name,'('+args+')V'),old.methods)
 
 if __name__=='__main__':unittest.main()

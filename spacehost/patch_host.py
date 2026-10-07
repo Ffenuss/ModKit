@@ -77,7 +77,9 @@ def patch_bootstrap(decoded):
  def app_change(body):
   needle='invoke-super {p0}, Landroid/app/Application;->onCreate()V'
   if body.count(needle)!=1: raise ValueError('Unexpected Application bootstrap')
-  return body.replace(needle,needle+'\n\n    invoke-static {p0}, '+helper+'->start(Landroid/app/Application;)V')
+  body=body.replace(needle,needle+'\n\n    invoke-static {p0}, '+helper+'->start(Landroid/app/Application;)V')
+  if not re.search(r'(?m)^\s*return-void\s*$',body):raise ValueError('Application exit missing')
+  return re.sub(r'(?m)^(\s*)return-void\s*$',lambda m: m.group(1)+'invoke-static {p0}, '+helper+'->guestBootstrap(Landroid/app/Application;)V\n\n    return-void',body)
  def launch_change(body):
   # No local registers required; the Runnable carries verified package/user fields.
   m=re.search(r'(?m)^\s*\.(?:locals|registers)\s+\d+[^\n]*\n',body)
@@ -93,7 +95,7 @@ def old_signature(name):
 
 def verify_overlay_payload(payload):
  d=Dex(payload)
- expected={('Lio/github/ffenuss/modkit/space/SpaceHost;','start','(Landroid/app/Application;)V'),('Lio/github/ffenuss/modkit/space/SpaceHost;','beforeLaunch','(Ljava/lang/Object;)V')}
+ expected={('Lio/github/ffenuss/modkit/space/SpaceHost;','start','(Landroid/app/Application;)V'),('Lio/github/ffenuss/modkit/space/SpaceHost;','beforeLaunch','(Ljava/lang/Object;)V'),('Lio/github/ffenuss/modkit/space/SpaceHost;','guestBootstrap','(Landroid/app/Application;)V')}
  defined={d.methods[i] for i,f,o in d.defined if o and f&9==9}
  if not expected<=defined:raise ValueError('Overlay bootstrap methods missing')
 

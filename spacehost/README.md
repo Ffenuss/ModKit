@@ -102,3 +102,9 @@ The bounded index contains profile content hashes. Space sync preserves existing
 ## Selected session persistence
 
 Menu synchronization and explicit profile imports register available packages without changing the selected game or virtual user. Only an actual launch or target selection changes the selected session. The host restores that validated session on process recreation and rechecks installation and APK identities before showing its menu. Invalid persisted targets are excluded from the picker. The target-store regression suite covers two packages, two virtual users, re-import and recreation.
+
+## Guest lifecycle bridge
+
+The host Application now also calls `SpaceHost.guestBootstrap` immediately before each original onCreate return, after its original initialization on that path. In virtual client processes only, this chains the verified `VirtualCore.bo()/ax(k)` callback interface. The existing delegate executes first and keeps its return values and original exceptions. The observed `d(Application)` precedes guest onCreate; `b(Application)` follows it in the pinned client call chain.
+
+An observed guest is accepted only when its package and Application match the virtual client; the virtual user is derived with the kernel's `VUserHandle.s(vuid)` function. Its real Application and ClassLoader are retained inside that same process. Google dependencies are excluded. This layer performs no memory or APK writes, exports no commands and still has `backend:none`; guest-process execution and the IPC command channel remain pending. Local callback tests verify order, result and failure preservation and observer-failure isolation; exact-reference checks verify the required ABI. Proprietary guest startup remains unverified on a device.

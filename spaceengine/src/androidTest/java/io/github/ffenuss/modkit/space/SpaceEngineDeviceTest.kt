@@ -12,6 +12,26 @@ import java.util.function.Consumer
 
 @RunWith(AndroidJUnit4::class)
 class SpaceEngineDeviceTest {
+    interface GuestLifecycleFixture {
+        fun d(app: Application)
+        fun b(app: Application)
+    }
+    @Test fun callbackChainPreservesOwnedApplicationStartupOnAndroid() {
+        val events = mutableListOf<String>()
+        val app = object : Application() {
+            override fun onCreate() { super.onCreate(); events.add("onCreate") }
+        }
+        val original = object : GuestLifecycleFixture {
+            override fun d(app: Application) { events.add("original-before") }
+            override fun b(app: Application) { events.add("original-after") }
+        }
+        val chain = GuestCallbackChain.wrap(GuestLifecycleFixture::class.java, original) { method, args ->
+            assertSame(app, args!![0])
+            events.add(if (method.name == "d") "bridge-before" else "bridge-after")
+        } as GuestLifecycleFixture
+        chain.d(app); app.onCreate(); chain.b(app)
+        assertEquals(listOf("original-before", "bridge-before", "onCreate", "original-after", "bridge-after"), events)
+    }
     private fun hostApplication(): Application = object : Application() {
         init { attachBaseContext(InstrumentationRegistry.getInstrumentation().targetContext) }
         override fun getAssets() = InstrumentationRegistry.getInstrumentation().context.assets
