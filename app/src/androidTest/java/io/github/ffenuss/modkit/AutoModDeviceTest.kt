@@ -193,9 +193,10 @@ class AutoModDeviceTest {
                 assertEquals(profile!!.readText(), autoBytes.toString(Charsets.UTF_8))
                 assertEquals(entry.getString("sha256"), java.security.MessageDigest.getInstance("SHA-256")
                     .digest(autoBytes).joinToString("") { "%02x".format(it) })
-                // UiAutomation captures stdout only; the content CLI writes rejection to stderr.
-                val denied = device.executeShellCommand("sh -c 'content read --uri $autoRoot/index 2>&1'")
-                assertTrue("Untrusted caller must not receive profiles: $denied", denied.contains("SecurityException"))
+                val probe = requireNotNull(context.contentResolver.call(android.net.Uri.parse(
+                    "content://" + context.packageName + ".test.menu-access-probe"), "probe", null, null))
+                assertNotEquals("Probe must run under a separate APK UID", context.applicationInfo.uid, probe.getInt("uid"))
+                assertTrue("Untrusted APK must not receive profiles: ${probe.getString("error")}", probe.getBoolean("denied"))
                 assertEquals(fixturePackage, io.github.ffenuss.modkit.space.SavedSpaceMenus.load(context)
                     .single { it.packageName == fixturePackage }.packageName)
                 context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
