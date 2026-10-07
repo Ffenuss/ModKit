@@ -221,6 +221,14 @@ class AutoModDeviceTest {
                 assertNotNull("Stored menu must be accessible without restarting analysis", saved)
                 saved.click()
                 assertTrue(device.wait(Until.hasObject(By.text(fixturePackage)), 15_000))
+                val chooseGenre = device.wait(Until.findObject(By.text("Уточнить жанр")), 10_000)
+                assertNotNull("A saved menu must allow a genre correction without a new scan", chooseGenre)
+                chooseGenre.click()
+                val racing = device.wait(Until.findObject(By.text("Гонки")), 10_000)
+                assertNotNull(racing)
+                racing.click()
+                assertTrue(device.wait(Until.hasObject(By.textStartsWith("Жанр: Гонки.")), 10_000))
+                assertEquals("RACING", JSONObject(profile!!.readText()).getString("genreKey"))
                 device.findObject(By.text("Назад")).click()
             }
             val after = installed.apkFiles.map { java.security.MessageDigest.getInstance("SHA-256").digest(it.readBytes()).toList() }
