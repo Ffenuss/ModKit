@@ -175,16 +175,6 @@ fun ModKitApp() {
             }
         }
 
-    LaunchedEffect(analysisState) {
-        val completed = analysisState as? AnalysisRunState.Completed ?: return@LaunchedEffect
-        withContext(Dispatchers.IO) {
-            autoModSessionStore.save(completed.target, completed.result.index.artifactSha256)
-        }
-        autoModTarget = completed.target
-        autoModResult = completed.result
-        screen = Screen.AUTOMOD
-        AnalysisManager.clearTerminalState()
-    }
 
     when (val state = analysisState) {
         is AnalysisRunState.Interrupted ->

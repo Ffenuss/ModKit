@@ -188,7 +188,7 @@ class AutoModDeviceTest {
         } finally { archive.delete(); profile?.delete() }
     }
 
-    @Test fun a_simpleInterfaceSelectsAndBuildsWithoutExpertTools() {
+    @Test fun a_simpleInterfaceKeepsSpaceResultAndBuildsOnlyAfterExpertSelection() {
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val homeReady = device.wait(Until.hasObject(By.text("Выбрать игру")), 45_000)
         if (!homeReady) evidence("modkit-home-timeout.png") { device.takeScreenshot(it) }
@@ -197,6 +197,14 @@ class AutoModDeviceTest {
         device.findObject(By.text("Выбрать игру")).click()
         assertTrue(device.wait(Until.hasObject(By.text("ModKit Test Game")), 15_000))
         device.findObject(By.text("Анализ")).click()
+        assertTrue("Completed analysis must remain on the space result", device.wait(Until.hasObject(By.text("Скачать пространство")), 90_000))
+        val profile = File(context.filesDir, "space-menu-profiles").listFiles().orEmpty()
+            .firstOrNull { it.name.startsWith(fixturePackage + "-") && it.name.endsWith(".json") }
+        assertNotNull("The one analysis pipeline must automatically create the menu", profile)
+        assertEquals(fixturePackage, JSONObject(profile!!.readText()).getString("packageName"))
+        val expert = device.wait(Until.findObject(By.text("Экспертный режим · изменения APK")), 5_000)
+        assertNotNull("APK editing requires explicit expert selection", expert)
+        expert.click()
         assertTrue(device.wait(Until.hasObject(By.text("Настройте свой мод")), 90_000))
         val health = device.wait(Until.findObject(By.text("Здоровье · значение 9999")), 90_000)
         assertNotNull("Actual selectable recipe must appear", health)
