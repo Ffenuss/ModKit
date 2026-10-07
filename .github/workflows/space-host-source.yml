@@ -31,6 +31,8 @@ jobs:
           javac -cp build/space-host -d build/space-host spacehost/tests/SpacePolicyTest.java spacehost/tests/SourceInventoryTest.java
           java -cp build/space-host io.github.ffenuss.modkit.space.SpacePolicyTest
           java -cp build/space-host io.github.ffenuss.modkit.space.SourceInventoryTest
+          javac -cp "build/space-host:$ANDROID_HOME/platforms/android-35/android.jar" -d build/space-host spacehost/tests/SpaceTargetStoreTest.java
+          java -cp "build/space-host:$ANDROID_HOME/platforms/android-35/android.jar" io.github.ffenuss.modkit.space.SpaceTargetStoreTest
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.0'

@@ -79,6 +79,7 @@ object SpaceMenuCoordinator {
                 val stream = atomic.startWrite()
                 try { stream.write(bytes); atomic.finishWrite(stream) }
                 catch (failure: Throwable) { atomic.failWrite(stream); throw failure }
+                context.contentResolver.notifyChange(android.net.Uri.parse("content://${context.packageName}.space-menu/index"), null)
                 SpaceMenuSummary(pkg, target.label, file.absolutePath, plan, recipes.size,
                     recipes.count { it.selectable && it.verification.recipePrepared }, profile.getBoolean("truncated"), warnings)
         }

@@ -26,6 +26,33 @@ data class SavedSpaceMenu(val packageName: String, val label: String, val genre:
     val items: Int, val staticRecipes: Int, val truncated: Boolean, val file: File)
 
 object SavedSpaceMenus {
+    /** Change discovery priorities without rescanning or adding executable capabilities. */
+    fun updateGenre(context: Context, file: File, genre: io.github.ffenuss.modkit.analysis.GameGenre) {
+        val root = File(context.filesDir, "space-menu-profiles").canonicalFile
+        require(file.canonicalFile.parentFile == root && file.name.endsWith(".json") && file.isFile && file.length() in 1..(256 * 1024))
+        val json = JSONObject(file.readText())
+        require(json.getInt("schema") == 1 && json.getString("backend") == "none")
+        val pkg = json.getString("packageName")
+        require(load(context).any { it.packageName == pkg && it.file.canonicalFile == file.canonicalFile }) { "Меню уже заменено новым анализом" }
+        val priorities = io.github.ffenuss.modkit.analysis.GameAnalysisPlanner.priorities(genre)
+        json.put("genre", genre.title).put("genreKey", genre.name)
+            .put("genreEvidence", org.json.JSONArray(listOf("Жанр выбран пользователем")))
+            .put("priorities", org.json.JSONArray(priorities))
+        val items = json.getJSONArray("items")
+        val ordered = (0 until items.length()).map { items.getJSONObject(it) }.sortedBy { item ->
+            priorities.indexOfFirst { item.getString("category").contains(it.substringBefore(" /"), true) }
+                .let { if (it < 0) Int.MAX_VALUE else it }
+        }
+        json.put("items", org.json.JSONArray(ordered))
+        val bytes = json.toString().toByteArray(Charsets.UTF_8)
+        require(bytes.size <= 256 * 1024)
+        val atomic = android.util.AtomicFile(file)
+        val stream = atomic.startWrite()
+        try { stream.write(bytes); atomic.finishWrite(stream) }
+        catch (failure: Throwable) { atomic.failWrite(stream); throw failure }
+        context.contentResolver.notifyChange(android.net.Uri.parse("content://${context.packageName}.space-menu/index"), null)
+    }
+
     fun load(context: Context): List<SavedSpaceMenu> {
         val root = File(context.filesDir, "space-menu-profiles")
         return root.listFiles().orEmpty().filter { it.name.endsWith(".json") }

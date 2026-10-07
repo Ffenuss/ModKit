@@ -11,6 +11,45 @@ import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class MenuProfileDeviceTest {
+    @Test fun notifiedMenuUpdatesArriveWithoutReopeningHostAndPreserveOtherMenus() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val uri = android.net.Uri.parse("content://io.github.ffenuss.modkit.test.space-menu")
+        val input = File(context.cacheDir, "notification-fixture").apply { writeText("original APK fixture") }
+        val bundle = android.os.Bundle().apply {
+            putString("first.json", profile("io.fixture.syncfirst", input).toString())
+            putString("second.json", profile("io.fixture.syncsecond", input).toString())
+        }
+        val latch = java.util.concurrent.CountDownLatch(1)
+        var updates: MenuUpdates? = null
+        val failure = java.util.concurrent.atomic.AtomicReference<Throwable>()
+        try {
+            context.contentResolver.call(uri, "fixture", null, bundle)
+            MenuProfileStore.sync(context)
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                updates = MenuUpdates(context, android.os.Handler(android.os.Looper.getMainLooper())) {
+                    try {
+                        val changed = MenuProfileStore.sync(context)
+                        assertEquals(1, changed.size)
+                        assertEquals("updated while guest runs", changed.single().label)
+                        assertEquals("io.fixture.syncsecond", MenuProfileStore.load(context, "io.fixture.syncsecond")!!.label)
+                    } catch (error: Throwable) { failure.set(error) }
+                    finally { latch.countDown() }
+                }.also { it.register(); it.register() }
+            }
+            bundle.putString("first.json", profile("io.fixture.syncfirst", input).put("label", "updated while guest runs").toString())
+            context.contentResolver.call(uri, "fixture", null, bundle)
+            assertTrue("A changed profile must notify the running host", latch.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            failure.get()?.let { throw it }
+        } finally {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync { updates?.close() }
+            context.contentResolver.call(uri, "fixture", null, android.os.Bundle())
+            input.delete()
+            listOf("io.fixture.syncfirst", "io.fixture.syncsecond").forEach {
+                File(File(context.filesDir, "modkit-menus"), "$it.json").delete()
+            }
+            context.getSharedPreferences("modkit_menu_sync", 0).edit().clear().commit()
+        }
+    }
     @Test fun spacePullsTwoPreparedMenusAndRejectsChangedBytes() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val uri = android.net.Uri.parse("content://io.github.ffenuss.modkit.test.space-menu")

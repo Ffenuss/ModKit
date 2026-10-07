@@ -43,6 +43,7 @@ public final class SpaceHost {
         Thread t = new Thread(r, "modkit-space-status"); t.setDaemon(true); return t;
     });
     private static Application application;
+    private static SpaceTargetStore targets;
     private static WeakReference<Activity> activity = new WeakReference<>(null);
     private static LinearLayout overlay;
     private static TextView status;
@@ -54,11 +55,18 @@ public final class SpaceHost {
     private static long generation;
     private static boolean checking;
     private static SourceInventory.Cancellation profileToken;
+    private static MenuUpdates menuUpdates;
+    private static boolean syncingMenus, syncAgain;
     private SpaceHost() {}
 
     public static synchronized void start(Application app) {
         if (Build.VERSION.SDK_INT < 26 || application != null || app == null || !HOST.equals(app.getPackageName()) || !isHostProcess(app)) return;
         application = app;
+        targets = new SpaceTargetStore(app.getSharedPreferences("modkit_space_profiles", Context.MODE_PRIVATE));
+        SpaceTargetStore.Session restored = targets.selected();
+        if (restored != null) { target = restored.packageName; userId = restored.user; }
+        menuUpdates = new MenuUpdates(app, UI, SpaceHost::syncMenus);
+        menuUpdates.register();
         app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
             public void onActivityCreated(Activity a, Bundle state) { consumeIntent(a, a.getIntent()); }
             public void onActivityStarted(Activity a) {}
@@ -77,15 +85,20 @@ public final class SpaceHost {
     }
 
     private static void syncMenus() {
+        menuUpdates.register();
+        if (syncingMenus) { syncAgain = true; return; }
+        syncingMenus = true;
         IO.execute(() -> {
             List<MenuProfile> changed = MenuProfileStore.sync(application);
             UI.post(() -> {
+                syncingMenus = false;
                 boolean activeChanged = false;
                 for (MenuProfile profile : changed) {
-                    rememberTarget(profile.packageName, 0);
+                    targets.register(profile.packageName, 0);
                     activeChanged |= profile.packageName.equals(target);
                 }
                 if (activeChanged) { cancelProfileCheck(); generation++; refresh(); }
+                if (syncAgain) { syncAgain = false; syncMenus(); }
             });
         });
     }
@@ -100,7 +113,7 @@ public final class SpaceHost {
             try {
                 MenuProfile imported = MenuProfileStore.importProfile(application, uri);
                 UI.post(() -> {
-                    rememberTarget(imported.packageName, 0);
+                    targets.register(imported.packageName, 0);
                     if (imported.packageName.equals(target)) { cancelProfileCheck(); generation++; refresh(); }
                     toast("Меню сохранено: " + imported.label + ". Выберите оригинальное приложение в пространстве.");
                 });
@@ -279,28 +292,19 @@ public final class SpaceHost {
     }
 
     private static void rememberTarget(String pkg, int user) {
-        android.content.SharedPreferences prefs = application.getSharedPreferences("modkit_space_profiles", Context.MODE_PRIVATE);
-        java.util.Set<String> profiles = new java.util.TreeSet<>(prefs.getStringSet("targets", java.util.Collections.emptySet()));
-        profiles.add(user + ":" + pkg);
-        prefs.edit().putStringSet("targets", profiles).putString("selected", user + ":" + pkg).apply();
+        targets.select(pkg, user);
     }
 
     private static void chooseTarget() {
-        java.util.Set<String> saved = application.getSharedPreferences("modkit_space_profiles", Context.MODE_PRIVATE)
-            .getStringSet("targets", java.util.Collections.emptySet());
-        final String[] choices = new java.util.TreeSet<>(saved).toArray(new String[0]);
+        final String[] choices = targets.choices();
         if (choices.length == 0) { toast("Добавьте и откройте приложение через список пространства"); return; }
         AlertDialog dialog = new AlertDialog.Builder(application)
             .setTitle("Приложение для меню модов")
             .setItems(choices, (ignored, position) -> {
-                String entry = choices[position];
-                int colon = entry.indexOf(':');
-                if (colon < 1) return;
-                final int selectedUser;
-                try { selectedUser = Integer.parseInt(entry.substring(0, colon)); }
-                catch (NumberFormatException error) { return; }
-                final String selectedPackage = entry.substring(colon + 1);
-                if (!SpacePolicy.validSession(selectedPackage, selectedUser)) return;
+                SpaceTargetStore.Session selection = SpaceTargetStore.parse(choices[position]);
+                if (selection == null) return;
+                final int selectedUser = selection.user;
+                final String selectedPackage = selection.packageName;
                 IO.execute(() -> {
                     try {
                         ReferenceKernel kernel = new ReferenceKernel(application.getClassLoader());

@@ -10,6 +10,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.space.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -17,6 +18,7 @@ fun SavedSpaceMenusScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var menus by remember { mutableStateOf<List<SavedSpaceMenu>?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) { menus = withContext(Dispatchers.IO) { SavedSpaceMenus.load(context) } }
     Scaffold(bottomBar = {
         OutlinedButton(onClick = onBack, modifier = Modifier.navigationBarsPadding().padding(16.dp).fillMaxWidth()) { Text("Назад") }
@@ -36,6 +38,9 @@ fun SavedSpaceMenusScreen(onBack: () -> Unit) {
                         Text(menu.label, style = MaterialTheme.typography.titleMedium)
                         Text(menu.packageName)
                         Text("Жанр: ${menu.genre}. Пунктов: ${menu.items}, статических рецептов: ${menu.staticRecipes}.")
+                        SpaceMenuGenreButton(menu.file) {
+                            scope.launch { menus = withContext(Dispatchers.IO) { SavedSpaceMenus.load(context) } }
+                        }
                         if (menu.truncated) Text("Анализ содержит ограничения")
                         Text("Исполнитель модов пока не подключён")
                         Button(onClick = {

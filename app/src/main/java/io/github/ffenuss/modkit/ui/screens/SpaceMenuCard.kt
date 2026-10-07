@@ -17,6 +17,15 @@ fun SpaceMenuCard(result: FastAnalysisResult) {
     val context = LocalContext.current
     var message by remember(result.index.artifactSha256) { mutableStateOf<String?>(null) }
     val menu = result.spaceMenu
+    var chosenGenre by remember(menu?.profilePath) { mutableStateOf<io.github.ffenuss.modkit.analysis.GameGenre?>(null) }
+    LaunchedEffect(menu?.profilePath) {
+        chosenGenre = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val key = org.json.JSONObject(File(requireNotNull(menu).profilePath).readText()).optString("genreKey")
+                io.github.ffenuss.modkit.analysis.GameGenre.entries.firstOrNull { it.name == key }
+            }.getOrNull()
+        }
+    }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Меню для пространства", style = MaterialTheme.typography.titleMedium)
@@ -26,8 +35,9 @@ fun SpaceMenuCard(result: FastAnalysisResult) {
             } else {
                 Text(menu.packageName)
                 Text("Движок: " + menu.plan.engines.joinToString { it.title })
-                Text("Жанр: ${menu.plan.genre.genre.title}" + if (menu.plan.genre.evidence.isNotEmpty()) " · предварительная оценка" else "")
-                Text("Приоритет поиска: " + menu.plan.searchPriorities.joinToString())
+                Text("Жанр: ${(chosenGenre ?: menu.plan.genre.genre).title}" + if (chosenGenre != null) " · выбран вами" else if (menu.plan.genre.evidence.isNotEmpty()) " · предварительная оценка" else "")
+                SpaceMenuGenreButton(File(menu.profilePath)) { chosenGenre = it }
+                Text("Приоритет поиска: " + (chosenGenre?.let { io.github.ffenuss.modkit.analysis.GameAnalysisPlanner.priorities(it) } ?: menu.plan.searchPriorities).joinToString())
                 Text("Кандидатов: ${menu.candidates}. Статических рецептов: ${menu.staticRecipes}.")
                 if (menu.truncated) Text("Результат неполный: проверьте ограничения анализа.")
                 Text("После установки откройте пространство: оно автоматически получит это меню из ModKit. Выберите оригинальное приложение в списке пространства.")

@@ -193,6 +193,22 @@ class AutoModDeviceTest {
                 assertEquals(profile!!.readText(), autoBytes.toString(Charsets.UTF_8))
                 assertEquals(entry.getString("sha256"), java.security.MessageDigest.getInstance("SHA-256")
                     .digest(autoBytes).joinToString("") { "%02x".format(it) })
+                val originalItemIds = (0 until json.getJSONArray("items").length()).map {
+                    json.getJSONArray("items").getJSONObject(it).getString("id")
+                }.toSet()
+                io.github.ffenuss.modkit.space.SavedSpaceMenus.updateGenre(context, profile!!, GameGenre.SHOOTER)
+                val updated = JSONObject(profile!!.readText())
+                assertEquals("Шутер", updated.getString("genre"))
+                assertEquals("none", updated.getString("backend"))
+                assertEquals(json.getString("artifactSha256"), updated.getString("artifactSha256"))
+                assertEquals(json.getJSONArray("sources").toString(), updated.getJSONArray("sources").toString())
+                assertEquals(originalItemIds, (0 until updated.getJSONArray("items").length()).map {
+                    updated.getJSONArray("items").getJSONObject(it).getString("id")
+                }.toSet())
+                assertEquals("Боезапас", updated.getJSONArray("priorities").getString(0))
+                val revisedBytes = requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/profile/" + profile!!.name))).use { it.readBytes() }
+                assertNotEquals(autoBytes.toList(), revisedBytes.toList())
+                assertEquals(updated.toString(), revisedBytes.toString(Charsets.UTF_8))
                 val probe = requireNotNull(context.contentResolver.call(android.net.Uri.parse(
                     "content://" + context.packageName + ".test.menu-access-probe"), "probe", null, null))
                 assertNotEquals("Probe must run under a separate APK UID", context.applicationInfo.uid, probe.getInt("uid"))

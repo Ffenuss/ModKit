@@ -23,7 +23,9 @@ public final class MenuSyncFixtureProvider extends ContentProvider {
         if (!"fixture".equals(method) || extras == null) throw new IllegalArgumentException();
         profiles.clear();
         for (String key : extras.keySet()) if (key.endsWith(".json")) profiles.put(key, extras.getString(key));
-        corrupt = extras.getBoolean("corrupt"); return new Bundle();
+        corrupt = extras.getBoolean("corrupt");
+        getContext().getContentResolver().notifyChange(Uri.parse("content://io.github.ffenuss.modkit.test.space-menu/index"), null);
+        return new Bundle();
     }
     @Override public synchronized ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         if (!"r".equals(mode)) throw new FileNotFoundException("Read only");
