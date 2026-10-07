@@ -24,7 +24,7 @@ fun SavedSpaceMenusScreen(onBack: () -> Unit) {
         LazyColumn(Modifier.fillMaxSize().padding(insets), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Text("Сохранённые меню", style = MaterialTheme.typography.headlineMedium)
-                Text("Для каждого приложения сохраняется своё меню. Его можно повторно передать в то же пространство без нового анализа. После обновления игры потребуется проверить новую версию.")
+                Text("Для каждого приложения сохраняется своё меню. Пространство получает меню автоматически при открытии; кнопка позволяет отправить его повторно без нового анализа. После обновления игры потребуется проверить новую версию.")
                 SpaceDownloadButton(Modifier.fillMaxWidth())
                 message?.let { Text(it) }
                 if (menus == null) Text("Читаем профили…")
