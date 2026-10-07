@@ -53,7 +53,7 @@ class ReferenceTests(unittest.TestCase):
    if o and original.methods[i] not in selected:self.assertEqual(original.code(o),d.code(o),original.methods[i])
  def test_google_and_virtual_launch_abi_remain_identical(self):
   b,_=patch_ads(self.original);old=Dex(self.original);new=Dex(b)
-  signatures=[('Lcom/lody/virtual/client/core/VirtualCore;','cp','(ILjava/lang/String;)Z'),('Lcom/lody/virtual/client/h/i;','as','(ILjava/lang/String;Z)Z'),('Lcom/lody/virtual/client/core/VirtualCore;','i','()Lcom/lody/virtual/client/core/VirtualCore;')]
+  signatures=[('Lcom/lody/virtual/client/core/VirtualCore;','ck','(Ljava/lang/String;I)Lcom/lody/virtual/remote/InstalledAppInfo;'),('Lcom/lody/virtual/remote/InstalledAppInfo;','f','(I)Landroid/content/pm/ApplicationInfo;'),('Lcom/lody/virtual/client/core/VirtualCore;','cp','(ILjava/lang/String;)Z'),('Lcom/lody/virtual/client/h/i;','as','(ILjava/lang/String;Z)Z'),('Lcom/lody/virtual/client/core/VirtualCore;','i','()Lcom/lody/virtual/client/core/VirtualCore;')]
   for sig in signatures:
    found=[o for i,f,o in old.defined if old.methods[i]==sig];self.assertEqual(len(found),1);self.assertEqual(old.code(found[0]),new.code(found[0]))
 

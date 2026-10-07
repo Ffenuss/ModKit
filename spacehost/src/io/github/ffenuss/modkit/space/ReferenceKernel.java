@@ -1,6 +1,10 @@
 package io.github.ffenuss.modkit.space;
 
 import java.lang.reflect.Method;
+import android.content.pm.ApplicationInfo;
+import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 
 /** ABI verified against SHA256 251acbe2…6319. No guesses based on obfuscated names. */
 final class ReferenceKernel {
@@ -21,6 +25,25 @@ final class ReferenceKernel {
     boolean installed(String pkg, int user) throws ReflectiveOperationException {
         if (!SpacePolicy.validSession(pkg, user)) throw new IllegalArgumentException("Invalid virtual identity");
         return (Boolean) installedAsUser.invoke(core, user, pkg);
+    }
+    /** Resolve through virtual package metadata; never through the host PackageManager. */
+    List<File> sources(String pkg, int user) throws ReflectiveOperationException {
+        if (!installed(pkg, user)) throw new IllegalStateException("App absent for virtual user");
+        Object record = core.getClass().getMethod("ck", String.class, int.class).invoke(core, pkg, 0);
+        if (record == null || !"com.lody.virtual.remote.InstalledAppInfo".equals(record.getClass().getName()))
+            throw new IllegalStateException("Unexpected installed-app record");
+        Object value = record.getClass().getMethod("f", int.class).invoke(record, user);
+        if (!(value instanceof ApplicationInfo)) throw new IllegalStateException("Application info unavailable");
+        ApplicationInfo info = (ApplicationInfo) value;
+        if (!pkg.equals(info.packageName) || info.sourceDir == null)
+            throw new IllegalStateException("Virtual package identity mismatch");
+        List<File> files = new ArrayList<>();
+        files.add(new File(info.sourceDir));
+        if (info.splitSourceDirs != null) for (String split : info.splitSourceDirs) {
+            if (split == null) throw new IllegalStateException("Missing split path");
+            files.add(new File(split));
+        }
+        return files;
     }
     boolean launch(String pkg, int user) throws ReflectiveOperationException {
         if (!installed(pkg, user)) return false;

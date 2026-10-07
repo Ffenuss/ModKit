@@ -1,5 +1,8 @@
 name: Space host source checks
 on:
+  push:
+    branches: ["feature/space-**"]
+    paths: [spacehost/**, .github/workflows/space-host-source.yml]
   pull_request:
     branches: [integration/road-to-1.0-20260929, main]
     paths: [spacehost/**, .github/workflows/space-host-source.yml]
@@ -25,7 +28,8 @@ jobs:
           mkdir -p build/space-host
           mapfile -t SOURCES < <(find spacehost/src -name '*.java' -type f | sort)
           javac -source 8 -target 8 -classpath "$ANDROID_HOME/platforms/android-35/android.jar" -d build/space-host "${SOURCES[@]}"
-          javac -cp build/space-host -d build/space-host spacehost/tests/SpacePolicyTest.java
+          javac -cp build/space-host -d build/space-host spacehost/tests/SpacePolicyTest.java spacehost/tests/SourceInventoryTest.java
           java -cp build/space-host io.github.ffenuss.modkit.space.SpacePolicyTest
+          java -cp build/space-host io.github.ffenuss.modkit.space.SourceInventoryTest
       - name: Verify builder shell syntax
         run: bash -n spacehost/build.sh

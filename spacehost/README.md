@@ -1,4 +1,4 @@
-# ModKit Space host — first integration stage
+# ModKit Space host — original-app sessions
 
 The primary product is an original application running inside a virtual space with ModKit's host-owned overlay. Repacking a guest APK is an expert workflow, not the primary launch path.
 
@@ -11,6 +11,9 @@ This module adapts the exact user-provided `Launcher MLBB V2.3.apk` already used
 - A single MK window appears on a launch request when overlay permission exists. The host has an explicit permission button; returning from Settings only checks the grant and does not reopen Settings.
 - The overlay inspects `com.android.vending`, `com.google.android.gms` and `com.google.android.gsf` through the virtual package manager for that same virtual user. Missing packages are reported as missing; an exception is not converted into "Google ready".
 - The Google Play button uses the virtual activity manager, never an outside-device Play Store Intent.
+- Original base/split paths are resolved via `VirtualCore.ck(package, 0)` and `InstalledAppInfo.f(virtualUser)`, after checking installation for that user. The host PackageManager is not a fallback.
+- The overlay can start/cancel a read-only inventory of the actual original APK set. It reports SHA-256 identities, ZIP entry count, DEX/ELF/IL2CPP metadata header counts and ABI paths. Headers are observations, not validated engine detections or discovered mods.
+- Every result has a unique session ID. All source hashes and the virtual package record are checked again before displaying a result. Switching target/user, cancelling, or hiding the overlay invalidates outstanding progress/results.
 - Six exact host advertisement methods are patched: interstitial launch wrappers, the direct interstitial display method, the advertisement-only resume receiver, and advertisement Activities. The Activity superclass callback and the existing AppCompat theme initialization are preserved before immediate finish.
 - DEX, manifest, resources and native-engine preservation are checked during packaging. Existing output is replaced only after signature, alignment and payload verification.
 
@@ -39,3 +42,11 @@ The reference SHA256 must be `251acbe2e3199b4a7b6454a495dcdeac0a479dfa00b14066f4
 `python3 -m unittest discover -s spacehost/tests -v` checks bootstrap preservation and rejects unsupported inputs. Supplying `MODKIT_SPACE_REFERENCE=/path/to/Launcher.apk` also runs the exact-reference DEX tests, which check all unselected method bodies and the Google/virtual-launch ABI. The source workflow does not have the proprietary host and explicitly skips those reference-only tests.
 
 Local verification on 2026-10-07: six Python tests passed, including both reference-only tests. Java compilation against API35 passed and the authored Java session-identity test passed. APK assembly, signing and device execution were not performed in that environment because apktool/D8 build binaries were unavailable and their download was blocked.
+
+## Source-session verification (2026-10-07)
+
+Java API35 compilation, `SpacePolicyTest`, `SourceInventoryTest` and all six Python tests (with the reference host) passed. The inventory fixtures cover base/split aggregation, unchanged input hashes, unique sessions, user identity, cancellation, missing/duplicate inputs, malformed ZIPs and source replacement during scanning. The reference DEX checks now also verify the `ck` and `InstalledAppInfo.f` ABI remains unchanged.
+
+An additional attempt to inventory the previously available local game APK set failed with `zip END header not found`; no successful game inventory is claimed for those local files. The host source is not yet assembled into a signed APK or tested on a device.
+
+The source workflow also runs on `feature/space-*` pushes and executes the new inventory tests. It still needs the proprietary reference locally for the two reference-only checks.
