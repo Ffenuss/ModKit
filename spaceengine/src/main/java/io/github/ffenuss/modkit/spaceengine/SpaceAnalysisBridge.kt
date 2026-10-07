@@ -20,6 +20,7 @@ object SpaceAnalysisBridge {
         val workspace = AnalysisWorkspace(built.index, files.mapIndexed { i, file -> WorkspaceSource(built.index.sources[i], file) })
         val dex = DexInventoryEngine.analyze(workspace, signal, progress)
         val elf = UniversalElfInventoryEngine.analyze(workspace, outputRoot, signal, progress)
+        val metadata = Il2CppMetadataInventoryEngine.analyze(workspace, outputRoot, signal, progress)
         if (signal.isCancelled()) throw AnalysisCancelledException()
         return buildString {
             appendLine("Анализаторы ModKit · общий движок")
@@ -44,9 +45,20 @@ object SpaceAnalysisBridge {
                 appendLine("  Symbols: ${record.sampledDefinedSymbols.take(12).joinToString()}")
                 record.warnings.take(4).forEach { appendLine("  Предупреждение: $it") }
             }
-            (built.index.warnings + dex.warnings + elf.warnings).distinct().take(32).forEach { appendLine("Предупреждение: $it") }
+            appendLine("\nIL2CPP metadata · записи: ${metadata.records.size}")
+            metadata.records.forEach { record ->
+                appendLine("${record.container}:${record.path}")
+                appendLine("  version=${record.version}; magic=${record.magicValid}; layout supported=${record.structuredSupported}; truncated=${record.truncated}")
+                appendLine("  types=${record.parsedTypes}/${record.declaredTypes}; methods=${record.parsedMethods}/${record.declaredMethods}; fields=${record.parsedFields}/${record.declaredFields}; images=${record.parsedImages}/${record.declaredImages}")
+                record.imageSamples.forEach { appendLine("  Image: ${it.name}; token=0x${it.token.toString(16)}") }
+                record.typeSamples.forEach { appendLine("  Type: ${it.fullName}; token=0x${it.token.toString(16)}") }
+                record.methodSamples.forEach { appendLine("  Method: ${it.declaringType}.${it.name}; params=${it.parameterCount}; token=0x${it.token.toString(16)}") }
+                record.fieldSamples.forEach { appendLine("  Field: ${it.declaringType}.${it.name}; typeIndex=${it.typeIndex}; token=0x${it.token.toString(16)}") }
+                record.warnings.take(8).forEach { appendLine("  Предупреждение: $it") }
+            }
+            (built.index.warnings + dex.warnings + elf.warnings + metadata.warnings).distinct().take(32).forEach { appendLine("Предупреждение: $it") }
             appendLine("\nDEX проверяет заголовки и счётчики таблиц, ELF — сегменты и динамические символы. Выборка отчёта ограничена. " +
-                "IL2CPP metadata пока индексируется по сигнатуре. Смещения для модификаций и runtime-контроллеры не подключены.")
+                "IL2CPP metadata разбирается с ограничениями; показана выборка имён и токенов. Metadata token не является адресом функции в памяти. Смещения для модификаций и runtime-контроллеры не подключены.")
         }
     }
 }

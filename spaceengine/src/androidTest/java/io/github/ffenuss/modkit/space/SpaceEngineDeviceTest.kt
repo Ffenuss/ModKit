@@ -44,6 +44,27 @@ class SpaceEngineDeviceTest {
         assertFalse(SpaceEngine.privateNamespace("io.github.ffenuss.modkit.space.SpaceHost"))
         assertFalse(SpaceEngine.privateNamespace("java.lang.String"))
     }
+    @Test fun privateEngineDecodesMetadataFromAnOriginalSplitFixture() {
+        val app = hostApplication()
+        val hex = app.assets.open("metadata-v29.hex").bufferedReader().use { it.readText().trim() }
+        val bytes = ByteArray(hex.length / 2) { hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+        val original = File(app.cacheDir, "original-metadata-split.apk")
+        try {
+            java.util.zip.ZipOutputStream(original.outputStream()).use { zip ->
+                zip.putNextEntry(java.util.zip.ZipEntry("assets/bin/Data/Managed/Metadata/global-metadata.dat"))
+                zip.write(bytes); zip.closeEntry()
+            }
+            val token = SourceInventory.Cancellation()
+            val before = SourceInventory.hash(original, token)
+            val sources = SourceInventory.scan("io.fixture.original", 0, listOf(original), token) { }
+            val report = SpaceEngine.run(app, sources, token, Consumer { })
+            assertTrue(report.contains("Game.Player.Hit"))
+            assertTrue(report.contains("Game.Player.health"))
+            assertTrue(report.contains("token=0x6000001"))
+            assertEquals(before, SourceInventory.hash(original, token))
+            assertFalse(File(app.cacheDir, "modkit-analysis/${sources.sessionId}").exists())
+        } finally { original.delete() }
+    }
     @Test fun cancellationLeavesNoTemporaryAnalysisWorkspace() {
         val app = hostApplication()
         val file = File(InstrumentationRegistry.getInstrumentation().targetContext.applicationInfo.sourceDir)

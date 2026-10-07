@@ -19,9 +19,10 @@ class Dex:
   n,o=struct.unpack_from('<II',b,88);self.methods=[]
   for i in range(n):
    c,p,s=struct.unpack_from('<HHI',b,o+8*i);self.methods.append((self.types[c],self.strings[s],self.protos[p]))
-  self.defined=[];n,o=struct.unpack_from('<II',b,96)
+  self.classes=set();self.defined=[];n,o=struct.unpack_from('<II',b,96)
   for i in range(n):
    ci,_,_,_,_,_,data,_=struct.unpack_from('<8I',b,o+32*i)
+   self.classes.add(self.types[ci])
    if not data:continue
    a,p=self.uleb(data);bc,p=self.uleb(p);d,p=self.uleb(p);v,p=self.uleb(p)
    for _ in range(a+bc):_,p=self.uleb(p);_,p=self.uleb(p)

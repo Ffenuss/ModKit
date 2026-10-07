@@ -110,11 +110,12 @@ def verify_engine_payload(payload):
   if 'classes.dex' not in dex_names or len(dex_names)>8:raise ValueError('Invalid engine DEX set')
   for name in dex_names:
    if z.getinfo(name).file_size>64*1024*1024:raise ValueError('Oversized engine DEX')
-   d=Dex(z.read(name));types.update(d.types)
+   d=Dex(z.read(name));types.update(d.classes)
    defined.update(d.methods[i] for i,f,o in d.defined if o and f&9==9)
  if expected not in defined:raise ValueError('Engine bridge ABI missing')
  if 'Lkotlin/jvm/internal/Intrinsics;' not in types:raise ValueError('Private Kotlin runtime missing')
- if 'Lio/github/ffenuss/modkit/analysis/PortableArtifactIndexer;' not in types:raise ValueError('Shared analysis indexer missing')
+ for required in ['PortableArtifactIndexer','Il2CppMetadataReader','Il2CppMetadataInventoryEngine']:
+  if 'Lio/github/ffenuss/modkit/analysis/'+required+';' not in types:raise ValueError('Shared analysis class missing: '+required)
  return sha(payload)
 
 def pack(reference,rebuilt,dex_payload,output,engine_apk):
