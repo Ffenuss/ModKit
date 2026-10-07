@@ -46,6 +46,22 @@ jobs:
           apk = Path('spaceengine/build/outputs/apk/debug/spaceengine-debug.apk')
           print('Engine SHA-256:', verify_engine_payload(apk.read_bytes()))
           PY
+      - name: Compile and validate host overlay DEX
+        shell: bash
+        run: |
+          mkdir -p build/space-host-dex
+          mapfile -t CLASSES < <(find build/space-host -name '*.class' ! -name '*Test*' -type f | sort)
+          D8="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name d8 | sort | tail -n 1)"
+          test -x "$D8"
+          "$D8" --lib "$ANDROID_HOME/platforms/android-35/android.jar" --min-api 26 --output build/space-host-dex "${CLASSES[@]}"
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'spacehost')
+          from patch_host import verify_overlay_payload
+          verify_overlay_payload(Path('build/space-host-dex/classes.dex').read_bytes())
+          print('Host overlay DEX ABI verified')
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -54,6 +70,7 @@ jobs:
             analysiscore/build/reports/tests/
             spaceengine/build/reports/tests/
             spaceengine/build/outputs/apk/debug/*.apk
+            build/space-host-dex/classes.dex
       - name: Verify builder shell syntax
         run: bash -n spacehost/build.sh
   device:

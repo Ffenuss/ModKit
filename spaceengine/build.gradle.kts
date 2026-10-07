@@ -1,3 +1,5 @@
+import java.security.MessageDigest
+
 plugins { id("com.android.application") }
 android {
     namespace = "io.github.ffenuss.modkit.spaceengine"
@@ -43,13 +45,13 @@ val prepareSpaceDeviceFixtures = tasks.register("prepareSpaceDeviceFixtures") {
         val carrier = layout.buildDirectory.file("outputs/apk/debug/spaceengine-debug.apk").get().asFile.readBytes()
         val assets = root.resolve("assets").apply { mkdirs() }
         assets.resolve("modkit-space-engine.apk").writeBytes(carrier)
-        val sha = java.security.MessageDigest.getInstance("SHA-256").digest(carrier).joinToString("") { "%02x".format(it.toInt() and 255) }
+        val sha = MessageDigest.getInstance("SHA-256").digest(carrier).joinToString("") { "%02x".format(it.toInt() and 255) }
         assets.resolve("modkit-space-engine.sha256").writeText(sha, Charsets.US_ASCII)
     }
 }
 android.sourceSets.getByName("androidTest").apply {
-    java.srcDir(deviceFixtureRoot.map { it.dir("java") })
-    assets.srcDir(deviceFixtureRoot.map { it.dir("assets") })
+    java.directories.add(deviceFixtureRoot.get().dir("java").asFile.absolutePath)
+    assets.directories.add(deviceFixtureRoot.get().dir("assets").asFile.absolutePath)
 }
 tasks.configureEach {
     if (name == "compileDebugAndroidTestKotlin" || name == "compileDebugAndroidTestJavaWithJavac" || name == "mergeDebugAndroidTestAssets") {
