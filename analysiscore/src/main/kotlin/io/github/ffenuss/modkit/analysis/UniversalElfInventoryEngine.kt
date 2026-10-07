@@ -276,7 +276,7 @@ object UniversalElfInventoryEngine {
      * update even when a large ELF finishes within one heartbeat interval.
      * Partial files are removed on I/O failure, cancellation or size mismatch.
      */
-    internal fun copyBounded(
+    fun copyBounded(
         input: InputStream,
         output: File,
         expectedSize: Long,

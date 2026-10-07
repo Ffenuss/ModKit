@@ -1,0 +1,174 @@
+name: Space host source checks
+on:
+  push:
+    branches: ["feature/space-**"]
+    paths: [spacehost/**, analysiscore/**, spaceengine/**, "*.gradle.kts", app/build.gradle.kts, app/src/main/java/io/github/ffenuss/modkit/analysis/**, .github/workflows/space-host-source.yml]
+  pull_request:
+    branches: [integration/road-to-1.0-20260929, main, feature/space-host-first-stage-20261007]
+    paths: [spacehost/**, analysiscore/**, spaceengine/**, "*.gradle.kts", app/build.gradle.kts, app/src/main/java/io/github/ffenuss/modkit/analysis/**, .github/workflows/space-host-source.yml]
+  workflow_dispatch:
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Verify Python patch guards and bootstrap
+        run: python3 -m unittest discover -s spacehost/tests -v
+      - name: Compile host overlay against Android API 35
+        shell: bash
+        run: |
+          SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
+          test -x "$SDK_MANAGER"
+          yes | "$SDK_MANAGER" --licenses >/dev/null || true
+          "$SDK_MANAGER" 'platforms;android-35' 
+          mkdir -p build/space-host
+          mapfile -t SOURCES < <(find spacehost/src -name '*.java' -type f | sort)
+          javac -source 8 -target 8 -classpath "$ANDROID_HOME/platforms/android-35/android.jar" -d build/space-host "${SOURCES[@]}"
+          javac -cp build/space-host -d build/space-host spacehost/tests/SpacePolicyTest.java spacehost/tests/SourceInventoryTest.java
+          java -cp build/space-host io.github.ffenuss.modkit.space.SpacePolicyTest
+          java -cp build/space-host io.github.ffenuss.modkit.space.SourceInventoryTest
+          javac -cp "build/space-host:$ANDROID_HOME/platforms/android-35/android.jar" -d build/space-host spacehost/tests/SpaceTargetStoreTest.java
+          java -cp "build/space-host:$ANDROID_HOME/platforms/android-35/android.jar" io.github.ffenuss.modkit.space.SpaceTargetStoreTest
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - name: Test shared analysis module and engine carrier
+        run: gradle --no-daemon :analysiscore:test :spaceengine:testDebugUnitTest :spaceengine:assembleDebug
+      - name: Validate engine DEX ABI and private Kotlin runtime
+        run: |
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'spacehost')
+          from patch_host import verify_engine_payload
+          apk = Path('spaceengine/build/outputs/apk/debug/spaceengine-debug.apk')
+          print('Engine SHA-256:', verify_engine_payload(apk.read_bytes()))
+          PY
+      - name: Compile and validate host overlay DEX
+        shell: bash
+        run: |
+          mkdir -p build/space-host-dex
+          mapfile -t CLASSES < <(find build/space-host -name '*.class' ! -name '*Test*' -type f | sort)
+          D8="$(find "$ANDROID_HOME/build-tools" -maxdepth 2 -type f -name d8 | sort | tail -n 1)"
+          test -x "$D8"
+          "$D8" --lib "$ANDROID_HOME/platforms/android-35/android.jar" --min-api 26 --output build/space-host-dex "${CLASSES[@]}"
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'spacehost')
+          from patch_host import verify_overlay_payload
+          verify_overlay_payload(Path('build/space-host-dex/classes.dex').read_bytes())
+          print('Host overlay DEX ABI verified')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: space-engine-validation
+          path: |
+            analysiscore/build/reports/tests/
+            spaceengine/build/reports/tests/
+            spaceengine/build/outputs/apk/debug/*.apk
+            build/space-host-dex/classes.dex
+      - name: Verify builder shell syntax
+        run: bash -n spacehost/build.sh
+  device:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - name: Install Android compile SDK
+        run: |
+          SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
+          test -x "$SDK_MANAGER"
+          yes | "$SDK_MANAGER" --licenses >/dev/null || true
+          "$SDK_MANAGER" 'platforms;android-35' 'platforms;android-37.0' 'build-tools;36.0.0'
+      - name: Build owned engine and loader instrumentation
+        run: gradle --no-daemon :spaceengine:assembleDebug :spaceengine:assembleDebugAndroidTest
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Execute real private DEX loading on Android 35
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            adb logcat -c
+            set +e; gradle --no-daemon :spaceengine:connectedDebugAndroidTest; RESULT=$?; adb logcat -d > space-engine-device-logcat.txt; exit $RESULT
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: space-engine-device-validation
+          path: |
+            spaceengine/build/reports/androidTests/
+            spaceengine/build/outputs/androidTest-results/
+            space-engine-device-logcat.txt
+
+  build_tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Export minimal public toolchain for local signing
+        shell: bash
+        run: |
+          SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
+          "$SDK_MANAGER" 'build-tools;35.0.0' 'platforms;android-35'
+          mkdir -p tools
+          cp "$ANDROID_HOME/platforms/android-35/android.jar" tools/android.jar
+          curl --fail --location --retry 3 https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar -o tools/apktool.jar
+          tar -C "$ANDROID_HOME" -czf tools/android-host-tools.tar.gz build-tools/35.0.0/d8 build-tools/35.0.0/apksigner build-tools/35.0.0/zipalign build-tools/35.0.0/lib build-tools/35.0.0/lib64
+          test "$(stat -c %s tools/apktool.jar)" -lt 32000000
+          split -b 24m tools/android-host-tools.tar.gz tools/sdk-part.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-host-android-api35
+          path: tools/android.jar
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-host-apktool
+          path: tools/apktool.jar
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('tools/sdk-part.aa') != ''
+        with:
+          name: local-host-android-tools-aa
+          path: tools/sdk-part.aa
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('tools/sdk-part.ab') != ''
+        with:
+          name: local-host-android-tools-ab
+          path: tools/sdk-part.ab
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('tools/sdk-part.ac') != ''
+        with:
+          name: local-host-android-tools-ac
+          path: tools/sdk-part.ac
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('tools/sdk-part.ad') != ''
+        with:
+          name: local-host-android-tools-ad
+          path: tools/sdk-part.ad
+          retention-days: 7

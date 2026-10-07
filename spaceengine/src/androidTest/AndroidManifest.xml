@@ -1,0 +1,7 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Owned test fixture only; the real ModKit provider authenticates the space certificate. -->
+        <provider android:name="io.github.ffenuss.modkit.space.MenuSyncFixtureProvider"
+            android:authorities="io.github.ffenuss.modkit.test.space-menu" android:exported="true" />
+    </application>
+</manifest>

@@ -9,4 +9,5 @@
     <files-path
         name="root_process_dump"
         path="root-process-dump/" />
+    <files-path name="space_menu" path="space-menu-profiles/" />
 </paths>

@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries><provider android:authorities="io.github.ffenuss.modkit.test.space-menu" /></queries>
+    <application>
+        <!-- Separate disposable APK/UID exercises the real production provider boundary. -->
+        <provider android:name="io.github.ffenuss.modkit.MenuAccessProbeProvider"
+            android:authorities="io.github.ffenuss.modkit.test.test.menu-access-probe" android:exported="true" />
+    </application>
+</manifest>

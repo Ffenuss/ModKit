@@ -153,7 +153,90 @@ class AutoModDeviceTest {
         return RepackedRuntimeInstallStatusStore.status.value
     }
 
-    @Test fun a_simpleInterfaceSelectsAndBuildsWithoutExpertTools() {
+    @Test fun a0_originalApkSetProducesVersionBoundSpaceMenuAndReadableHandoff() = runBlocking {
+        val installed = io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(fixturePackage)!!
+        val before = installed.apkFiles.map { java.security.MessageDigest.getInstance("SHA-256").digest(it.readBytes()).toList() }
+        val archive = File(context.cacheDir, "space-fixture.apks")
+        java.util.zip.ZipOutputStream(archive.outputStream()).use { zip ->
+            installed.apkFiles.forEach { file ->
+                zip.putNextEntry(java.util.zip.ZipEntry("original/" + file.name))
+                file.inputStream().use { it.copyTo(zip) }; zip.closeEntry()
+            }
+        }
+        var profile: File? = null
+        try {
+            ArtifactPackageLoader.open(archive, File(context.cacheDir, "space-fixture-set"), signal, progress).use { loaded ->
+                val result = FastArtifactIndexer.index(loaded.files, signal, progress)
+                val workspace = AnalysisWorkspace(result.index, result.index.sources.zip(loaded.files).map { (descriptor, file) -> WorkspaceSource(descriptor, file) })
+                val menu = io.github.ffenuss.modkit.space.SpaceMenuCoordinator.prepare(context,
+                    AnalysisTargetDescriptor.InstalledPackage(fixturePackage, "Owned fixture"), result, signal, progress, workspace)
+                assertEquals(fixturePackage, menu.packageName)
+                assertTrue("Fixture gameplay candidates must reach the profile", menu.candidates > 0)
+                profile = File(menu.profilePath)
+                val json = JSONObject(profile!!.readText())
+                assertEquals("none", json.getString("backend"))
+                assertEquals(result.index.artifactSha256, json.getString("artifactSha256"))
+                assertEquals(installed.apkFiles.size, json.getJSONArray("sources").length())
+                assertTrue(json.getJSONArray("items").length() > 0)
+                val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", profile!!)
+                assertTrue(uri.path!!.startsWith("/space_menu/"))
+                val handoff = requireNotNull(context.contentResolver.openInputStream(uri)).use { it.readBytes().toString(Charsets.UTF_8) }
+                assertEquals(profile!!.readText(), handoff)
+                val autoRoot = "content://" + context.packageName + ".space-menu"
+                val autoIndex = JSONObject(requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/index")))
+                    .use { it.readBytes().toString(Charsets.UTF_8) })
+                val entries = autoIndex.getJSONArray("profiles")
+                val entry = (0 until entries.length()).map { entries.getJSONObject(it) }
+                    .single { it.getString("file") == profile!!.name }
+                val autoBytes = requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/profile/" + profile!!.name)))
+                    .use { it.readBytes() }
+                assertEquals(profile!!.readText(), autoBytes.toString(Charsets.UTF_8))
+                assertEquals(entry.getString("sha256"), java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(autoBytes).joinToString("") { "%02x".format(it) })
+                val originalItemIds = (0 until json.getJSONArray("items").length()).map {
+                    json.getJSONArray("items").getJSONObject(it).getString("id")
+                }.toSet()
+                io.github.ffenuss.modkit.space.SavedSpaceMenus.updateGenre(context, profile!!, GameGenre.SHOOTER)
+                val updated = JSONObject(profile!!.readText())
+                assertEquals("Шутер", updated.getString("genre"))
+                assertEquals("none", updated.getString("backend"))
+                assertEquals(json.getString("artifactSha256"), updated.getString("artifactSha256"))
+                assertEquals(json.getJSONArray("sources").toString(), updated.getJSONArray("sources").toString())
+                assertEquals(originalItemIds, (0 until updated.getJSONArray("items").length()).map {
+                    updated.getJSONArray("items").getJSONObject(it).getString("id")
+                }.toSet())
+                assertEquals("Боезапас", updated.getJSONArray("priorities").getString(0))
+                val revisedBytes = requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/profile/" + profile!!.name))).use { it.readBytes() }
+                assertNotEquals(autoBytes.toList(), revisedBytes.toList())
+                assertEquals(updated.toString(), revisedBytes.toString(Charsets.UTF_8))
+                val probe = requireNotNull(context.contentResolver.call(android.net.Uri.parse(
+                    "content://" + context.packageName + ".test.menu-access-probe"), "probe", null, null))
+                assertNotEquals("Probe must run under a separate APK UID", context.applicationInfo.uid, probe.getInt("uid"))
+                assertTrue("Untrusted APK must not receive profiles: ${probe.getString("error")}", probe.getBoolean("denied"))
+                assertEquals(fixturePackage, io.github.ffenuss.modkit.space.SavedSpaceMenus.load(context)
+                    .single { it.packageName == fixturePackage }.packageName)
+                context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                assertTrue(device.wait(Until.hasObject(By.text("Выбрать игру")), 45_000))
+                val saved = device.wait(Until.findObject(By.text("Сохранённые меню")), 10_000)
+                assertNotNull("Stored menu must be accessible without restarting analysis", saved)
+                saved.click()
+                assertTrue(device.wait(Until.hasObject(By.text(fixturePackage)), 15_000))
+                val chooseGenre = device.wait(Until.findObject(By.text("Уточнить жанр")), 10_000)
+                assertNotNull("A saved menu must allow a genre correction without a new scan", chooseGenre)
+                chooseGenre.click()
+                val racing = device.wait(Until.findObject(By.text("Гонки")), 10_000)
+                assertNotNull(racing)
+                racing.click()
+                assertTrue(device.wait(Until.hasObject(By.textStartsWith("Жанр: Гонки.")), 10_000))
+                assertEquals("RACING", JSONObject(profile!!.readText()).getString("genreKey"))
+                device.findObject(By.text("Назад")).click()
+            }
+            val after = installed.apkFiles.map { java.security.MessageDigest.getInstance("SHA-256").digest(it.readBytes()).toList() }
+            assertEquals("Menu preparation must leave all original APKs untouched", before, after)
+        } finally { archive.delete(); profile?.delete() }
+    }
+
+    @Test fun a_simpleInterfaceKeepsSpaceResultAndBuildsOnlyAfterExpertSelection() {
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val homeReady = device.wait(Until.hasObject(By.text("Выбрать игру")), 45_000)
         if (!homeReady) evidence("modkit-home-timeout.png") { device.takeScreenshot(it) }
@@ -162,6 +245,14 @@ class AutoModDeviceTest {
         device.findObject(By.text("Выбрать игру")).click()
         assertTrue(device.wait(Until.hasObject(By.text("ModKit Test Game")), 15_000))
         device.findObject(By.text("Анализ")).click()
+        assertTrue("Completed analysis must remain on the space result", device.wait(Until.hasObject(By.text("Скачать пространство")), 90_000))
+        val profile = File(context.filesDir, "space-menu-profiles").listFiles().orEmpty()
+            .firstOrNull { it.name.startsWith(fixturePackage + "-") && it.name.endsWith(".json") }
+        assertNotNull("The one analysis pipeline must automatically create the menu", profile)
+        assertEquals(fixturePackage, JSONObject(profile!!.readText()).getString("packageName"))
+        val expert = device.wait(Until.findObject(By.text("Экспертный режим · изменения APK")), 5_000)
+        assertNotNull("APK editing requires explicit expert selection", expert)
+        expert.click()
         assertTrue(device.wait(Until.hasObject(By.text("Настройте свой мод")), 90_000))
         val health = device.wait(Until.findObject(By.text("Здоровье · значение 9999")), 90_000)
         assertNotNull("Actual selectable recipe must appear", health)
