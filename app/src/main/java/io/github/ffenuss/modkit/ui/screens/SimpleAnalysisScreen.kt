@@ -31,7 +31,7 @@ fun SimpleAnalysisScreen(title: String, progress: EngineProgress?, result: FastA
                 } else {
                     if (result != null && !cancelled && error == null && partialNotice == null)
                         SpaceDownloadButton(Modifier.fillMaxWidth())
-                    onOpenAutoMod?.let { Button(onClick = it, modifier = Modifier.fillMaxWidth()) { Text("Выбрать изменения") } }
+                    onOpenAutoMod?.let { Button(onClick = it, modifier = Modifier.fillMaxWidth()) { Text("Экспертный режим · изменения APK") } }
                     OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("К выбору приложения") }
                 }
                 if (result != null && (!active || stalledAgeMs != null)) AnalysisReportExportButton(title, result)
@@ -39,7 +39,7 @@ fun SimpleAnalysisScreen(title: String, progress: EngineProgress?, result: FastA
         }
     }) { padding ->
         Column(Modifier.fillMaxSize().padding(padding).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            Text("1 / 3  •  Анализ", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+            Text("Анализ в ModKit", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(0.3f))
             Card(Modifier.fillMaxWidth()) {

@@ -37,7 +37,7 @@ fun SpaceDownloadButton(modifier: Modifier = Modifier) {
                         .setTitle("ModKit · пространство")
                         .setDescription("Единое пространство для оригинальных игр и приложений")
                         .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                        .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "modkit-space-${System.currentTimeMillis()}.apk"))
+                        .setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, "modkit-space-${System.currentTimeMillis()}.apk"))
                     message = "Загрузка началась. После установки добавьте оригинальное приложение в пространстве. Для всех игр используется одна версия пространства."
                 }
             } catch (error: Exception) {
