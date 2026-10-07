@@ -134,14 +134,33 @@ jobs:
           curl --fail --location --retry 3 https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar -o tools/apktool.jar
           tar -C "$ANDROID_HOME" -czf tools/android-host-tools.tar.gz build-tools/35.0.0/d8 build-tools/35.0.0/apksigner build-tools/35.0.0/zipalign build-tools/35.0.0/lib build-tools/35.0.0/lib64
           test "$(stat -c %s tools/apktool.jar)" -lt 32000000
-          test "$(stat -c %s tools/android-host-tools.tar.gz)" -lt 32000000
+          split -b 24m tools/android-host-tools.tar.gz tools/sdk-part.
       - uses: actions/upload-artifact@v4
         with:
           name: local-host-apktool
           path: tools/apktool.jar
           retention-days: 7
       - uses: actions/upload-artifact@v4
+        if: hashFiles('tools/sdk-part.aa') != ''
         with:
-          name: local-host-android-tools
-          path: tools/android-host-tools.tar.gz
+          name: local-host-android-tools-aa
+          path: tools/sdk-part.aa
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('tools/sdk-part.ab') != ''
+        with:
+          name: local-host-android-tools-ab
+          path: tools/sdk-part.ab
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('tools/sdk-part.ac') != ''
+        with:
+          name: local-host-android-tools-ac
+          path: tools/sdk-part.ac
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('tools/sdk-part.ad') != ''
+        with:
+          name: local-host-android-tools-ad
+          path: tools/sdk-part.ad
           retention-days: 7
