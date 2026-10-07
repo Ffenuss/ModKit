@@ -27,16 +27,22 @@ object SpaceMenuCoordinator {
                     result.index.artifactSha256, fresh.artifactSha256, true, fresh.sources, null, null))
                 val manifests = files.map { BinaryAndroidManifestInspector.inspectApk(it, cancellation) }
                 val pkg = manifests.first().packageName
+                require(pkg.length <= 255 && pkg.matches(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+"))) { "Некорректное имя пакета" }
                 require(manifests.all { it.packageName == pkg } && manifests.count { it.splitName == null } == 1) {
                     "Комплект должен содержать один base APK и splits одного приложения"
                 }
                 if (target is AnalysisTargetDescriptor.InstalledPackage) require(pkg == target.packageName)
-                val dex = DexLocalPatchEngine.scanApks(files, developerTestMode = true, cancellation = cancellation)
+                val dex = DexLocalPatchEngine.scanApks(files, developerTestMode = true, cancellation = cancellation,
+                    progress = { count, entry -> progress.publish(io.github.ffenuss.modkit.domain.EngineProgress(
+                        "space.menu-dex", io.github.ffenuss.modkit.domain.EngineScheduleClass.TARGETED,
+                        io.github.ffenuss.modkit.domain.RunState.RUNNING, currentTask = "Читаем код DEX для меню",
+                        currentArtifact = entry, processed = count.toLong(), lastHeartbeatEpochMs = System.currentTimeMillis())) })
                 val native = if (result.il2cppFastDump != null || result.il2cppBinaryBinding != null)
                     NativeRecipeCatalog.create(result, preparation, File(context.filesDir, "analysis-results"), cancellation)
                     else emptyList()
                 val recipes = DexRecipeCatalog.create(dex) + native
                 val symbols = (result.il2cppFastDump?.metadata?.methods.orEmpty().asSequence().map { it.name } +
+                    result.il2cppFastDump?.metadata?.fields.orEmpty().asSequence().map { it.name } +
                     dex.opportunities.asSequence().map { it.methodName }).asIterable()
                 val plan = GameAnalysisPlanner.plan(result.index, symbols)
                 val ordered = recipes.sortedWith(compareBy<AutoModRecipe> { recipe ->
