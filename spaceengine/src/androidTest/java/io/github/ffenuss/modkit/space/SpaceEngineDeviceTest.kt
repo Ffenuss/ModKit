@@ -13,7 +13,8 @@ import java.util.function.Consumer
 @RunWith(AndroidJUnit4::class)
 class SpaceEngineDeviceTest {
     private fun hostApplication(): Application = object : Application() {
-        init { attachBaseContext(InstrumentationRegistry.getInstrumentation().context) }
+        init { attachBaseContext(InstrumentationRegistry.getInstrumentation().targetContext) }
+        override fun getAssets() = InstrumentationRegistry.getInstrumentation().context.assets
     }
     @Test fun realDexLoaderRunsSharedEnginesWithPrivateKotlin() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -28,6 +29,12 @@ class SpaceEngineDeviceTest {
         assertTrue(report.contains("DEX · таблицы заголовка:"))
         assertTrue(report.contains("types="))
         assertTrue(messages.isNotEmpty())
+        val bridge = SpaceEngine::class.java.getDeclaredField("analyze").apply { isAccessible = true }.get(null) as java.lang.reflect.Method
+        val privateLoader = bridge.declaringClass.classLoader!!
+        assertNotSame(app.classLoader, privateLoader)
+        val privateKotlin = privateLoader.loadClass("kotlin.jvm.internal.Intrinsics")
+        assertSame(privateLoader, privateKotlin.classLoader)
+        assertNotSame(app.classLoader.loadClass("kotlin.jvm.internal.Intrinsics"), privateKotlin)
         assertEquals(before, SourceInventory.hash(original, token))
         assertFalse(File(app.cacheDir, "modkit-analysis/${sources.sessionId}").exists())
         val loaded = File(app.codeCacheDir, "modkit-engine").listFiles().orEmpty().filter { it.name.endsWith(".apk") }
