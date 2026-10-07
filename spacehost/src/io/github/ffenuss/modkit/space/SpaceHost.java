@@ -47,6 +47,8 @@ public final class SpaceHost {
     private static LinearLayout overlay;
     private static TextView status;
     private static View panel;
+    private static LinearLayout menuContent;
+    private static long menuEpoch = -1;
     private static String target;
     private static int userId;
     private static long generation;
@@ -57,11 +59,11 @@ public final class SpaceHost {
         if (Build.VERSION.SDK_INT < 26 || application != null || app == null || !HOST.equals(app.getPackageName()) || !isHostProcess(app)) return;
         application = app;
         app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
-            public void onActivityCreated(Activity a, Bundle state) {}
+            public void onActivityCreated(Activity a, Bundle state) { consumeIntent(a, a.getIntent()); }
             public void onActivityStarted(Activity a) {}
             public void onActivityResumed(Activity a) {
                 activity = new WeakReference<>(a);
-                if (MAIN.equals(a.getClass().getName())) attachHostButton(a);
+                if (MAIN.equals(a.getClass().getName())) { consumeIntent(a, a.getIntent()); attachHostButton(a); }
                 if (!Settings.canDrawOverlays(app)) removeOverlay();
                 else if (target != null) showOverlay();
             }
@@ -71,6 +73,24 @@ public final class SpaceHost {
             public void onActivityDestroyed(Activity a) { if (activity.get() == a) activity.clear(); }
         });
         Log.i(TAG, "Host UI registered; guest files unchanged");
+    }
+
+    /** MainActivity sets its intent in onNewIntent; lifecycle resume consumes that updated intent. */
+    public static void consumeIntent(Activity source, Intent intent) {
+        if (application == null || source == null || !MAIN.equals(source.getClass().getName()) || intent == null ||
+            !"io.github.ffenuss.modkit.OPEN_SPACE_MENU".equals(intent.getAction())) return;
+        final Uri uri = intent.getData();
+        intent.setAction(Intent.ACTION_MAIN); intent.setData(null);
+        IO.execute(() -> {
+            try {
+                MenuProfile imported = MenuProfileStore.importProfile(application, uri);
+                UI.post(() -> {
+                    rememberTarget(imported.packageName, 0);
+                    if (imported.packageName.equals(target)) { generation++; refresh(); }
+                    toast("Меню сохранено: " + imported.label + ". Выберите оригинальное приложение в пространстве.");
+                });
+            } catch (Exception error) { Log.w(TAG, "Menu import rejected", error); UI.post(() -> toast("Не удалось принять профиль меню из ModKit")); }
+        });
     }
 
     private static boolean isHostProcess(Application app) {
@@ -159,7 +179,7 @@ public final class SpaceHost {
         content.addView(button("Обновить состояние", SpaceHost::refresh));
         content.addView(button("Настройки · выбрать приложение", SpaceHost::chooseTarget));
         content.addView(label("Профиль меню сохраняется отдельно для каждого приложения и пользователя пространства. Анализ выполняется в ModKit.", 12));
-        content.addView(label("Исполнитель модов ещё не подключён. Доступных игровых переключателей пока нет.", 12));
+        menuContent = new LinearLayout(application); menuContent.setOrientation(LinearLayout.VERTICAL); content.addView(menuContent);
         content.addView(button("Скрыть оверлей", SpaceHost::removeOverlay));
         ScrollView scroll = new ScrollView(application); scroll.addView(content); scroll.setVisibility(View.GONE); panel = scroll;
         int width = Math.min(dp(330), application.getResources().getDisplayMetrics().widthPixels - dp(24));
@@ -171,16 +191,22 @@ public final class SpaceHost {
         try {
             ((WindowManager) application.getSystemService(Context.WINDOW_SERVICE)).addView(host, params);
             overlay = host; refresh();
-        } catch (RuntimeException error) { overlay = null; status = null; panel = null; Log.e(TAG, "Overlay window rejected", error); }
+        } catch (RuntimeException error) { overlay = null; status = null; panel = null; menuContent = null; menuEpoch = -1; Log.e(TAG, "Overlay window rejected", error); }
     }
 
     private static void refresh() {
         if (!Settings.canDrawOverlays(application)) { removeOverlay(); return; }
-        if (checking || status == null || target == null) return;
+        if (status == null || target == null) return;
+        if (menuContent != null && menuEpoch != generation) {
+            menuEpoch = generation; menuContent.removeAllViews();
+            menuContent.addView(label("Меню: " + target + "\nПроверяем профиль и исходную версию APK…", 12));
+        }
+        if (checking) return;
         final String pkg = target; final int user = userId; final long epoch = generation;
         final TextView destination = status; checking = true;
         IO.execute(() -> {
             String text;
+            MenuProfile profile = null; String profileMessage = ""; boolean matches = false;
             try {
                 ReferenceKernel kernel = new ReferenceKernel(application.getClassLoader());
                 text = "Запуск запрошен: " + pkg + "\nПользователь пространства: " + user + "\n"
@@ -188,15 +214,47 @@ public final class SpaceHost {
                     + "\nGoogle Play: " + state(kernel.installed("com.android.vending", user))
                     + "\nСервисы Google: " + state(kernel.installed("com.google.android.gms", user))
                     + "\nGoogle Services Framework: " + state(kernel.installed("com.google.android.gsf", user));
+                try {
+                    profile = MenuProfileStore.load(application, pkg);
+                    if (profile == null) profileMessage = "Меню не передано. Выполните анализ в ModKit и передайте профиль.";
+                    else {
+                        List<File> sources = kernel.sources(pkg, user);
+                        matches = profile.matches(sources, new SourceInventory.Cancellation());
+                        List<File> current = kernel.sources(pkg, user);
+                        if (current.size() != sources.size()) matches = false;
+                        else for (int i = 0; i < current.size(); i++)
+                            if (!current.get(i).getCanonicalFile().equals(sources.get(i).getCanonicalFile())) matches = false;
+                        profileMessage = matches ? "Версия APK совпадает с анализом" : "APK отличается от анализа. Повторите анализ в ModKit.";
+                    }
+                } catch (Exception error) { profileMessage = "Профиль или версия APK не подтверждены: " + error.getClass().getSimpleName(); }
+
             } catch (Exception error) { text = "Не удалось проверить виртуальное окружение.\n" + error.getClass().getSimpleName(); Log.e(TAG, "Kernel query failed", error); }
             final String result = text;
+            final MenuProfile selectedProfile = profile; final String menuMessage = profileMessage; final boolean versionMatches = matches;
             UI.post(() -> {
                 checking = false;
-                if (generation == epoch && status == destination) destination.setText(result);
+                if (generation == epoch && status == destination) {
+                    destination.setText(result); renderMenu(selectedProfile, menuMessage, versionMatches);
+                }
                 else if (status != null) refresh();
             });
         });
     }
+    private static void renderMenu(MenuProfile profile, String message, boolean matches) {
+        if (menuContent == null) return;
+        menuContent.removeAllViews(); menuContent.addView(label(message, 12));
+        if (profile == null || !matches) return;
+        menuContent.addView(label(profile.label + " · " + profile.genre, 16));
+        menuContent.addView(label(android.text.TextUtils.join("\n", profile.engines), 12));
+        if (profile.truncated) menuContent.addView(label("Анализ неполный: часть пунктов/данных не включена", 12));
+        menuContent.addView(label("Исполнитель модов пространства ещё не подключён. Ни один пункт не изменяет игру.", 12));
+        if (profile.items.isEmpty()) menuContent.addView(label("Проверенные кандидаты для этой версии не найдены", 12));
+        for (MenuProfile.Item item : profile.items) {
+            menuContent.addView(label(item.title + " · " + ("static_recipe".equals(item.state) ? "статический рецепт" : "кандидат"), 14));
+            menuContent.addView(label(item.evidence + "\n" + item.detail, 11));
+        }
+    }
+
     private static void rememberTarget(String pkg, int user) {
         android.content.SharedPreferences prefs = application.getSharedPreferences("modkit_space_profiles", Context.MODE_PRIVATE);
         java.util.Set<String> profiles = new java.util.TreeSet<>(prefs.getStringSet("targets", java.util.Collections.emptySet()));
@@ -260,6 +318,6 @@ public final class SpaceHost {
     private static void removeOverlay() {
         if (overlay != null) try { ((WindowManager) application.getSystemService(Context.WINDOW_SERVICE)).removeViewImmediate(overlay); }
         catch (RuntimeException error) { Log.w(TAG, "Overlay already removed", error); }
-        overlay = null; panel = null; status = null; generation++;
+        overlay = null; panel = null; status = null; menuContent = null; menuEpoch = -1; generation++;
     }
 }

@@ -129,12 +129,18 @@ jobs:
         shell: bash
         run: |
           SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
-          "$SDK_MANAGER" 'build-tools;35.0.0'
+          "$SDK_MANAGER" 'build-tools;35.0.0' 'platforms;android-35'
           mkdir -p tools
+          cp "$ANDROID_HOME/platforms/android-35/android.jar" tools/android.jar
           curl --fail --location --retry 3 https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar -o tools/apktool.jar
           tar -C "$ANDROID_HOME" -czf tools/android-host-tools.tar.gz build-tools/35.0.0/d8 build-tools/35.0.0/apksigner build-tools/35.0.0/zipalign build-tools/35.0.0/lib build-tools/35.0.0/lib64
           test "$(stat -c %s tools/apktool.jar)" -lt 32000000
           split -b 24m tools/android-host-tools.tar.gz tools/sdk-part.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-host-android-api35
+          path: tools/android.jar
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
           name: local-host-apktool
