@@ -164,12 +164,12 @@ public final class SpaceHost {
         content.addView(button("Открыть Google Play в пространстве", () -> openGooglePlay()));
         content.addView(button("Обновить состояние", SpaceHost::refresh));
         analysisStatus = label("Проверка состава ещё не запускалась", 12); content.addView(analysisStatus);
-        content.addView(button("Проверить оригинальные APK", SpaceHost::analyzeSources));
+        content.addView(button("Анализировать оригинальное приложение", SpaceHost::analyzeSources));
         content.addView(button("Отменить проверку", () -> {
             cancelAnalysis();
             if (analysisStatus != null) analysisStatus.setText("Проверка отменена");
         }));
-        content.addView(label("Проверка состава не включает поиск модов или управление игрой. Эти функции ещё не подключены.", 12));
+        content.addView(label("Анализ DEX/ELF показывает структуру и признаки движков. Управление игрой ещё не подключено.", 12));
         content.addView(button("Скрыть оверлей", SpaceHost::removeOverlay));
         ScrollView scroll = new ScrollView(application); scroll.addView(content); scroll.setVisibility(View.GONE); panel = scroll;
         int width = Math.min(dp(330), application.getResources().getDisplayMetrics().widthPixels - dp(24));
@@ -226,6 +226,9 @@ public final class SpaceHost {
                 SourceInventory.Result result = SourceInventory.scan(pkg, user, inputs, token, message -> UI.post(() -> {
                     if (generation == epoch && analysisToken == token && analysisStatus == destination) destination.setText(message);
                 }));
+                String engineReport = SpaceEngine.run(application, result, token, message -> UI.post(() -> {
+                    if (generation == epoch && analysisToken == token && analysisStatus == destination) destination.setText(message);
+                }));
                 // An update/uninstall can replace the kernel record without changing the old file.
                 List<File> current = kernel.sources(pkg, user);
                 if (current.size() != result.sources.size()) throw new IllegalStateException("APK set changed");
@@ -237,10 +240,10 @@ public final class SpaceHost {
                 }
                 UI.post(() -> {
                     if (generation == epoch && analysisToken == token && analysisStatus == destination) {
-                        destination.setText(result.report); analysisToken = null;
+                        destination.setText(result.report + "\n" + engineReport); analysisToken = null;
                     }
                 });
-            } catch (Exception error) {
+            } catch (Exception | LinkageError error) {
                 UI.post(() -> {
                     if (generation == epoch && analysisToken == token && analysisStatus == destination) {
                         destination.setText("Проверка не завершена: " + error.getClass().getSimpleName()

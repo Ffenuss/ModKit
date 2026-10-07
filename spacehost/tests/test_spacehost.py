@@ -1,7 +1,7 @@
 import json, os, struct, sys, tempfile, unittest, zipfile, hashlib, zlib
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from patch_host import patch_bootstrap, patch_ads, verify_reference, ADVERTISEMENT_METHODS, ACTIVITIES
+from patch_host import patch_bootstrap, patch_ads, verify_reference, verify_engine_payload, ADVERTISEMENT_METHODS, ACTIVITIES
 from dex_inventory import Dex
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -31,6 +31,20 @@ class BootstrapTests(unittest.TestCase):
   with tempfile.TemporaryDirectory() as td:
    p=Path(td)/'wrong.apk';p.write_bytes(b'guest or unknown host')
    with self.assertRaises(ValueError):verify_reference(p)
+
+class EnginePayloadTests(unittest.TestCase):
+ def test_rejects_empty_engine(self):
+  with self.assertRaises(ValueError):verify_engine_payload(b'')
+ def test_rejects_apk_without_engine_dex(self):
+  import io
+  data=io.BytesIO()
+  with zipfile.ZipFile(data,'w') as z:z.writestr('AndroidManifest.xml',b'placeholder')
+  with self.assertRaises(ValueError):verify_engine_payload(data.getvalue())
+ def test_rejects_malformed_engine_dex(self):
+  import io
+  data=io.BytesIO()
+  with zipfile.ZipFile(data,'w') as z:z.writestr('classes.dex',b'dex\n035\0')
+  with self.assertRaises(ValueError):verify_engine_payload(data.getvalue())
 
 class ReferenceTests(unittest.TestCase):
  @classmethod

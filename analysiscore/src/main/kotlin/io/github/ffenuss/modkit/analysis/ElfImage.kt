@@ -58,7 +58,7 @@ class ElfImage private constructor(
         return if (is64Bit) u64(offset) else u32(offset)
     }
 
-    internal fun forEachRelativeRelocation(
+    fun forEachRelativeRelocation(
         action: (offsetVirtualAddress: Long, valueVirtualAddress: Long) -> Boolean,
     ) {
         for ((offset, value) in relativeRelocations) {
@@ -66,11 +66,11 @@ class ElfImage private constructor(
         }
     }
 
-    internal fun relativeRelocationValueAt(
+    fun relativeRelocationValueAt(
         virtualAddress: Long,
     ): Long? = relativeRelocations[virtualAddress]
 
-    internal fun readFileWindowAtVa(
+    fun readFileWindowAtVa(
         virtualAddress: Long,
         maxBytes: Int,
     ): ByteArray? {

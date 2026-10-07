@@ -2,10 +2,10 @@ name: Space host source checks
 on:
   push:
     branches: ["feature/space-**"]
-    paths: [spacehost/**, .github/workflows/space-host-source.yml]
+    paths: [spacehost/**, analysiscore/**, spaceengine/**, "*.gradle.kts", app/build.gradle.kts, app/src/main/java/io/github/ffenuss/modkit/analysis/**, .github/workflows/space-host-source.yml]
   pull_request:
     branches: [integration/road-to-1.0-20260929, main]
-    paths: [spacehost/**, .github/workflows/space-host-source.yml]
+    paths: [spacehost/**, analysiscore/**, spaceengine/**, "*.gradle.kts", app/build.gradle.kts, app/src/main/java/io/github/ffenuss/modkit/analysis/**, .github/workflows/space-host-source.yml]
   workflow_dispatch:
 jobs:
   source:
@@ -31,5 +31,28 @@ jobs:
           javac -cp build/space-host -d build/space-host spacehost/tests/SpacePolicyTest.java spacehost/tests/SourceInventoryTest.java
           java -cp build/space-host io.github.ffenuss.modkit.space.SpacePolicyTest
           java -cp build/space-host io.github.ffenuss.modkit.space.SourceInventoryTest
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - name: Test shared analysis module and engine carrier
+        run: gradle --no-daemon :analysiscore:test :spaceengine:testDebugUnitTest :spaceengine:assembleDebug
+      - name: Validate engine DEX ABI and private Kotlin runtime
+        run: |
+          python3 - <<'PY'
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, 'spacehost')
+          from patch_host import verify_engine_payload
+          apk = Path('spaceengine/build/outputs/apk/debug/spaceengine-debug.apk')
+          print('Engine SHA-256:', verify_engine_payload(apk.read_bytes()))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: space-engine-validation
+          path: |
+            analysiscore/build/reports/tests/
+            spaceengine/build/reports/tests/
+            spaceengine/build/outputs/apk/debug/*.apk
       - name: Verify builder shell syntax
         run: bash -n spacehost/build.sh

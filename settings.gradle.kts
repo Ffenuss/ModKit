@@ -19,3 +19,6 @@ include(":app")
 include(":runtimeprobe")
 include(":testgame")
 include(":nativefixture")
+
+include(":analysiscore")
+include(":spaceengine")

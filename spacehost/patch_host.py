@@ -1,4 +1,5 @@
 """Exact-reference host patching. Never accepts or rewrites guest APKs."""
+import io
 import argparse, hashlib, json, re, struct, zipfile, zlib
 from pathlib import Path
 from dex_inventory import Dex
@@ -96,11 +97,33 @@ def verify_overlay_payload(payload):
  defined={d.methods[i] for i,f,o in d.defined if o and f&9==9}
  if not expected<=defined:raise ValueError('Overlay bootstrap methods missing')
 
-def pack(reference,rebuilt,dex_payload,output):
+ENGINE_ASSET = 'assets/modkit-space-engine.apk'
+ENGINE_HASH = 'assets/modkit-space-engine.sha256'
+def verify_engine_payload(payload):
+ if not payload or len(payload)>64*1024*1024:raise ValueError('Engine carrier exceeds bounded size')
+ expected=('Lio/github/ffenuss/modkit/spaceengine/SpaceAnalysisBridge;','analyze','([Ljava/io/File;Ljava/io/File;Ljava/util/function/BooleanSupplier;Ljava/util/function/Consumer;)Ljava/lang/String;')
+ defined=set();types=set()
+ with zipfile.ZipFile(io.BytesIO(payload)) as z:
+  names=z.namelist()
+  if len(names)!=len(set(names)):raise ValueError('Duplicate engine carrier entries')
+  dex_names=[n for n in names if re.fullmatch(r'classes(?:[2-9]|[1-9][0-9]+)?\.dex',n)]
+  if 'classes.dex' not in dex_names or len(dex_names)>8:raise ValueError('Invalid engine DEX set')
+  for name in dex_names:
+   if z.getinfo(name).file_size>64*1024*1024:raise ValueError('Oversized engine DEX')
+   d=Dex(z.read(name));types.update(d.types)
+   defined.update(d.methods[i] for i,f,o in d.defined if o and f&9==9)
+ if expected not in defined:raise ValueError('Engine bridge ABI missing')
+ if 'Lkotlin/jvm/internal/Intrinsics;' not in types:raise ValueError('Private Kotlin runtime missing')
+ if 'Lio/github/ffenuss/modkit/analysis/PortableArtifactIndexer;' not in types:raise ValueError('Shared analysis indexer missing')
+ return sha(payload)
+
+def pack(reference,rebuilt,dex_payload,output,engine_apk):
  verify_reference(reference)
  payload=Path(dex_payload).read_bytes()
  verify_overlay_payload(payload)
+ engine=Path(engine_apk).read_bytes();engine_hash=verify_engine_payload(engine)
  with zipfile.ZipFile(reference) as src,zipfile.ZipFile(rebuilt) as mod,zipfile.ZipFile(output,'w') as dst:
+  if ENGINE_ASSET in src.namelist() or ENGINE_HASH in src.namelist():raise ValueError("Engine assets already present")
   changed=set()
   for info in src.infolist():
    if old_signature(info.filename):continue
@@ -112,18 +135,20 @@ def pack(reference,rebuilt,dex_payload,output):
    dst.writestr(info,data)
   if changed!={'classes2.dex'}:raise ValueError('Unexpected changed host DEX set: '+str(changed))
   dst.writestr('classes4.dex',payload,compress_type=zipfile.ZIP_DEFLATED)
+  dst.writestr(ENGINE_ASSET,engine,compress_type=zipfile.ZIP_STORED)
+  dst.writestr(ENGINE_HASH,engine_hash.encode('ascii'),compress_type=zipfile.ZIP_STORED)
  with zipfile.ZipFile(reference) as src,zipfile.ZipFile(output) as dst:
   for info in src.infolist():
    n=info.filename
    if old_signature(n) or n=='classes2.dex':continue
    if dst.read(n)!=src.read(n):raise ValueError('Unrelated entry changed: '+n)
- return dict(reference_sha256=REFERENCE_SHA256,changed_dex=['classes2.dex'],added_dex=['classes4.dex'],manifest_unchanged=True,native_engine_unchanged=True,guest_apks_rewritten=0,device_verified=False)
+ return dict(reference_sha256=REFERENCE_SHA256,changed_dex=['classes2.dex'],added_dex=['classes4.dex'],engine_sha256=engine_hash,manifest_unchanged=True,native_engine_unchanged=True,guest_apks_rewritten=0,device_verified=False)
 
 if __name__=='__main__':
  p=argparse.ArgumentParser();sub=p.add_subparsers(dest='action',required=True)
  a=sub.add_parser('ads');a.add_argument('reference');a.add_argument('output');a.add_argument('--report',required=True)
  a=sub.add_parser('bootstrap');a.add_argument('decoded')
- a=sub.add_parser('pack');a.add_argument('reference');a.add_argument('rebuilt');a.add_argument('payload');a.add_argument('output');a.add_argument('--report',required=True)
+ a=sub.add_parser('pack');a.add_argument('reference');a.add_argument('rebuilt');a.add_argument('payload');a.add_argument('output');a.add_argument('--report',required=True);a.add_argument('--engine',required=True)
  a=p.parse_args()
  if a.action=='ads':
   verify_reference(a.reference)
@@ -134,4 +159,4 @@ if __name__=='__main__':
     dst.writestr(info,b)
   Path(a.report).write_text(json.dumps(report,indent=2))
  elif a.action=='bootstrap':print(json.dumps(patch_bootstrap(a.decoded)))
- else:Path(a.report).write_text(json.dumps(pack(a.reference,a.rebuilt,a.payload,a.output),indent=2))
+ else:Path(a.report).write_text(json.dumps(pack(a.reference,a.rebuilt,a.payload,a.output,a.engine),indent=2))
