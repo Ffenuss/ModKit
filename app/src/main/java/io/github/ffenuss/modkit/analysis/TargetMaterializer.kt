@@ -53,7 +53,8 @@ object TargetMaterializer {
             ?.ifBlank { null }
             ?: "target.bin"
 
-        val output = File(directory, "${System.nanoTime()}-$safeName")
+        val operationDirectory = File(directory, java.util.UUID.randomUUID().toString()).apply { mkdirs() }
+        val output = File(operationDirectory, safeName)
         val digest = MessageDigest.getInstance("SHA-256")
         var copied = 0L
         var lastHeartbeat = 0L
@@ -100,7 +101,7 @@ object TargetMaterializer {
                 sha256 = digest.digest().toHex(),
             )
         } catch (t: Throwable) {
-            output.delete()
+            operationDirectory.deleteRecursively()
             throw t
         }
     }

@@ -294,36 +294,17 @@ object AnalysisManager {
         }
 
         val job = scope.launch(start = CoroutineStart.LAZY) {
+            var openedTarget: OpenedTarget? = null
             try {
                 val progressSink = ProgressSink {
                     publishProgress(runId, target, startedAt, it)
                 }
 
-                val prepared = when (target) {
-                    is AnalysisTargetDescriptor.FileUri -> {
-                        val uri = Uri.parse(target.uri)
-                        val materialized = withContext(Dispatchers.IO) {
-                            TargetMaterializer.fromUri(
-                                context = context,
-                                uri = uri,
-                                cancellation = signal,
-                                progress = progressSink,
-                            )
-                        }
-                        PreparedInput(
-                            files = listOf(materialized.file),
-                            knownSha256 = mapOf(
-                                materialized.file.absolutePath to materialized.sha256,
-                            ),
-                        )
-                    }
-                    is AnalysisTargetDescriptor.InstalledPackage -> {
-                        val installed = withContext(Dispatchers.IO) {
-                            InstalledAppRepository(context).find(target.packageName)
-                        } ?: error("Установленное приложение больше недоступно: ${target.packageName}")
-                        PreparedInput(files = installed.apkFiles)
-                    }
+                val opened = withContext(Dispatchers.IO) {
+                    TargetPackageSet.open(context, target, signal, progressSink)
                 }
+                openedTarget = opened
+                val prepared = PreparedInput(opened.files, opened.knownSha256)
 
                 val engineCache = EngineResultCache(
                     File(context.filesDir, "analysis-cache"),
@@ -363,6 +344,18 @@ object AnalysisManager {
                     executionJournal = executionJournal,
                 )
 
+                progressSink.publish(EngineProgress("space.menu", EngineScheduleClass.CONFIRMATION, RunState.RUNNING,
+                    currentTask = "Готовим меню для пространства", lastHeartbeatEpochMs = System.currentTimeMillis()))
+                try {
+                    val menu = io.github.ffenuss.modkit.space.SpaceMenuCoordinator.prepare(context, target, result, signal, progressSink, workspace)
+                    result = result.copy(spaceMenu = menu)
+                } catch (cancelled: AnalysisCancelledException) { throw cancelled }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) {
+                    result = result.copy(engineWarnings = result.engineWarnings +
+                        ("Меню пространства не создано: " + (failure.message ?: failure.javaClass.simpleName)))
+                }
+                if (signal.isCancelled()) throw AnalysisCancelledException()
                 synchronized(lock) {
                     if (currentRunId() == runId) {
                         mutableState.value = AnalysisRunState.Completed(runId, target, result)
@@ -398,6 +391,7 @@ object AnalysisManager {
                     }
                 }
             } finally {
+                openedTarget?.close()
                 synchronized(lock) {
                     if (currentRunId() == runId &&
                         mutableState.value !is AnalysisRunState.Running &&

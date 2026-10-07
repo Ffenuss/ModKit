@@ -33,13 +33,15 @@ val prepareSpaceDeviceFixtures = tasks.register("prepareSpaceDeviceFixtures") {
         rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SpaceEngine.java"),
         rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SourceInventory.java"),
         rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SpacePolicy.java"),
+        rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/MenuProfile.java"),
+        rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/MenuProfileStore.java"),
     )
     inputs.file(layout.buildDirectory.file("outputs/apk/debug/spaceengine-debug.apk"))
     outputs.dir(deviceFixtureRoot)
     doLast {
         val root = deviceFixtureRoot.get().asFile
         val javaDir = root.resolve("java/io/github/ffenuss/modkit/space").apply { mkdirs() }
-        for (name in listOf("SpaceEngine.java", "SourceInventory.java", "SpacePolicy.java")) {
+        for (name in listOf("SpaceEngine.java", "SourceInventory.java", "SpacePolicy.java", "MenuProfile.java", "MenuProfileStore.java")) {
             rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/$name").copyTo(javaDir.resolve(name), overwrite = true)
         }
         val carrier = layout.buildDirectory.file("outputs/apk/debug/spaceengine-debug.apk").get().asFile.readBytes()

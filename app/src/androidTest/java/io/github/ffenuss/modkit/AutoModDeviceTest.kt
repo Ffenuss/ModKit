@@ -267,75 +267,137 @@ class AutoModDeviceTest {
             val apk = built.files.single { it.file.name == analysis.index.sources[selected.apkIndex].displayName }.file
             val bytes = ZipFile(apk).use { zip -> zip.getInputStream(zip.getEntry(selected.dexEntry)).use { it.readBytes() } }
             val dex = DexBackedDexFile(Opcodes.getDefault(), bytes)
-            val method = dex.classes.single { it.type == selected.className…27243 tokens truncated…ion inventory is connected; IL2CPP code-address binding and runtime mutation controllers are not connected; there are no pretend gameplay toggles. Successful launch, overlay lifetime, all host advertising surfaces, Google sign-in and actual game compatibility still require Android device tests. Advertising SDKs and their network initialization remain present; this stage suppresses the proven launch/resume interstitial surfaces, not every possible advertisement format. Google APKs are neither fabricated nor redistributed. Their existing handling in the kernel is preserved; this module does not claim that every device already has all Google packages in its virtual user.
+            val method = dex.classes.single { it.type == selected.className }.methods.single {
+                it.name == selected.methodName && it.parameterTypes.isEmpty() && "()" + it.returnType == selected.signature
+            }
+            assertEquals(DexMethodBodyKind.CONSTANT_RETURN, DexMethodBodyInspector.inspect(method).kind)
+            assertEquals(9999, (method.implementation!!.instructions.first() as NarrowLiteralInstruction).narrowLiteral)
+        }
+        val plan = RepackedRuntimeInstallPlanner.plan(built, signal)
 
-The old host package identity is retained because changing it previously broke virtual initialization. Do not uninstall an existing working space just to install this build. A same-package update requires its existing signing key; an unrelated key will cause Android's normal signer conflict.
+        device.executeShellCommand("appops set ${context.packageName} REQUEST_INSTALL_PACKAGES allow")
+        assertEquals(RepackedRuntimeInstallReadinessState.INSTALLED_SIGNATURE_CONFLICT,
+            AndroidRepackedRuntimeInstaller.inspectReadiness(context, plan).state)
+        // The production app never uninstalls the original. This is test-fixture cleanup only.
+        assertTrue(device.executeShellCommand("pm uninstall $fixturePackage").contains("Success"))
+        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        device.waitForIdle()
+        val attemptedAt = System.currentTimeMillis()
+        val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+        val directInstall = awaitInstallResult(
+            attemptedAt, 100_000L, expectedSessionId = submission.sessionId,
+        )
+        assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, directInstall.kind)
+        launchGame()
+        assertTrue(device.hasObject(By.text("ALIVE | Health: 9999")))
+        repeat(3) { hit() }
+        assertTrue("Patched getter must feed the real death rule", device.hasObject(By.text("ALIVE | Health: 9999")))
+        repeat(3) {
+            device.findObject(By.text(Pattern.compile("sprint", Pattern.CASE_INSENSITIVE))).click()
+            device.waitForIdle()
+        }
+        assertTrue("The patched conditional getter must allow sprinting with empty stamina", device.hasObject(By.text("Distance: 3")))
+        evidence("modified-game.png") { device.takeScreenshot(it) }
+        evidence("metrics.json") { file -> file.writeText(JSONObject()
+            .put("device", android.os.Build.MODEL).put("api", android.os.Build.VERSION.SDK_INT)
+            .put("methodsExamined", scan.methodsExamined).put("candidates", scan.opportunities.size)
+            .put("selectableMethods", scan.opportunities.count { it.selectable })
+            .put("selectedRecipes", 2).put("patchedMethods", health.dex.size + sprint.dex.size)
+            .put("signedApks", built.files.size).put("runtimeConfirmedRecipes", 2)
+            .put("baselineAfterThreeSprints", 2).put("modifiedAfterThreeSprints", 3)
+            .put("baselineAfterThreeHits", "GAME OVER | Health: 0")
+            .put("modifiedAfterThreeHits", "ALIVE | Health: 9999")
+            .put("outputSha256", org.json.JSONArray(built.files.map { it.sha256 })).toString(2)) }
+    }
 
-## Build
+    @Test fun d_nativeOverlayChangesAndRestoresActualCode() {
+        NativeOverlayDeviceScenario(instrumentation, device).run(::evidence) { plan ->
+            assertTrue(context.packageManager.canRequestPackageInstalls())
+            context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            device.waitForIdle()
+            val attemptedAt = System.currentTimeMillis()
+            val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+            val result = awaitInstallResult(attemptedAt, 100_000L, expectedSessionId = submission.sessionId)
+            assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, result.kind)
+        }
+    }
 
-Requires Python 3.10+, Java 17, apktool 2.12.1+, Android API35 SDK and build-tools35. Set:
+    @Test fun e_dexOverlayRestoresOriginalGameLogic() {
+        DexOverlayDeviceScenario(instrumentation, device).run(::evidence) { plan ->
+            context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            device.waitForIdle()
+            val attemptedAt = System.currentTimeMillis()
+            val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+            val result = awaitInstallResult(attemptedAt, 100_000L, expectedSessionId = submission.sessionId)
+            assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, result.kind)
+        }
+    }
 
-- `MODKIT_SPACE_ENGINE_APK` — APK from `gradle :spaceengine:assembleDebug` (a private DEX carrier, never installed as a guest)
-- `ANDROID_SDK_ROOT`
-- `MODKIT_SPACE_KEYSTORE` — existing host/QA keystore
-- `MODKIT_SPACE_ALIAS`
-- `MODKIT_SPACE_STORE_PASSWORD`
-- optional `MODKIT_SPACE_BUILD_TOOLS` and `MODKIT_SPACE_ANDROID_JAR`
-
-Run `bash spacehost/build.sh /path/to/Launcher.apk /path/to/ModKit-Space.apk`.
-
-The reference SHA256 must be `251acbe2e3199b4a7b6454a495dcdeac0a479dfa00b14066f4615fed37bc6719`. Any different or already modified APK is rejected. No guest APK is a build input.
-
-## Verification
-
-`python3 -m unittest discover -s spacehost/tests -v` checks bootstrap preservation and rejects unsupported inputs. Supplying `MODKIT_SPACE_REFERENCE=/path/to/Launcher.apk` also runs the exact-reference DEX tests, which check all unselected method bodies and the Google/virtual-launch ABI. The source workflow does not have the proprietary host and explicitly skips those reference-only tests.
-
-Local verification on 2026-10-07: six Python tests passed, including both reference-only tests. Java compilation against API35 passed and the authored Java session-identity test passed. APK assembly, signing and device execution were not performed in that environment because apktool/D8 build binaries were unavailable and their download was blocked.
-
-## Source-session verification (2026-10-07)
-
-Java API35 compilation, `SpacePolicyTest`, `SourceInventoryTest` and all six Python tests (with the reference host) passed. The inventory fixtures cover base/split aggregation, unchanged input hashes, unique sessions, user identity, cancellation, missing/duplicate inputs, malformed ZIPs and source replacement during scanning. The reference DEX checks now also verify the `ck` and `InstalledAppInfo.f` ABI remains unchanged.
-
-An additional attempt to inventory the previously available local game APK set failed with `zip END header not found`; no successful game inventory is claimed for those local files. The host source is not yet assembled into a signed APK or tested on a device.
-
-The source workflow also runs on `feature/space-*` pushes and executes the new inventory tests. It still needs the proprietary reference locally for the two reference-only checks.
-
-## Shared engine integration
-
-`:analysiscore` contains the original ModKit artifact models, indexer, runtime fingerprint profiler and DEX/ELF inventory engines. The app retains `FastArtifactIndexer` as an adapter for its routing, evidence graph and persistent cache. The portable indexer now propagates cancellation inside ZIP traversal rather than returning a warning, and rejects ambiguous container names.
-
-`:spaceengine` packages the shared module and its Kotlin runtime. The builder verifies its public bridge ABI, stores the carrier plus SHA-256 in new host assets, and preserves every original host entry except the already documented `classes2.dex` replacement/signatures. `SpaceEngine` checks the carrier identity, stages it read-only in private code cache, and loads engine/Kotlin namespaces separately from the old host. Only Java platform types cross the boundary. Temporary ELF files are removed after each run.
-
-The overlay's analysis action now invokes this bridge before rechecking source hashes and virtual package metadata. A report remains structural evidence rather than an available modification. DEX analysis is bounded to the fixed header; ELF analysis includes segments and dynamic symbols; IL2CPP metadata definitions are now decoded using the same reader as the app, with a bounded inventory and explicit counts/limitations.
-
-At commit time, local Java/API35 compilation and nine Python tests passed. JVM Kotlin tests and the actual carrier APK build are delegated to the expanded source workflow; their result must be checked before considering the integration validated.
-
-## Metadata inventory
-
-The host now extracts IL2CPP metadata into unique private temporary files, verifies entry sizes/CRC, and calls the shared `Il2CppMetadataReader`. Reports preserve container/path, parsed and declared counts, version/support/truncation, and a bounded selection of actual image/type/method/field names and tokens. Metadata tokens are not code addresses or change-ready mod offsets. Unsupported layouts retain diagnostics without fabricated definitions.
-
-The phone inventory attempts at most four files, 64 MiB per file and 128 MiB in total; per-file reader limits are 20000 types, 75000 methods/fields and 2048 images. These do not reduce the main app reader's default limits. Temporary files are deleted on success, parse failure, cancellation and extraction errors. Source integrity is checked again by the host session afterward.
-
-The shared reader now sweeps bounded field indices rather than expanding each type's range. Invalid ranges are reported; overlapping ownership remains unresolved. This avoids quadratic work on damaged metadata without inventing owners. Carrier verification requires the actual shared metadata class definitions, so an older header-only carrier is rejected. New metadata tests are pending CI at this change's publication.
-
-
-## Main application and shared space
-
-Analysis stays in the ModKit application. A completed analysis offers **Скачать пространство**. The download channel checks non-draft, non-prerelease GitHub releases for the exact `modkit-space.apk` asset; the empty channel reports that the host has not been published. It never substitutes the engine carrier or a per-game repack.
-
-The host no longer exposes analysis controls. Its existing original application picker remains responsible for installation and launch. Launch opens the overlay menu immediately when overlay permission is granted. Settings retain separate package/virtual-user targets across host updates and can launch a previously opened target after checking it is still installed. Adding a new target does not remove other targets. Google components and the virtual kernel are retained.
-
-These are target menu profiles, not completed runtime mod recipes: analysis-result transfer, recipe execution, artifact-version binding and different menus for different target applications are still pending. No gameplay switches are presented until a real executor exists. The `spaceengine` carrier remains packaged for internal validation but is not exposed as analysis UI in the host.
-
-The source CI can export public Android build tools and apktool for local signing. The proprietary host and signing keystore never enter CI or git. Signed APK delivery still requires local payload verification and Android device validation before publishing the shared release asset.
-
-
-## Version-bound per-application menu handoff
-
-Each analyzed application has one menu profile. Different packages keep independent profiles in the same host; importing one never replaces another package. The application expands APK/APKS/XAPK/ZIP APK sets for indexing, scanning and subsequent SHA checks, preserving original inner filenames in unique private staging. Archive extraction validates size/CRC and deletes only its own staging on error/cancellation/close. Non-APK downloaded data/OBB and unsupported executable formats still require additional analysis backends.
-
-Menu preparation runs automatically before completed analysis, using the same source workspace. Existing DEX and proven IL2CPP recipe discovery feeds the profile; genre inference requires at least two independent declared-symbol signals and an unambiguous match. Engine evidence and genre search priorities never imply executable support. Unsupported/ambiguous genres remain unknown. Menu JSON distinguishes candidates from statically prepared recipes and explicitly advertises `backend: none` until a guest-process executor is integrated.
-
-The ModKit FileProvider grants a data-only JSON profile to the exact existing host MainActivity. The original host updates its intent in `onNewIntent`; lifecycle resume consumes it. The host accepts only bounded supported profiles from the ModKit provider route, atomically saves by package, and chooses the corresponding menu on launch. It compares the complete multiset of APK byte hashes/sizes against actual virtual sources, allowing kernel path/name changes but rejecting updated/missing/substituted APKs. Stale async target results do not render into the current target menu. No guest APK is modified.
-
-Tests cover archive extraction/cancellation/limits, cautious genre planning, Android profile isolation and stale-byte rejection, plus main-app preparation from the owned APK-set fixture and readable FileProvider handoff. These tests do not prove arbitrary real-game effects or the proprietary host's on-device launch.
+    @Test fun c_installButtonInstallsTheUiBuildAfterTheOriginalConflictIsResolved() {
+        // The original certificate conflict was checked in b. The app produced by a
+        // uses the same persistent ModKit key and can now update our owned fixture.
+        assertTrue(context.packageManager.canRequestPackageInstalls())
+        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val installButton = device.wait(Until.findObject(By.text("Установить")), 15_000)
+        assertNotNull("Retained UI build must remain installable", installButton)
+        val previousSessionId = RepackedRuntimeInstallStatusStore.status.value.sessionId
+        val attemptedAt = System.currentTimeMillis()
+        installButton.click()
+        // A late callback from the direct-install test must never satisfy
+        // this UI install assertion or be mistaken for its own success.
+        val newSessionDeadline = System.currentTimeMillis() + 45_000L
+        var uiSessionId: Int? = null
+        while (System.currentTimeMillis() < newSessionDeadline) {
+            val current = RepackedRuntimeInstallStatusStore.status.value
+            if (current.updatedAtEpochMs >= attemptedAt &&
+                current.sessionId != null && current.sessionId != previousSessionId
+            ) {
+                uiSessionId = current.sessionId
+                break
+            }
+            device.wait(Until.hasObject(By.text("Приложение установлено")), 500)
+        }
+        val actualUiSession = requireNotNull(uiSessionId) {
+            "The retained UI install button must submit its own PackageInstaller session."
+        }
+        val completed: RepackedRuntimeInstallStatus
+        try {
+            completed = awaitInstallResult(
+                attemptedAt, 100_000L, expectedSessionId = actualUiSession,
+                manualUiFallback = true,
+            )
+        } finally {
+            evidence("ui-install-state.png") { device.takeScreenshot(it) }
+            evidence("ui-install-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+        }
+        assertTrue(
+            "A new installation must complete from the retained UI build",
+            completed.updatedAtEpochMs >= attemptedAt,
+        )
+        assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, completed.kind)
+        device.executeShellCommand("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
+        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val launch = requireNotNull(device.wait(Until.findObject(By.text(Pattern.compile(
+            "Запустить с мод-меню|Разрешить окно поверх игры"))), 15_000))
+        launch.click()
+        assertTrue("New UI builds must preserve original behaviour while OFF",
+            device.wait(Until.hasObject(By.text("ALIVE | Health: 20")), 15_000))
+        assertTrue(device.wait(Until.hasObject(By.desc("Открыть мод-меню ModKit")), 10_000))
+        assertTrue(device.wait(Until.gone(By.desc("Встроенное мод-меню ModKit")), 10_000))
+        assertEquals("Simple Mode must show only one MK button", 1, device.findObjects(By.text("MK")).size)
+        try {
+            val bubble = By.desc("Открыть мод-меню ModKit")
+            requireNotNull(device.wait(Until.findObject(bubble), 10_000)).click()
+            val healthSwitch = By.desc("Мод: Здоровье · значение 9999")
+            requireNotNull(device.wait(Until.findObject(healthSwitch.enabled(true)), 10_000)).click()
+            assertTrue(device.wait(Until.hasObject(healthSwitch.checked(true)), 15_000))
+            device.findObject(bubble).click()
+            repeat(3) { hit() }
+            assertTrue("The APK selected and installed through the UI must change gameplay after enabling",
+                device.hasObject(By.text("ALIVE | Health: 9999")))
+            evidence("ui-installed-game.png") { device.takeScreenshot(it) }
+        } finally {
+            context.stopService(Intent(context, ModKitRuntimeOverlayService::class.java))
+        }
+    }
+}

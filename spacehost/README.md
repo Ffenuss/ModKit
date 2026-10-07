@@ -77,6 +77,17 @@ Analysis stays in the ModKit application. A completed analysis offers **Скач
 
 The host no longer exposes analysis controls. Its existing original application picker remains responsible for installation and launch. Launch opens the overlay menu immediately when overlay permission is granted. Settings retain separate package/virtual-user targets across host updates and can launch a previously opened target after checking it is still installed. Adding a new target does not remove other targets. Google components and the virtual kernel are retained.
 
-These are target menu profiles, not completed runtime mod recipes: analysis-result transfer, recipe execution, artifact-version binding and multiple named mod menus per target are still pending. No gameplay switches are presented until a real executor exists. The `spaceengine` carrier remains packaged for internal validation but is not exposed as analysis UI in the host.
+These are target menu profiles, not completed runtime mod recipes: analysis-result transfer, recipe execution, artifact-version binding and different menus for different target applications are still pending. No gameplay switches are presented until a real executor exists. The `spaceengine` carrier remains packaged for internal validation but is not exposed as analysis UI in the host.
 
 The source CI can export public Android build tools and apktool for local signing. The proprietary host and signing keystore never enter CI or git. Signed APK delivery still requires local payload verification and Android device validation before publishing the shared release asset.
+
+
+## Version-bound per-application menu handoff
+
+Each analyzed application has one menu profile. Different packages keep independent profiles in the same host; importing one never replaces another package. The application expands APK/APKS/XAPK/ZIP APK sets for indexing, scanning and subsequent SHA checks, preserving original inner filenames in unique private staging. Archive extraction validates size/CRC and deletes only its own staging on error/cancellation/close. Non-APK downloaded data/OBB and unsupported executable formats still require additional analysis backends.
+
+Menu preparation runs automatically before completed analysis, using the same source workspace. Existing DEX and proven IL2CPP recipe discovery feeds the profile; genre inference requires at least two independent declared-symbol signals and an unambiguous match. Engine evidence and genre search priorities never imply executable support. Unsupported/ambiguous genres remain unknown. Menu JSON distinguishes candidates from statically prepared recipes and explicitly advertises `backend: none` until a guest-process executor is integrated.
+
+The ModKit FileProvider grants a data-only JSON profile to the exact existing host MainActivity. The original host updates its intent in `onNewIntent`; lifecycle resume consumes it. The host accepts only bounded supported profiles from the ModKit provider route, atomically saves by package, and chooses the corresponding menu on launch. It compares the complete multiset of APK byte hashes/sizes against actual virtual sources, allowing kernel path/name changes but rejecting updated/missing/substituted APKs. Stale async target results do not render into the current target menu. No guest APK is modified.
+
+Tests cover archive extraction/cancellation/limits, cautious genre planning, Android profile isolation and stale-byte rejection, plus main-app preparation from the owned APK-set fixture and readable FileProvider handoff. These tests do not prove arbitrary real-game effects or the proprietary host's on-device launch.

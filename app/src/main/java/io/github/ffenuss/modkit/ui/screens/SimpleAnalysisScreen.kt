@@ -1,6 +1,8 @@
 package io.github.ffenuss.modkit.ui.screens
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -38,10 +40,10 @@ fun SimpleAnalysisScreen(title: String, progress: EngineProgress?, result: FastA
             }
         }
     }) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Text("Анализ в ModKit", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
             Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.weight(0.3f))
+
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                     if (active) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -77,7 +79,7 @@ fun SimpleAnalysisScreen(title: String, progress: EngineProgress?, result: FastA
             }
             Text("Анализ выполняется в ModKit. Оригинальные приложения запускаются в едином пространстве с отдельным меню для каждой игры.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.weight(1f))
+            if (result != null && !active && !cancelled && error == null && partialNotice == null) SpaceMenuCard(result)
         }
     }
 }

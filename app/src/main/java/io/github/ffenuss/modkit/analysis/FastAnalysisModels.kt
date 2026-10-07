@@ -21,4 +21,5 @@ data class FastAnalysisResult(
     val unrealAssetInventory: UnrealAssetInventoryResult? = null,
     val flutterAssetInventory: FlutterAssetInventoryResult? = null,
     val engineExecutions: EngineExecutionLedger = EngineExecutionLedger(),
+    val spaceMenu: io.github.ffenuss.modkit.space.SpaceMenuSummary? = null,
 )
