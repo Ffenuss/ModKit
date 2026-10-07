@@ -1,0 +1,38 @@
+[
+  {
+    "method": "Lcom/dualspace/multispace/ads/InsertAdHandlerActivity;->g(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+    "code_sha256": "f36ee8d679d419383397ce6b7b5b214ee578cb89b979a88c17b11cd7715898bb",
+    "offset": 4417212,
+    "code_units": 39
+  },
+  {
+    "method": "Lcom/dualspace/multispace/ads/MainInsertAdHandlerActivity;->f(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+    "code_sha256": "e71f3b89c45319e3b21df4dacfcc706106c301fd37f6a7927eaf2e308e030e29",
+    "offset": 4417616,
+    "code_units": 39
+  },
+  {
+    "method": "Lcom/dualspace/multispace/ads/d/c;->c(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;)V",
+    "code_sha256": "cb3be843a2887944872bd3466ae052211f8ee36b5d23d8baae0600bcc80a3779",
+    "offset": 4437220,
+    "code_units": 65
+  },
+  {
+    "method": "Lcom/dualspace/multispace/ads/VappStateReceiver;->onReceive(Landroid/content/Context;Landroid/content/Intent;)V",
+    "code_sha256": "a82b7651942e6a14838c6013763e645b06ea289eaa2004ef5372174c03d03c04",
+    "offset": 4418468,
+    "code_units": 189
+  },
+  {
+    "method": "Lcom/dualspace/multispace/ads/InsertAdHandlerActivity;->onCreate(Landroid/os/Bundle;)V",
+    "code_sha256": "b4f5f4dadae97ab5d21d8f936e15c8c2aa729820457cdeb7eb8b4b8dff7f55e1",
+    "offset": 4417356,
+    "code_units": 82
+  },
+  {
+    "method": "Lcom/dualspace/multispace/ads/MainInsertAdHandlerActivity;->onCreate(Landroid/os/Bundle;)V",
+    "code_sha256": "9e164fbc7371f7f7fcf86cbbc941f520655bd88643608d0196778b516cdc7494",
+    "offset": 4418108,
+    "code_units": 115
+  }
+]
