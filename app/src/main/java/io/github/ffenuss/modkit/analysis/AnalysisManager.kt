@@ -301,9 +301,8 @@ object AnalysisManager {
                 }
 
                 val opened = withContext(Dispatchers.IO) {
-                    TargetPackageSet.open(context, target, signal, progressSink)
+                    TargetPackageSet.open(context, target, signal, progressSink).also { openedTarget = it }
                 }
-                openedTarget = opened
                 val prepared = PreparedInput(opened.files, opened.knownSha256)
 
                 val engineCache = EngineResultCache(

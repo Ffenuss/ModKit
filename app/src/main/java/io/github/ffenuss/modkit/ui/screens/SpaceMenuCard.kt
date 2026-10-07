@@ -39,8 +39,10 @@ fun SpaceMenuCard(result: FastAnalysisResult) {
                         context.startActivity(Intent("io.github.ffenuss.modkit.OPEN_SPACE_MENU")
                             .setClassName(host, "com.dualspace.multispace.MainActivity")
                             .setDataAndType(uri, "application/json")
-                            .setClipData(ClipData.newRawUri("ModKit menu", uri))
-                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                            .apply {
+                                clipData = ClipData.newRawUri("ModKit menu", uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            })
                         message = "Меню передано. Выберите приложение в пространстве."
                     } catch (error: Exception) { message = error.message ?: "Не удалось открыть пространство" }
                 }, modifier = Modifier.fillMaxWidth()) { Text("Передать меню в пространство") }
