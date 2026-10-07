@@ -44,7 +44,10 @@ object SpaceMenuCoordinator {
                 val symbols = (result.il2cppFastDump?.metadata?.methods.orEmpty().asSequence().map { it.name } +
                     result.il2cppFastDump?.metadata?.fields.orEmpty().asSequence().map { it.name } +
                     dex.opportunities.asSequence().map { it.methodName }).asIterable()
-                val plan = GameAnalysisPlanner.plan(result.index, symbols)
+                val selectedGenre = SavedSpaceMenus.load(context).firstOrNull { it.packageName == pkg }?.let { saved ->
+                    runCatching { GameGenre.valueOf(JSONObject(saved.file.readText()).getString("genreKey")) }.getOrNull()
+                }
+                val plan = GameAnalysisPlanner.plan(result.index, symbols, selectedGenre)
                 val ordered = recipes.sortedWith(compareBy<AutoModRecipe> { recipe ->
                     plan.searchPriorities.indexOfFirst { priority -> recipe.category.contains(priority.substringBefore(" /"), true) }
                         .let { if (it < 0) Int.MAX_VALUE else it }
@@ -67,6 +70,7 @@ object SpaceMenuCoordinator {
                         .put("evidence", recipe.targetLabel.take(256))
                         .put("state", if (recipe.selectable && recipe.verification.recipePrepared) "static_recipe" else "candidate")
                         .put("detail", (recipe.blocker ?: recipe.description).take(400)) }))
+                selectedGenre?.let { profile.put("genreKey", it.name) }
                 if (cancellation.isCancelled()) throw AnalysisCancelledException()
                 // Rehash after scanners; no profile may bind stale or changing source bytes.
                 val after = PortableArtifactIndexer.index(files, cancellation, progress).index

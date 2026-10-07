@@ -4,7 +4,7 @@ on:
     branches: ["feature/space-**"]
     paths: [spacehost/**, analysiscore/**, spaceengine/**, "*.gradle.kts", app/build.gradle.kts, app/src/main/java/io/github/ffenuss/modkit/analysis/**, .github/workflows/space-host-source.yml]
   pull_request:
-    branches: [integration/road-to-1.0-20260929, main]
+    branches: [integration/road-to-1.0-20260929, main, feature/space-host-first-stage-20261007]
     paths: [spacehost/**, analysiscore/**, spaceengine/**, "*.gradle.kts", app/build.gradle.kts, app/src/main/java/io/github/ffenuss/modkit/analysis/**, .github/workflows/space-host-source.yml]
   workflow_dispatch:
 jobs:

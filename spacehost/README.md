@@ -99,6 +99,12 @@ The shared host now automatically pulls the latest prepared profiles on opening 
 
 The bounded index contains profile content hashes. Space sync preserves existing menus on malformed entries, hash changes during reading, inaccessible ModKit or schema errors; unchanged profiles are not rewritten. Test ModKit takes precedence when both app variants are installed. Device fixtures cover two-menu automatic delivery, unchanged sync, corrupt-content rejection and updating one menu without replacing another. Main-device tests check provider self-read and rejection of a separate untrusted test APK UID.
 
+## Menu updates while the space is running
+
+ModKit notifies its read-only menu endpoint only after the atomic profile write finishes. The host observes both supported ModKit authorities and coalesces repeated refresh requests, then re-reads through the authenticated provider and revalidates the guest APK identities. Notifications never carry recipes or grant access. Updating an active profile invalidates its old asynchronous check; updating another package preserves the selected package/user. The observer retries unavailable authorities when the host resumes, so installing ModKit later is supported.
+
+The result card and saved-menu browser allow a user to correct the inferred genre. This changes priorities and ordering in the saved JSON without reading or editing any APK. Source identities, item IDs and backend capability remain unchanged. The correction is reused by future analyses of the same package. Android tests cover cross-process notification delivery and profile genre changes via the main provider; their current run must pass before device validation is claimed. Guest-process execution is still pending.
+
 ## Selected session persistence
 
 Menu synchronization and explicit profile imports register available packages without changing the selected game or virtual user. Only an actual launch or target selection changes the selected session. The host restores that validated session on process recreation and rechecks installation and APK identities before showing its menu. Invalid persisted targets are excluded from the picker. The target-store regression suite covers two packages, two virtual users, re-import and recreation.
