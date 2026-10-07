@@ -53,6 +53,7 @@ public final class SpaceHost {
     private static int userId;
     private static long generation;
     private static boolean checking;
+    private static SourceInventory.Cancellation profileToken;
     private SpaceHost() {}
 
     public static synchronized void start(Application app) {
@@ -86,7 +87,7 @@ public final class SpaceHost {
                 MenuProfile imported = MenuProfileStore.importProfile(application, uri);
                 UI.post(() -> {
                     rememberTarget(imported.packageName, 0);
-                    if (imported.packageName.equals(target)) { generation++; refresh(); }
+                    if (imported.packageName.equals(target)) { cancelProfileCheck(); generation++; refresh(); }
                     toast("Меню сохранено: " + imported.label + ". Выберите оригинальное приложение в пространстве.");
                 });
             } catch (Exception error) { Log.w(TAG, "Menu import rejected", error); UI.post(() -> toast("Не удалось принять профиль меню из ModKit")); }
@@ -114,7 +115,7 @@ public final class SpaceHost {
             final int virtualUser = user.getInt(runnable);
             if (!SpacePolicy.validSession(packageName, virtualUser)) return;
             UI.post(() -> {
-                target = packageName; userId = virtualUser; generation++;
+                cancelProfileCheck(); target = packageName; userId = virtualUser; generation++;
                 rememberTarget(packageName, virtualUser);
                 Log.i(TAG, "Launch requested package=" + target + " user=" + userId);
                 if (Settings.canDrawOverlays(application)) { showOverlay(); if (panel != null) panel.setVisibility(View.VISIBLE); }
@@ -204,6 +205,7 @@ public final class SpaceHost {
         if (checking) return;
         final String pkg = target; final int user = userId; final long epoch = generation;
         final TextView destination = status; checking = true;
+        final SourceInventory.Cancellation token = new SourceInventory.Cancellation(); profileToken = token;
         IO.execute(() -> {
             String text;
             MenuProfile profile = null; String profileMessage = ""; boolean matches = false;
@@ -219,7 +221,7 @@ public final class SpaceHost {
                     if (profile == null) profileMessage = "Меню не передано. Выполните анализ в ModKit и передайте профиль.";
                     else {
                         List<File> sources = kernel.sources(pkg, user);
-                        matches = profile.matches(sources, new SourceInventory.Cancellation());
+                        matches = profile.matches(sources, token);
                         List<File> current = kernel.sources(pkg, user);
                         if (current.size() != sources.size()) matches = false;
                         else for (int i = 0; i < current.size(); i++)
@@ -233,6 +235,7 @@ public final class SpaceHost {
             final MenuProfile selectedProfile = profile; final String menuMessage = profileMessage; final boolean versionMatches = matches;
             UI.post(() -> {
                 checking = false;
+                if (profileToken == token) profileToken = null;
                 if (generation == epoch && status == destination) {
                     destination.setText(result); renderMenu(selectedProfile, menuMessage, versionMatches);
                 }
@@ -240,6 +243,11 @@ public final class SpaceHost {
             });
         });
     }
+    private static void cancelProfileCheck() {
+        if (profileToken != null) profileToken.cancel();
+        profileToken = null;
+    }
+
     private static void renderMenu(MenuProfile profile, String message, boolean matches) {
         if (menuContent == null) return;
         menuContent.removeAllViews(); menuContent.addView(label(message, 12));
@@ -287,7 +295,7 @@ public final class SpaceHost {
                         boolean accepted = kernel.launch(selectedPackage, selectedUser);
                         UI.post(() -> {
                             if (!accepted) { toast("Ядро отклонило запуск приложения"); return; }
-                            target = selectedPackage; userId = selectedUser; generation++;
+                            cancelProfileCheck(); target = selectedPackage; userId = selectedUser; generation++;
                             rememberTarget(target, userId); showOverlay();
                             if (panel != null) panel.setVisibility(View.VISIBLE);
                         });
@@ -316,6 +324,7 @@ public final class SpaceHost {
     }
     private static void toast(String message) { Toast.makeText(application, message, Toast.LENGTH_LONG).show(); }
     private static void removeOverlay() {
+        cancelProfileCheck();
         if (overlay != null) try { ((WindowManager) application.getSystemService(Context.WINDOW_SERVICE)).removeViewImmediate(overlay); }
         catch (RuntimeException error) { Log.w(TAG, "Overlay already removed", error); }
         overlay = null; panel = null; status = null; menuContent = null; menuEpoch = -1; generation++;
