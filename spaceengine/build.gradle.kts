@@ -8,6 +8,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -18,4 +19,40 @@ kotlin { jvmToolchain(17) }
 dependencies {
     implementation(project(":analysiscore"))
     testImplementation("junit:junit:4.13.2")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+}
+
+// Exercise the exact host loader on owned Android fixtures, without a proprietary host.
+val deviceFixtureRoot = layout.buildDirectory.dir("generated/spaceDeviceFixtures")
+val prepareSpaceDeviceFixtures = tasks.register("prepareSpaceDeviceFixtures") {
+    dependsOn("assembleDebug")
+    inputs.files(
+        rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SpaceEngine.java"),
+        rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SourceInventory.java"),
+        rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SpacePolicy.java"),
+    )
+    inputs.file(layout.buildDirectory.file("outputs/apk/debug/spaceengine-debug.apk"))
+    outputs.dir(deviceFixtureRoot)
+    doLast {
+        val root = deviceFixtureRoot.get().asFile
+        val javaDir = root.resolve("java/io/github/ffenuss/modkit/space").apply { mkdirs() }
+        for (name in listOf("SpaceEngine.java", "SourceInventory.java", "SpacePolicy.java")) {
+            rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/$name").copyTo(javaDir.resolve(name), overwrite = true)
+        }
+        val carrier = layout.buildDirectory.file("outputs/apk/debug/spaceengine-debug.apk").get().asFile.readBytes()
+        val assets = root.resolve("assets").apply { mkdirs() }
+        assets.resolve("modkit-space-engine.apk").writeBytes(carrier)
+        val sha = java.security.MessageDigest.getInstance("SHA-256").digest(carrier).joinToString("") { "%02x".format(it.toInt() and 255) }
+        assets.resolve("modkit-space-engine.sha256").writeText(sha, Charsets.US_ASCII)
+    }
+}
+android.sourceSets.getByName("androidTest").apply {
+    java.srcDir(deviceFixtureRoot.map { it.dir("java") })
+    assets.srcDir(deviceFixtureRoot.map { it.dir("assets") })
+}
+tasks.configureEach {
+    if (name == "compileDebugAndroidTestKotlin" || name == "compileDebugAndroidTestJavaWithJavac" || name == "mergeDebugAndroidTestAssets") {
+        dependsOn(prepareSpaceDeviceFixtures)
+    }
 }

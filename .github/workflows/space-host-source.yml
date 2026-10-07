@@ -56,3 +56,47 @@ jobs:
             spaceengine/build/outputs/apk/debug/*.apk
       - name: Verify builder shell syntax
         run: bash -n spacehost/build.sh
+  device:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - name: Install Android compile SDK
+        run: |
+          SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
+          test -x "$SDK_MANAGER"
+          yes | "$SDK_MANAGER" --licenses >/dev/null || true
+          "$SDK_MANAGER" 'platforms;android-35' 'platforms;android-37.0' 'build-tools;36.0.0'
+      - name: Build owned engine and loader instrumentation
+        run: gradle --no-daemon :spaceengine:assembleDebug :spaceengine:assembleDebugAndroidTest
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Execute real private DEX loading on Android 35
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            adb logcat -c
+            set +e; gradle --no-daemon :spaceengine:connectedDebugAndroidTest; RESULT=$?; adb logcat -d > space-engine-device-logcat.txt; exit $RESULT
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: space-engine-device-validation
+          path: |
+            spaceengine/build/reports/androidTests/
+            spaceengine/build/outputs/androidTest-results/
+            space-engine-device-logcat.txt

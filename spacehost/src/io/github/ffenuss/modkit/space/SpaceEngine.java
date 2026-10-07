@@ -19,8 +19,14 @@ final class SpaceEngine {
         if (analyze != null) return analyze;
         String expected;
         try (InputStream input = app.getAssets().open("modkit-space-engine.sha256")) {
-            byte[] bytes = new byte[65]; int read = input.read(bytes);
-            expected = new String(bytes, 0, Math.max(0, read), java.nio.charset.StandardCharsets.US_ASCII).trim();
+            byte[] bytes = new byte[64]; int read = 0;
+            while (read < bytes.length) {
+                token.check(); int count = input.read(bytes, read, bytes.length - read);
+                if (count <= 0) throw new IllegalStateException("Truncated engine identity");
+                read += count;
+            }
+            if (input.read() != -1) throw new IllegalStateException("Unexpected engine identity suffix");
+            expected = new String(bytes, java.nio.charset.StandardCharsets.US_ASCII);
         }
         if (!expected.matches("[0-9a-f]{64}")) throw new IllegalStateException("Invalid engine identity");
         File root = new File(app.getCodeCacheDir(), "modkit-engine");
@@ -50,6 +56,7 @@ final class SpaceEngine {
         return analyze;
     }
     static String run(Application app, SourceInventory.Result sources, SourceInventory.Cancellation token, Consumer<String> progress) throws Exception {
+        token.check();
         File[] files = new File[sources.sources.size()];
         for (int i = 0; i < files.length; i++) files[i] = sources.sources.get(i).file;
         File scratch = new File(app.getCacheDir(), "modkit-analysis/" + sources.sessionId);
