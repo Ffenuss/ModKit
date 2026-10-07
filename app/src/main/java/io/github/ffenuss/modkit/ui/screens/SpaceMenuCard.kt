@@ -33,16 +33,7 @@ fun SpaceMenuCard(result: FastAnalysisResult) {
                 Text("В пространстве откроется меню этого приложения. Исполнитель игровых изменений ещё не подключён; найденные пункты показываются с доказательствами без активных переключателей.")
                 Button(onClick = {
                     try {
-                        val host = "com.dualspace.multispace.androidx"
-                        check(context.packageManager.getLaunchIntentForPackage(host) != null) { "Сначала установите пространство" }
-                        val uri = FileProvider.getUriForFile(context, context.packageName + ".files", File(menu.profilePath))
-                        context.startActivity(Intent("io.github.ffenuss.modkit.OPEN_SPACE_MENU")
-                            .setClassName(host, "com.dualspace.multispace.MainActivity")
-                            .setDataAndType(uri, "application/json")
-                            .apply {
-                                clipData = ClipData.newRawUri("ModKit menu", uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            })
+                        io.github.ffenuss.modkit.space.SpaceMenuHandoff.open(context, File(menu.profilePath))
                         message = "Меню передано. Выберите приложение в пространстве."
                     } catch (error: Exception) { message = error.message ?: "Не удалось открыть пространство" }
                 }, modifier = Modifier.fillMaxWidth()) { Text("Передать меню в пространство") }

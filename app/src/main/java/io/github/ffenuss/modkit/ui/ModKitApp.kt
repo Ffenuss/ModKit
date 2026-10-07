@@ -36,6 +36,7 @@ private enum class Screen {
     TARGET,
     INSTALLED_APPS,
     AUTOMOD,
+    SAVED_SPACE_MENUS,
 }
 
 @Composable
@@ -387,6 +388,7 @@ fun ModKitApp() {
                                     .APPLICATIONS,
                             )
                         },
+                        onOpenSavedMenus = { screen = Screen.SAVED_SPACE_MENUS },
                         onSelectFile = {
                             filePicker.launch(
                                 arrayOf(
@@ -397,6 +399,8 @@ fun ModKitApp() {
                             )
                         },
                     )
+
+                Screen.SAVED_SPACE_MENUS -> io.github.ffenuss.modkit.ui.screens.SavedSpaceMenusScreen(onBack = { screen = Screen.TARGET })
 
                 Screen.INSTALLED_APPS ->
                     InstalledAppsScreen(

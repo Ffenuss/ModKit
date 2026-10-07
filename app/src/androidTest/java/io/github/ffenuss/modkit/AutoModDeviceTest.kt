@@ -182,6 +182,15 @@ class AutoModDeviceTest {
                 assertTrue(uri.path!!.startsWith("/space_menu/"))
                 val handoff = requireNotNull(context.contentResolver.openInputStream(uri)).use { it.readBytes().toString(Charsets.UTF_8) }
                 assertEquals(profile!!.readText(), handoff)
+                assertEquals(fixturePackage, io.github.ffenuss.modkit.space.SavedSpaceMenus.load(context)
+                    .single { it.packageName == fixturePackage }.packageName)
+                context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                assertTrue(device.wait(Until.hasObject(By.text("Выбрать игру")), 45_000))
+                val saved = device.wait(Until.findObject(By.text("Сохранённые меню")), 10_000)
+                assertNotNull("Stored menu must be accessible without restarting analysis", saved)
+                saved.click()
+                assertTrue(device.wait(Until.hasObject(By.text(fixturePackage)), 15_000))
+                device.findObject(By.text("Назад")).click()
             }
             val after = installed.apkFiles.map { java.security.MessageDigest.getInstance("SHA-256").digest(it.readBytes()).toList() }
             assertEquals("Menu preparation must leave all original APKs untouched", before, after)
