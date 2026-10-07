@@ -64,7 +64,7 @@ public final class SpaceHost {
             public void onActivityStarted(Activity a) {}
             public void onActivityResumed(Activity a) {
                 activity = new WeakReference<>(a);
-                if (MAIN.equals(a.getClass().getName())) { consumeIntent(a, a.getIntent()); attachHostButton(a); }
+                if (MAIN.equals(a.getClass().getName())) { consumeIntent(a, a.getIntent()); attachHostButton(a); syncMenus(); }
                 if (!Settings.canDrawOverlays(app)) removeOverlay();
                 else if (target != null) showOverlay();
             }
@@ -74,6 +74,20 @@ public final class SpaceHost {
             public void onActivityDestroyed(Activity a) { if (activity.get() == a) activity.clear(); }
         });
         Log.i(TAG, "Host UI registered; guest files unchanged");
+    }
+
+    private static void syncMenus() {
+        IO.execute(() -> {
+            List<MenuProfile> changed = MenuProfileStore.sync(application);
+            UI.post(() -> {
+                boolean activeChanged = false;
+                for (MenuProfile profile : changed) {
+                    rememberTarget(profile.packageName, 0);
+                    activeChanged |= profile.packageName.equals(target);
+                }
+                if (activeChanged) { cancelProfileCheck(); generation++; refresh(); }
+            });
+        });
     }
 
     /** MainActivity sets its intent in onNewIntent; lifecycle resume consumes that updated intent. */
@@ -210,6 +224,7 @@ public final class SpaceHost {
             String text;
             MenuProfile profile = null; String profileMessage = ""; boolean matches = false;
             try {
+                MenuProfileStore.sync(application);
                 ReferenceKernel kernel = new ReferenceKernel(application.getClassLoader());
                 text = "Запуск запрошен: " + pkg + "\nПользователь пространства: " + user + "\n"
                     + "Приложение: " + (kernel.installed(pkg, user) ? "есть в пространстве" : "не найдено")
@@ -218,7 +233,7 @@ public final class SpaceHost {
                     + "\nGoogle Services Framework: " + state(kernel.installed("com.google.android.gsf", user));
                 try {
                     profile = MenuProfileStore.load(application, pkg);
-                    if (profile == null) profileMessage = "Меню не передано. Выполните анализ в ModKit и передайте профиль.";
+                    if (profile == null) profileMessage = "Меню не найдено. Выполните анализ в ModKit: пространство подхватит профиль автоматически.";
                     else {
                         List<File> sources = kernel.sources(pkg, user);
                         matches = profile.matches(sources, token);

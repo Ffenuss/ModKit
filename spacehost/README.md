@@ -77,7 +77,7 @@ Analysis stays in the ModKit application. A completed analysis offers **Скач
 
 The host no longer exposes analysis controls. Its existing original application picker remains responsible for installation and launch. Launch opens the overlay menu immediately when overlay permission is granted. Settings retain separate package/virtual-user targets across host updates and can launch a previously opened target after checking it is still installed. Adding a new target does not remove other targets. Google components and the virtual kernel are retained.
 
-These are target menu profiles, not completed runtime mod recipes: analysis-result transfer, recipe execution, artifact-version binding and different menus for different target applications are still pending. No gameplay switches are presented until a real executor exists. The `spaceengine` carrier remains packaged for internal validation but is not exposed as analysis UI in the host.
+Menu transfer, per-package selection and APK-version binding are implemented below. Guest-process recipe execution remains pending. No gameplay switches are presented until a real executor exists. The `spaceengine` carrier remains packaged for internal validation but is not exposed as analysis UI in the host.
 
 The source CI can export public Android build tools and apktool for local signing. The proprietary host and signing keystore never enter CI or git. Signed APK delivery still requires local payload verification and Android device validation before publishing the shared release asset.
 
@@ -94,3 +94,7 @@ Tests cover archive extraction/cancellation/limits, cautious genre planning, And
 
 
 Completed analysis now remains on the space result until the user explicitly selects APK expert editing. The main application's **Сохранённые меню** browser lists one latest profile per package, allowing handoff after closing ModKit or installing/updating the shared host without repeating analysis. Owned-fixture UI tests exercise the saved browser and explicit expert transition.
+
+The shared host now automatically pulls the latest prepared profiles on opening the application picker and on refreshing the selected target. This also works when the host was installed after analysis. ModKit's read-only `.space-menu` provider authenticates the Binder caller UID and pins the public certificate fingerprint of the authorized Aniimo QA space key. There are no grants to arbitrary apps, no write endpoints and no guest APK payloads. The explicit handoff button also checks the host signature. A future production signing-key change requires updating the pin.
+
+The bounded index contains profile content hashes. Space sync preserves existing menus on malformed entries, hash changes during reading, inaccessible ModKit or schema errors; unchanged profiles are not rewritten. Test ModKit takes precedence when both app variants are installed. Device fixtures cover two-menu automatic delivery, unchanged sync, corrupt-content rejection and updating one menu without replacing another. Main-device tests check provider self-read and rejection of the unrelated shell UID.

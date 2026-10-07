@@ -182,6 +182,19 @@ class AutoModDeviceTest {
                 assertTrue(uri.path!!.startsWith("/space_menu/"))
                 val handoff = requireNotNull(context.contentResolver.openInputStream(uri)).use { it.readBytes().toString(Charsets.UTF_8) }
                 assertEquals(profile!!.readText(), handoff)
+                val autoRoot = "content://" + context.packageName + ".space-menu"
+                val autoIndex = JSONObject(requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/index")))
+                    .use { it.readBytes().toString(Charsets.UTF_8) })
+                val entries = autoIndex.getJSONArray("profiles")
+                val entry = (0 until entries.length()).map { entries.getJSONObject(it) }
+                    .single { it.getString("file") == profile!!.name }
+                val autoBytes = requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/profile/" + profile!!.name)))
+                    .use { it.readBytes() }
+                assertEquals(profile!!.readText(), autoBytes.toString(Charsets.UTF_8))
+                assertEquals(entry.getString("sha256"), java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(autoBytes).joinToString("") { "%02x".format(it) })
+                val denied = device.executeShellCommand("content read --uri $autoRoot/index")
+                assertTrue("Untrusted caller must not receive profiles", denied.contains("SecurityException"))
                 assertEquals(fixturePackage, io.github.ffenuss.modkit.space.SavedSpaceMenus.load(context)
                     .single { it.packageName == fixturePackage }.packageName)
                 context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))

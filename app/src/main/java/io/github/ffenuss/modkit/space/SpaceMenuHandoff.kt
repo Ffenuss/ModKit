@@ -11,6 +11,7 @@ object SpaceMenuHandoff {
     fun open(context: Context, file: File) {
         val host = "com.dualspace.multispace.androidx"
         check(context.packageManager.getLaunchIntentForPackage(host) != null) { "Сначала установите пространство" }
+        check(TrustedSpace.installed(context)) { "Подпись установленного пространства не соответствует ModKit" }
         val uri = FileProvider.getUriForFile(context, context.packageName + ".files", file)
         context.startActivity(Intent("io.github.ffenuss.modkit.OPEN_SPACE_MENU")
             .setClassName(host, "com.dualspace.multispace.MainActivity")
@@ -27,7 +28,8 @@ data class SavedSpaceMenu(val packageName: String, val label: String, val genre:
 object SavedSpaceMenus {
     fun load(context: Context): List<SavedSpaceMenu> {
         val root = File(context.filesDir, "space-menu-profiles")
-        return root.listFiles().orEmpty().sortedByDescending { it.lastModified() }.take(512).mapNotNull { file ->
+        return root.listFiles().orEmpty().filter { it.name.endsWith(".json") }
+            .sortedByDescending { it.lastModified() }.take(512).mapNotNull { file ->
             runCatching {
                 require(file.isFile && file.length() in 1..(256 * 1024) && file.canonicalFile.parentFile == root.canonicalFile)
                 val json = JSONObject(file.readText())

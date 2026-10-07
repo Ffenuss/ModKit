@@ -11,6 +11,38 @@ import java.io.File
 
 @RunWith(AndroidJUnit4::class)
 class MenuProfileDeviceTest {
+    @Test fun spacePullsTwoPreparedMenusAndRejectsChangedBytes() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val uri = android.net.Uri.parse("content://io.github.ffenuss.modkit.test.space-menu")
+        val input = File(context.cacheDir, "sync-fixture").apply { writeText("original fixture") }
+        val first = profile("io.fixture.syncfirst", input).toString()
+        val second = profile("io.fixture.syncsecond", input).toString()
+        val bundle = android.os.Bundle().apply { putString("first.json", first); putString("second.json", second) }
+        try {
+            context.getSharedPreferences("modkit_menu_sync", 0).edit().clear().commit()
+            context.contentResolver.call(uri, "fixture", null, bundle)
+            assertEquals(2, MenuProfileStore.sync(context).size)
+            assertEquals("io.fixture.syncfirst", MenuProfileStore.load(context, "io.fixture.syncfirst")!!.packageName)
+            assertEquals("io.fixture.syncsecond", MenuProfileStore.load(context, "io.fixture.syncsecond")!!.packageName)
+            assertTrue("Unchanged profiles must not be rewritten", MenuProfileStore.sync(context).isEmpty())
+            bundle.putString("first.json", JSONObject(first).put("label", "changed").toString())
+            bundle.putBoolean("corrupt", true)
+            context.contentResolver.call(uri, "fixture", null, bundle)
+            assertTrue(MenuProfileStore.sync(context).isEmpty())
+            assertEquals("io.fixture.syncfirst", MenuProfileStore.load(context, "io.fixture.syncfirst")!!.label)
+            bundle.putBoolean("corrupt", false)
+            context.contentResolver.call(uri, "fixture", null, bundle)
+            assertEquals(1, MenuProfileStore.sync(context).size)
+            assertEquals("changed", MenuProfileStore.load(context, "io.fixture.syncfirst")!!.label)
+        } finally {
+            context.contentResolver.call(uri, "fixture", null, android.os.Bundle())
+            input.delete()
+            listOf("io.fixture.syncfirst", "io.fixture.syncsecond").forEach {
+                File(File(context.filesDir, "modkit-menus"), "$it.json").delete()
+            }
+            context.getSharedPreferences("modkit_menu_sync", 0).edit().clear().commit()
+        }
+    }
     private fun profile(pkg: String, bytes: File): JSONObject = JSONObject()
         .put("schema", 1).put("backend", "none").put("packageName", pkg).put("label", pkg)
         .put("artifactSha256", "a".repeat(64)).put("genre", "Не определён").put("truncated", false)

@@ -149,6 +149,8 @@ jobs:
           disable-animations: true
           script: |
             bash tools/install_device_fixture.sh ${{ matrix.fixture }}
+            # Disposable CI emulator only: Pixel Launcher ANR dialogs obscure every UI assertion.
+            adb shell pm disable-user --user 0 com.google.android.apps.nexuslauncher || true
             adb logcat -c
             set +e; gradle --no-daemon :app:connectedDebugAndroidTest; RESULT=$?; adb logcat -d > device-logcat.txt; adb pull /sdcard/Download/ModKit-validation device-validation || true; exit $RESULT
       - name: Upload device evidence

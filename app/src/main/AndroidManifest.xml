@@ -30,6 +30,12 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.ModKit">
+        <!-- Caller UID and pinned space certificate are enforced inside the provider. -->
+        <provider
+            android:name=".space.SpaceMenuProvider"
+            android:authorities="${applicationId}.space-menu"
+            android:exported="true"
+            android:grantUriPermissions="false" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
