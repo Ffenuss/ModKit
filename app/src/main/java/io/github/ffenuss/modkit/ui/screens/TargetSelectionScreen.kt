@@ -43,7 +43,7 @@ fun TargetSelectionScreen(onSelectGames: () -> Unit, onSelectApps: () -> Unit, o
                 }
             }
             item {
-                Text("Анализ → выбор изменений → сборка", style = MaterialTheme.typography.labelMedium)
+                Text("Анализ → меню → запуск в пространстве", style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.height(6.dp))
                 Text("Без root и облачных сервисов. Доступность изменений зависит от кода приложения.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -33,6 +33,16 @@ class ArtifactPackageLoaderTest {
             assertTrue(input.exists())
         } finally { root.deleteRecursively() }
     }
+    @Test fun rawCodeAndGenericAssetArchivesRetainTheirExistingAnalysisPath() {
+        val root = Files.createTempDirectory("raw-artifacts").toFile()
+        try {
+            val raw = root.resolve("library.so").apply { writeBytes(byteArrayOf(127, 69, 76, 70, 2)) }
+            ArtifactPackageLoader.open(raw, root.resolve("staging"), running, silent).use { assertEquals(listOf(raw), it.files) }
+            val assets = root.resolve("data.zip").apply { writeBytes(zip(listOf("game.lua" to "fixture".toByteArray()))) }
+            ArtifactPackageLoader.open(assets, root.resolve("staging"), running, silent).use { assertEquals(listOf(assets), it.files) }
+            assertTrue(raw.exists()); assertTrue(assets.exists())
+        } finally { root.deleteRecursively() }
+    }
     @Test fun duplicateNamesAndSizeOverflowDoNotLeaveStaging() {
         val root = Files.createTempDirectory("bounded-apks").toFile()
         try {

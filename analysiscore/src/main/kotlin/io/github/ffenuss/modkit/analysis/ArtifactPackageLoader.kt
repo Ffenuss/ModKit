@@ -18,6 +18,10 @@ object ArtifactPackageLoader {
         require(maxApks > 0 && maxApkBytes > 0 && maxTotalBytes > 0)
         fun check() { if (cancellation.isCancelled()) throw AnalysisCancelledException() }
         check()
+        val signature = ByteArray(4)
+        val prefixSize = input.inputStream().use { it.read(signature) }
+        if (prefixSize < 4 || signature[0] != 0x50.toByte() || signature[1] != 0x4b.toByte())
+            return LoadedArtifactSet(listOf(input)) // Raw DEX/ELF/WASM still use their existing analyzers.
         ZipFile(input).use { zip ->
             if (zip.getEntry("AndroidManifest.xml") != null) return LoadedArtifactSet(listOf(input))
             val apkEntries = mutableListOf<java.util.zip.ZipEntry>()
@@ -30,7 +34,7 @@ object ArtifactPackageLoader {
                 if (!entry.isDirectory && entry.name.endsWith(".apk", true)) apkEntries += entry
                 require(apkEntries.size <= maxApks) { "Too many APKs in container" }
             }
-            require(apkEntries.isNotEmpty()) { "No APK or APK set in selected file" }
+            if (apkEntries.isEmpty()) return LoadedArtifactSet(listOf(input)) // Generic game-data archives remain indexable.
             val names = apkEntries.map { it.name.substringAfterLast('/') }
             require(names.distinct().size == names.size && names.all { it.matches(Regex("[A-Za-z0-9._-]+")) && it != "." && it != ".." }) {
                 "Ambiguous or invalid APK names in container"
