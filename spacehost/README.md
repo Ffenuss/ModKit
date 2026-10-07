@@ -69,3 +69,14 @@ The host now extracts IL2CPP metadata into unique private temporary files, verif
 The phone inventory attempts at most four files, 64 MiB per file and 128 MiB in total; per-file reader limits are 20000 types, 75000 methods/fields and 2048 images. These do not reduce the main app reader's default limits. Temporary files are deleted on success, parse failure, cancellation and extraction errors. Source integrity is checked again by the host session afterward.
 
 The shared reader now sweeps bounded field indices rather than expanding each type's range. Invalid ranges are reported; overlapping ownership remains unresolved. This avoids quadratic work on damaged metadata without inventing owners. Carrier verification requires the actual shared metadata class definitions, so an older header-only carrier is rejected. New metadata tests are pending CI at this change's publication.
+
+
+## Main application and shared space
+
+Analysis stays in the ModKit application. A completed analysis offers **Скачать пространство**. The download channel checks non-draft, non-prerelease GitHub releases for the exact `modkit-space.apk` asset; the empty channel reports that the host has not been published. It never substitutes the engine carrier or a per-game repack.
+
+The host no longer exposes analysis controls. Its existing original application picker remains responsible for installation and launch. Launch opens the overlay menu immediately when overlay permission is granted. Settings retain separate package/virtual-user targets across host updates and can launch a previously opened target after checking it is still installed. Adding a new target does not remove other targets. Google components and the virtual kernel are retained.
+
+These are target menu profiles, not completed runtime mod recipes: analysis-result transfer, recipe execution, artifact-version binding and multiple named mod menus per target are still pending. No gameplay switches are presented until a real executor exists. The `spaceengine` carrier remains packaged for internal validation but is not exposed as analysis UI in the host.
+
+The source CI can export public Android build tools and apktool for local signing. The proprietary host and signing keystore never enter CI or git. Signed APK delivery still requires local payload verification and Android device validation before publishing the shared release asset.

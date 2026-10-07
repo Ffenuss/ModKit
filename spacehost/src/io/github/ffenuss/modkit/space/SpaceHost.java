@@ -42,11 +42,6 @@ public final class SpaceHost {
     private static final ExecutorService IO = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "modkit-space-status"); t.setDaemon(true); return t;
     });
-    private static final ExecutorService ANALYSIS = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "modkit-space-inventory"); t.setDaemon(true); return t;
-    });
-    private static SourceInventory.Cancellation analysisToken;
-    private static TextView analysisStatus;
     private static Application application;
     private static WeakReference<Activity> activity = new WeakReference<>(null);
     private static LinearLayout overlay;
@@ -99,11 +94,10 @@ public final class SpaceHost {
             final int virtualUser = user.getInt(runnable);
             if (!SpacePolicy.validSession(packageName, virtualUser)) return;
             UI.post(() -> {
-                cancelAnalysis();
                 target = packageName; userId = virtualUser; generation++;
-                if (analysisStatus != null) analysisStatus.setText("Проверка состава ещё не запускалась");
+                rememberTarget(packageName, virtualUser);
                 Log.i(TAG, "Launch requested package=" + target + " user=" + userId);
-                if (Settings.canDrawOverlays(application)) showOverlay();
+                if (Settings.canDrawOverlays(application)) { showOverlay(); if (panel != null) panel.setVisibility(View.VISIBLE); }
                 else Log.i(TAG, "Overlay permission absent; guest launch remains available");
             });
         } catch (ReflectiveOperationException | RuntimeException error) {
@@ -126,7 +120,7 @@ public final class SpaceHost {
                         catch (RuntimeException error) { toast("Не удалось открыть разрешения оверлея"); }
                     }).setNegativeButton("Позже", null).show();
             } else {
-                if (target == null) { target = "com.android.vending"; userId = 0; generation++; }
+                if (target == null) { toast("Выберите приложение в списке пространства"); return; }
                 showOverlay();
                 if (panel != null) { panel.setVisibility(View.VISIBLE); refresh(); }
             }
@@ -163,13 +157,9 @@ public final class SpaceHost {
         content.addView(button("Открыть пространство / добавить приложение", SpaceHost::openSpace));
         content.addView(button("Открыть Google Play в пространстве", () -> openGooglePlay()));
         content.addView(button("Обновить состояние", SpaceHost::refresh));
-        analysisStatus = label("Проверка состава ещё не запускалась", 12); content.addView(analysisStatus);
-        content.addView(button("Анализировать оригинальное приложение", SpaceHost::analyzeSources));
-        content.addView(button("Отменить проверку", () -> {
-            cancelAnalysis();
-            if (analysisStatus != null) analysisStatus.setText("Проверка отменена");
-        }));
-        content.addView(label("Анализ DEX/ELF показывает структуру и признаки движков. Управление игрой ещё не подключено.", 12));
+        content.addView(button("Настройки · выбрать приложение", SpaceHost::chooseTarget));
+        content.addView(label("Профиль меню сохраняется отдельно для каждого приложения и пользователя пространства. Анализ выполняется в ModKit.", 12));
+        content.addView(label("Исполнитель модов ещё не подключён. Доступных игровых переключателей пока нет.", 12));
         content.addView(button("Скрыть оверлей", SpaceHost::removeOverlay));
         ScrollView scroll = new ScrollView(application); scroll.addView(content); scroll.setVisibility(View.GONE); panel = scroll;
         int width = Math.min(dp(330), application.getResources().getDisplayMetrics().widthPixels - dp(24));
@@ -181,7 +171,7 @@ public final class SpaceHost {
         try {
             ((WindowManager) application.getSystemService(Context.WINDOW_SERVICE)).addView(host, params);
             overlay = host; refresh();
-        } catch (RuntimeException error) { overlay = null; status = null; panel = null; analysisStatus = null; Log.e(TAG, "Overlay window rejected", error); }
+        } catch (RuntimeException error) { overlay = null; status = null; panel = null; Log.e(TAG, "Overlay window rejected", error); }
     }
 
     private static void refresh() {
@@ -207,53 +197,47 @@ public final class SpaceHost {
             });
         });
     }
-    private static void cancelAnalysis() {
-        if (analysisToken != null) analysisToken.cancel();
-        analysisToken = null;
+    private static void rememberTarget(String pkg, int user) {
+        android.content.SharedPreferences prefs = application.getSharedPreferences("modkit_space_profiles", Context.MODE_PRIVATE);
+        java.util.Set<String> profiles = new java.util.TreeSet<>(prefs.getStringSet("targets", java.util.Collections.emptySet()));
+        profiles.add(user + ":" + pkg);
+        prefs.edit().putStringSet("targets", profiles).putString("selected", user + ":" + pkg).apply();
     }
-    private static void analyzeSources() {
-        if (target == null || analysisStatus == null) return;
-        cancelAnalysis();
-        final String pkg = target; final int user = userId; final long epoch = generation;
-        final TextView destination = analysisStatus;
-        final SourceInventory.Cancellation token = new SourceInventory.Cancellation();
-        analysisToken = token; destination.setText("Получаем оригинальные APK из пространства…");
-        ANALYSIS.execute(() -> {
-            try {
-                token.check();
-                ReferenceKernel kernel = new ReferenceKernel(application.getClassLoader());
-                List<File> inputs = kernel.sources(pkg, user);
-                SourceInventory.Result result = SourceInventory.scan(pkg, user, inputs, token, message -> UI.post(() -> {
-                    if (generation == epoch && analysisToken == token && analysisStatus == destination) destination.setText(message);
-                }));
-                String engineReport = SpaceEngine.run(application, result, token, message -> UI.post(() -> {
-                    if (generation == epoch && analysisToken == token && analysisStatus == destination) destination.setText(message);
-                }));
-                // An update/uninstall can replace the kernel record without changing the old file.
-                List<File> current = kernel.sources(pkg, user);
-                if (current.size() != result.sources.size()) throw new IllegalStateException("APK set changed");
-                for (int i = 0; i < current.size(); i++) {
-                    token.check();
-                    if (!current.get(i).getCanonicalFile().equals(result.sources.get(i).file))
-                        throw new IllegalStateException("APK source changed");
-                    result.sources.get(i).verify(token);
-                }
-                UI.post(() -> {
-                    if (generation == epoch && analysisToken == token && analysisStatus == destination) {
-                        destination.setText(result.report + "\n" + engineReport); analysisToken = null;
-                    }
+
+    private static void chooseTarget() {
+        java.util.Set<String> saved = application.getSharedPreferences("modkit_space_profiles", Context.MODE_PRIVATE)
+            .getStringSet("targets", java.util.Collections.emptySet());
+        final String[] choices = new java.util.TreeSet<>(saved).toArray(new String[0]);
+        if (choices.length == 0) { toast("Добавьте и откройте приложение через список пространства"); return; }
+        AlertDialog dialog = new AlertDialog.Builder(application)
+            .setTitle("Приложение для меню модов")
+            .setItems(choices, (ignored, position) -> {
+                String entry = choices[position];
+                int colon = entry.indexOf(':');
+                if (colon < 1) return;
+                final int selectedUser;
+                try { selectedUser = Integer.parseInt(entry.substring(0, colon)); }
+                catch (NumberFormatException error) { return; }
+                final String selectedPackage = entry.substring(colon + 1);
+                if (!SpacePolicy.validSession(selectedPackage, selectedUser)) return;
+                IO.execute(() -> {
+                    try {
+                        ReferenceKernel kernel = new ReferenceKernel(application.getClassLoader());
+                        if (!kernel.installed(selectedPackage, selectedUser)) {
+                            UI.post(() -> toast("Приложение удалено из пространства. Добавьте его снова.")); return;
+                        }
+                        boolean accepted = kernel.launch(selectedPackage, selectedUser);
+                        UI.post(() -> {
+                            if (!accepted) { toast("Ядро отклонило запуск приложения"); return; }
+                            target = selectedPackage; userId = selectedUser; generation++;
+                            rememberTarget(target, userId); showOverlay();
+                            if (panel != null) panel.setVisibility(View.VISIBLE);
+                        });
+                    } catch (Exception error) { Log.w(TAG, "Target selection failed", error); UI.post(() -> toast("Не удалось выбрать приложение")); }
                 });
-            } catch (Exception | LinkageError error) {
-                UI.post(() -> {
-                    if (generation == epoch && analysisToken == token && analysisStatus == destination) {
-                        destination.setText("Проверка не завершена: " + error.getClass().getSimpleName()
-                            + "\nОригинальные APK не изменены. Повторите проверку после завершения установки приложения.");
-                        analysisToken = null;
-                    }
-                });
-                Log.w(TAG, "Original source inventory did not complete", error);
-            }
-        });
+            }).setNegativeButton("Закрыть", null).create();
+        if (dialog.getWindow() != null) dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
+        try { dialog.show(); } catch (RuntimeException error) { toast("Не удалось открыть выбор приложения"); }
     }
     private static String state(boolean installed) { return installed ? "есть внутри пространства" : "отсутствует внутри пространства"; }
 
@@ -276,7 +260,6 @@ public final class SpaceHost {
     private static void removeOverlay() {
         if (overlay != null) try { ((WindowManager) application.getSystemService(Context.WINDOW_SERVICE)).removeViewImmediate(overlay); }
         catch (RuntimeException error) { Log.w(TAG, "Overlay already removed", error); }
-        cancelAnalysis();
-        overlay = null; panel = null; status = null; analysisStatus = null; generation++;
+        overlay = null; panel = null; status = null; generation++;
     }
 }

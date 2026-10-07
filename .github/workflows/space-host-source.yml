@@ -71,6 +71,19 @@ jobs:
             spaceengine/build/reports/tests/
             spaceengine/build/outputs/apk/debug/*.apk
             build/space-host-dex/classes.dex
+      - name: Prepare local host build tools
+        shell: bash
+        run: |
+          SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
+          "$SDK_MANAGER" 'build-tools;35.0.0'
+          mkdir -p build/local-host-tools
+          curl --fail --location --retry 3 https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar -o build/local-host-tools/apktool.jar
+          tar -C "$ANDROID_HOME" -czf build/local-host-tools/android-host-tools.tar.gz build-tools/35.0.0 platforms/android-35/android.jar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-host-build-tools
+          path: build/local-host-tools/
+          retention-days: 7
       - name: Verify builder shell syntax
         run: bash -n spacehost/build.sh
   device:

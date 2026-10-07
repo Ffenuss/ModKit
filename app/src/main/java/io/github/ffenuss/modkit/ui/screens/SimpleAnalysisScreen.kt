@@ -29,6 +29,8 @@ fun SimpleAnalysisScreen(title: String, progress: EngineProgress?, result: FastA
                         Text(if (cancelling) "Отмена…" else "Отменить анализ")
                     }
                 } else {
+                    if (result != null && !cancelled && error == null && partialNotice == null)
+                        SpaceDownloadButton(Modifier.fillMaxWidth())
                     onOpenAutoMod?.let { Button(onClick = it, modifier = Modifier.fillMaxWidth()) { Text("Выбрать изменения") } }
                     OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) { Text("К выбору приложения") }
                 }
@@ -73,7 +75,7 @@ fun SimpleAnalysisScreen(title: String, progress: EngineProgress?, result: FastA
                     if (result != null) Text("Результаты сохраняются по мере анализа.", style = MaterialTheme.typography.bodySmall)
                 }
             }
-            Text("Большие игры требуют больше времени. После анализа появится список доступных изменений.",
+            Text("Анализ выполняется в ModKit. Оригинальные приложения запускаются в едином пространстве с отдельным меню для каждой игры.",
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.weight(1f))
         }
