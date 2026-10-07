@@ -71,19 +71,6 @@ jobs:
             spaceengine/build/reports/tests/
             spaceengine/build/outputs/apk/debug/*.apk
             build/space-host-dex/classes.dex
-      - name: Prepare local host build tools
-        shell: bash
-        run: |
-          SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
-          "$SDK_MANAGER" 'build-tools;35.0.0'
-          mkdir -p build/local-host-tools
-          curl --fail --location --retry 3 https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar -o build/local-host-tools/apktool.jar
-          tar -C "$ANDROID_HOME" -czf build/local-host-tools/android-host-tools.tar.gz build-tools/35.0.0 platforms/android-35/android.jar
-      - uses: actions/upload-artifact@v4
-        with:
-          name: local-host-build-tools
-          path: build/local-host-tools/
-          retention-days: 7
       - name: Verify builder shell syntax
         run: bash -n spacehost/build.sh
   device:
@@ -130,3 +117,31 @@ jobs:
             spaceengine/build/reports/androidTests/
             spaceengine/build/outputs/androidTest-results/
             space-engine-device-logcat.txt
+
+  build_tools:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Export minimal public toolchain for local signing
+        shell: bash
+        run: |
+          SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
+          "$SDK_MANAGER" 'build-tools;35.0.0'
+          mkdir -p tools
+          curl --fail --location --retry 3 https://github.com/iBotPeaches/Apktool/releases/download/v2.12.1/apktool_2.12.1.jar -o tools/apktool.jar
+          tar -C "$ANDROID_HOME" -czf tools/android-host-tools.tar.gz build-tools/35.0.0/d8 build-tools/35.0.0/apksigner build-tools/35.0.0/zipalign build-tools/35.0.0/lib build-tools/35.0.0/lib64
+          test "$(stat -c %s tools/apktool.jar)" -lt 32000000
+          test "$(stat -c %s tools/android-host-tools.tar.gz)" -lt 32000000
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-host-apktool
+          path: tools/apktool.jar
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-host-android-tools
+          path: tools/android-host-tools.tar.gz
+          retention-days: 7
