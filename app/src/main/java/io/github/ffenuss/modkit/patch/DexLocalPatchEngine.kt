@@ -106,24 +106,660 @@ data class DexLocalScan(
                     " методов с неоднозначными именами Level/Experience: " +
                     "они не имеют доказанного игрового контекста."
             else ->
-                "DEX прочитан, но подходящих ло…9985 tokens truncated…cement = prefix + Il2CppNativeMutationDraftBuilder.parseHex(AArch64ScalarReturnEncoder.encodeHex(returnKind, value))
-                        if (replacement.size > symbol.size || replacement.size > 64 || replacement.contentEquals(code.copyOf(replacement.size)) ||
-                            symbols.any { it.value > symbol.value && it.value < symbol.value + replacement.size }) return@candidate
-                        found += method to Recipe("jni:" + hex(MessageDigest.getInstance("SHA-256").digest(method.key.toByteArray())), kind.first.label.substringBefore(" /") + " · значение $value",
-                            kind.first.label.substringBefore(" /"), method.key, img.module, symbol.value,
-                            hex(code.copyOf(replacement.size)), hex(replacement), imageHash)
+                "DEX прочитан, но подходящих локальных методов не найдено. " +
+                    "Возможны обфускация, нестандартная логика или нативный движок."
+        }
+}
+
+data class DexLocalRewrite(
+    val file: File,
+    val appliedIds: Set<String>,
+    val sourceSha256: String,
+    val resultSha256: String,
+)
+
+/**
+ * Scan every method in every supported DEX, independently of UI result counts.
+ * Oversized DEX inputs have an explicit heap-budget warning; cancellation is cooperative.
+ */
+object DexLocalPatchEngine {
+    private const val MAX_DEX_BYTES = 96L * 1024L * 1024L
+    private val DEX_NAME = Regex("classes(?:[0-9]+)?[.]dex")
+
+    fun scanApks(
+        apkFiles: List<File>,
+        developerTestMode: Boolean,
+        cancellation: CancellationSignal,
+        progress: (Int, String) -> Unit = { _, _ -> },
+    ): DexLocalScan {
+        val discovered = ArrayList<DexLocalOpportunity>()
+        val warnings = ArrayList<String>()
+        var dexCount = 0
+        var methodCount = 0
+        var inspectedClasses = 0
+        var excludedClasses = 0
+        var methodsWithCode = 0
+        var noArgumentMethods = 0
+        var scalarMethods = 0
+        var semanticMatches = 0
+        var rejectedReturnTypes = 0
+        var excludedAmbiguousProgressionNames = 0
+        var nativeLibraries = 0
+        val diagnostics = ArrayList<String>()
+        apkFiles.forEachIndexed { apkIndex, apk ->
+            checkCancelled(cancellation)
+            ZipFile(apk).use { zip ->
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    checkCancelled(cancellation)
+                    val entry = entries.nextElement()
+                    if (entry.name.startsWith("lib/") &&
+                        entry.name.endsWith(".so") && !entry.isDirectory
+                    ) nativeLibraries++
+                    if (entry.isDirectory || !DEX_NAME.matches(entry.name)) continue
+                    dexCount++
+                    if (entry.size !in 1..MAX_DEX_BYTES) {
+                        warnings += apk.name + ":" + entry.name +
+                            ": DEX exceeds 96 MiB or size is unknown; skipped."
+                        continue
+                    }
+                    try {
+                        val bytes = zip.getInputStream(entry).use { input ->
+                            readBounded(input, MAX_DEX_BYTES, cancellation)
+                        }
+                        val scan = scanDex(
+                            bytes = bytes,
+                            apkIndex = apkIndex,
+                            dexEntry = entry.name,
+                            developerTestMode = developerTestMode,
+                            cancellation = cancellation,
+                            progress = { count, name -> progress(methodCount + count, name) },
+                        )
+                        methodCount += scan.methodsExamined
+                        inspectedClasses += scan.classesInspected
+                        excludedClasses += scan.classesExcluded
+                        methodsWithCode += scan.methodsWithCode
+                        noArgumentMethods += scan.noArgumentMethods
+                        scalarMethods += scan.scalarNoArgumentMethods
+                        semanticMatches += scan.semanticNamesMatched
+                        rejectedReturnTypes += scan.rejectedReturnTypes
+                        excludedAmbiguousProgressionNames +=
+                            scan.excludedAmbiguousProgressionNames
+                        diagnostics += scan.diagnostics.map {
+                            apk.name + ":" + entry.name + ": " + it
+                        }.take(20)
+                        warnings += scan.warnings.map {
+                            apk.name + ":" + entry.name + ": " + it
+                        }
+                        discovered += scan.opportunities
+                    } catch (failure: Exception) {
+                        if (failure is AnalysisCancelledException) throw failure
+                        warnings += apk.name + ":" + entry.name + ": " +
+                            (failure.message ?: failure.javaClass.simpleName)
                     }
                 }
-            } catch (error: Exception) {
-                if (error is AnalysisCancelledException) throw error
-                incomplete = true
-                warnings += "JNI: ${img.module}: ${error.javaClass.simpleName}"
-            } finally { extracted.delete() }
+            }
         }
-        // The VM may search several loaded libraries. Never select an arbitrary matching export.
-        if (incomplete) return Scan(emptyList(), warnings + "JNI: индекс библиотек не подтверждён", true)
-        val recipes = found.groupBy { it.first.key }.values.filter { it.size == 1 }.map { it.single() }
-            .filter { (method, _) -> owners[exportName(method, declarations, owners.keys)] == 1 }.map { it.second }
-        return Scan(recipes.take(128), warnings.distinct().take(32), recipes.size > 128)
+        return DexLocalScan(
+            opportunities = discovered
+                .distinctBy { it.id }
+                .sortedWith(compareBy<DexLocalOpportunity> { it.category.rank }
+                    .thenBy { it.displayName }),
+            warnings = warnings.distinct(),
+            dexFilesExamined = dexCount,
+            methodsExamined = methodCount,
+            classesInspected = inspectedClasses,
+            classesExcluded = excludedClasses,
+            methodsWithCode = methodsWithCode,
+            noArgumentMethods = noArgumentMethods,
+            scalarNoArgumentMethods = scalarMethods,
+            semanticNamesMatched = semanticMatches,
+            rejectedReturnTypes = rejectedReturnTypes,
+            excludedAmbiguousProgressionNames =
+                excludedAmbiguousProgressionNames,
+            nativeLibrariesObserved = nativeLibraries,
+            diagnostics = diagnostics.distinct().take(30),
+        )
+    }
+
+    fun scanDex(
+        bytes: ByteArray,
+        apkIndex: Int,
+        dexEntry: String,
+        developerTestMode: Boolean,
+        cancellation: CancellationSignal,
+        progress: (Int, String) -> Unit = { _, _ -> },
+    ): DexLocalScan {
+        require(bytes.size.toLong() <= MAX_DEX_BYTES) {
+            "DEX exceeds the bounded scanner limit."
+        }
+        val dex = parseDex(bytes)
+        val sha = sha256(bytes)
+        val candidates = ArrayList<DexLocalOpportunity>()
+        val warnings = ArrayList<String>()
+        var methods = 0
+        var classesInspected = 0
+        var classesExcluded = 0
+        var methodsWithCode = 0
+        var noArgumentMethods = 0
+        var scalarMethods = 0
+        var semanticMatches = 0
+        var rejectedReturnTypes = 0
+        var excludedAmbiguousProgressionNames = 0
+        val diagnostics = ArrayList<String>()
+        for (classDef in dex.classes) {
+            checkCancelled(cancellation)
+            classesInspected++
+            if (excludedClass(classDef.type)) {
+                classesExcluded++
+                continue
+            }
+            for (method in classDef.methods) {
+                checkCancelled(cancellation)
+                methods++
+                if (methods % 256 == 0) progress(methods, dexEntry)
+                val impl = method.implementation
+                if (impl != null) methodsWithCode++
+                val noArgs = method.parameters.isEmpty()
+                if (noArgs) noArgumentMethods++
+                if (noArgs && method.returnType in setOf("Z", "I", "F")) {
+                    scalarMethods++
+                }
+                if (DexGameplayContext.isProgressionGetter(method.name) &&
+                    !DexGameplayContext.isPlausibleProgressionOwner(
+                        method.definingClass,
+                    )
+                ) {
+                    excludedAmbiguousProgressionNames++
+                }
+                val semantic = looksLikeGameplay(
+                    method.name,
+                    method.definingClass,
+                )
+                if (semantic) {
+                    semanticMatches++
+                    if (diagnostics.size < 20) {
+                        diagnostics += method.definingClass + "->" +
+                            method.name + "(" +
+                            method.parameterTypes.joinToString("") +
+                            ")" + method.returnType
+                    }
+                }
+                if (semantic && (!noArgs || method.returnType !in
+                        setOf("Z", "I", "F")
+                    )
+                ) rejectedReturnTypes++
+                if (!noArgs || impl == null || impl.registerCount < 1) continue
+                if (sensitiveMethodName(normalizeName(method.name))) continue
+                val body = DexMethodBodyInspector.inspect(method)
+                val nameMatch = classify(method.name, method.returnType, method.definingClass)
+                val fieldMatch = body.field?.let { field ->
+                    classify("get" + field.name, field.type, method.definingClass)
+                }
+                val match = nameMatch ?: fieldMatch ?: continue
+                val id = stableId(apkIndex, dexEntry, method)
+                candidates += DexLocalOpportunity(
+                    id = id,
+                    apkIndex = apkIndex,
+                    dexEntry = dexEntry,
+                    className = method.definingClass,
+                    methodName = method.name,
+                    signature = "()" + method.returnType,
+                    originalDexSha256 = sha,
+                    category = match.first,
+                    action = match.second,
+                    selectable = body.supportsScalarReplacement &&
+                        (match.first !in setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI) ||
+                            developerTestMode),
+                    reason = if (match.first in
+                        setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI) &&
+                        !developerTestMode) {
+                        "Доступно только в тестовом режиме собственной игры или приложения."
+                    } else {
+                        body.detail + " Эффект в игре ещё не проверен."
+                    },
+                    bodyKind = body.kind,
+                    fieldIdentity = body.fieldIdentity,
+                    matchedByField = nameMatch == null && fieldMatch != null,
+                    runtimeBlocker = if (AccessFlags.INTERFACE.isSet(classDef.accessFlags))
+                        "Runtime-переключатели методов интерфейса пока не поддерживаются." else null,
+                )
+            }
+        }
+        progress(methods, dexEntry)
+        if (excludedAmbiguousProgressionNames > 0) {
+            warnings +=
+                "Пропущено неоднозначных Level/Experience методов: " +
+                    excludedAmbiguousProgressionNames +
+                    ". Имя метода без игрового класса не доказывает " +
+                    "наличие опыта или уровней."
+        }
+        return DexLocalScan(
+            opportunities = candidates,
+            warnings = warnings,
+            dexFilesExamined = 1,
+            methodsExamined = methods,
+            classesInspected = classesInspected,
+            classesExcluded = classesExcluded,
+            methodsWithCode = methodsWithCode,
+            noArgumentMethods = noArgumentMethods,
+            scalarNoArgumentMethods = scalarMethods,
+            semanticNamesMatched = semanticMatches,
+            rejectedReturnTypes = rejectedReturnTypes,
+            excludedAmbiguousProgressionNames =
+                excludedAmbiguousProgressionNames,
+            diagnostics = diagnostics,
+        )
+    }
+
+    /**
+     * Re-resolve each method in the current source DEX before rewriting.
+     * A complete new DEX is emitted by dexlib2, not patched at guessed offsets.
+     */
+    fun rewriteDex(
+        bytes: ByteArray,
+        apkIndex: Int,
+        dexEntry: String,
+        selected: List<DexLocalOpportunity>,
+        destination: File,
+        developerTestMode: Boolean,
+        cancellation: CancellationSignal,
+    ): DexLocalRewrite {
+        val originalSha = sha256(bytes)
+        validatedSelections(bytes, apkIndex, dexEntry, selected, developerTestMode, cancellation)
+
+        val dex = parseDex(bytes)
+        val wanted = selected.associateBy { it.id }
+        val writtenIds = LinkedHashSet<String>()
+        val classes = dex.classes.map { clazz ->
+            checkCancelled(cancellation)
+            val direct = clazz.directMethods.map { method ->
+                rewriteMethod(method, apkIndex, dexEntry, wanted, writtenIds)
+            }
+            val virtual = clazz.virtualMethods.map { method ->
+                rewriteMethod(method, apkIndex, dexEntry, wanted, writtenIds)
+            }
+            if ((direct + virtual).none { method ->
+                stableId(apkIndex, dexEntry, method) in wanted
+            }) {
+                clazz
+            } else {
+                ImmutableClassDef(
+                    clazz.type, clazz.accessFlags, clazz.superclass,
+                    clazz.interfaces, clazz.sourceFile, clazz.annotations,
+                    clazz.staticFields, clazz.instanceFields, direct, virtual,
+                )
+            }
+        }
+        require(writtenIds == wanted.keys) {
+            "Not every selected DEX method was rewritten."
+        }
+        destination.parentFile?.mkdirs()
+        val temp = File(destination.parentFile, destination.name + ".tmp")
+        temp.delete()
+        try {
+            val rewritten = object : DexFile {
+                override fun getOpcodes(): Opcodes = dex.opcodes
+                override fun getClasses(): Set<out ClassDef> = classes.toSet()
+            }
+            DexPool.writeTo(temp.absolutePath, rewritten)
+            val verified = temp.inputStream().buffered().use {
+                DexBackedDexFile.fromInputStream(null, it)
+            }
+            val verifiedIds = HashSet<String>()
+            for (clazz in verified.classes) {
+                for (method in clazz.methods) {
+                    val id = stableId(apkIndex, dexEntry, method)
+                    val expectation = wanted[id] ?: continue
+                    val instructions =
+                        method.implementation?.instructions?.toList().orEmpty()
+                    val expectedOpcode = when (expectation.action) {
+                        DexLocalAction.TRUE, DexLocalAction.FALSE -> Opcode.CONST_4
+                        DexLocalAction.INT_9999, DexLocalAction.INT_99,
+                        DexLocalAction.FLOAT_2 -> Opcode.CONST
+                    }
+                    val expectedValue = when (expectation.action) {
+                        DexLocalAction.TRUE -> 1
+                        DexLocalAction.FALSE -> 0
+                        DexLocalAction.INT_9999 -> 9999
+                        DexLocalAction.INT_99 -> 99
+                        DexLocalAction.FLOAT_2 -> 2.0f.toBits()
+                    }
+                    val actualValue =
+                        (instructions.firstOrNull() as? NarrowLiteralInstruction)
+                            ?.narrowLiteral
+                    require(instructions.size == 2 &&
+                        instructions[0].opcode == expectedOpcode &&
+                        actualValue == expectedValue &&
+                        instructions[1].opcode == Opcode.RETURN
+                    ) {
+                        "Rewritten DEX failed exact return-value verification: " + id
+                    }
+                    require(verifiedIds.add(id)) {
+                        "Rewritten DEX contains a duplicate selected method: " + id
+                    }
+                }
+            }
+            require(verifiedIds == wanted.keys) {
+                "Rewritten DEX is missing one or more selected methods."
+            }
+            require(temp.renameTo(destination)) {
+                "Failed to finalize the rewritten DEX."
+            }
+            return DexLocalRewrite(
+                file = destination,
+                appliedIds = writtenIds,
+                sourceSha256 = originalSha,
+                resultSha256 = sha256(destination.readBytes()),
+            )
+        } catch (failure: Throwable) {
+            temp.delete()
+            destination.delete()
+            throw failure
+        }
+    }
+
+    internal fun validatedSelections(
+        bytes: ByteArray, apkIndex: Int, dexEntry: String,
+        selected: List<DexLocalOpportunity>, developerTestMode: Boolean,
+        cancellation: CancellationSignal,
+    ) {
+        require(selected.isNotEmpty()) { "No DEX changes selected." }
+        val originalSha = sha256(bytes)
+        val current = scanDex(
+            bytes, apkIndex, dexEntry, developerTestMode, cancellation,
+        ).opportunities.associateBy { it.id }
+        val selectedIds = selected.map { it.id }
+        require(selectedIds.toSet().size == selectedIds.size) {
+            "Duplicate DEX method selections."
+        }
+        selected.forEach { request ->
+            val candidate = current[request.id]
+                ?: error("DEX method disappeared or is no longer eligible: " +
+                    request.displayName)
+            require(candidate.selectable && request.selectable) {
+                "Developer test mode is not enabled for this target."
+            }
+            require(candidate.originalDexSha256 == originalSha &&
+                request.originalDexSha256 == originalSha &&
+                candidate.action == request.action &&
+                candidate.className == request.className &&
+                candidate.methodName == request.methodName &&
+                candidate.signature == request.signature
+            ) {
+                "DEX method provenance changed since selection."
+            }
+        }
+
+    }
+
+    private fun rewriteMethod(
+        original: Method,
+        apkIndex: Int,
+        dexEntry: String,
+        wanted: Map<String, DexLocalOpportunity>,
+        written: MutableSet<String>,
+    ): Method {
+        val id = stableId(apkIndex, dexEntry, original)
+        val request = wanted[id] ?: return original
+        val implementation = requireNotNull(original.implementation)
+        require(original.returnType == when (request.action) {
+            DexLocalAction.TRUE, DexLocalAction.FALSE -> "Z"
+            DexLocalAction.INT_9999, DexLocalAction.INT_99 -> "I"
+            DexLocalAction.FLOAT_2 -> "F"
+        })
+        require(implementation.registerCount >= 1)
+        val instruction = when (request.action) {
+            DexLocalAction.TRUE ->
+                ImmutableInstruction11n(Opcode.CONST_4, 0, 1)
+            DexLocalAction.FALSE ->
+                ImmutableInstruction11n(Opcode.CONST_4, 0, 0)
+            DexLocalAction.INT_9999 ->
+                ImmutableInstruction31i(Opcode.CONST, 0, 9999)
+            DexLocalAction.INT_99 ->
+                ImmutableInstruction31i(Opcode.CONST, 0, 99)
+            DexLocalAction.FLOAT_2 ->
+                ImmutableInstruction31i(Opcode.CONST, 0, 2.0f.toBits())
+        }
+        val instructions: List<Instruction> = listOf(
+            instruction,
+            ImmutableInstruction11x(Opcode.RETURN, 0),
+        )
+        check(written.add(id)) { "Method identity is not unique: " + id }
+        return ImmutableMethod(
+            original.definingClass, original.name, original.parameters,
+            original.returnType, original.accessFlags, original.annotations,
+            original.hiddenApiRestrictions,
+            ImmutableMethodImplementation(
+                implementation.registerCount,
+                instructions,
+                emptyList(),
+                emptyList(),
+            ),
+        )
+    }
+
+    internal fun nativeGameplayKind(className: String, methodName: String, returnType: String): Pair<DexLocalCategory, DexLocalAction>? {
+        if (excludedClass(className)) return null
+        return classify(methodName, returnType, className)?.takeUnless {
+            it.first in setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI)
+        }
+    }
+
+    private fun classify(
+        methodName: String,
+        returnType: String,
+        definingClass: String,
+    ): Pair<DexLocalCategory, DexLocalAction>? {
+        val key = normalizeName(methodName)
+        if (sensitiveMethodName(key)) return null
+        // getLevel()/getExperience() also occur in loggers, media codecs,
+        // education and user profiles. Never patch them on name alone.
+        if (DexGameplayContext.isProgressionGetter(methodName) &&
+            !DexGameplayContext.acceptProgressionGetter(
+                definingClass, methodName,
+            )
+        ) return null
+
+        if (returnType == "Z") {
+            // Prefer explicit gameplay verbs over broad substring matches:
+            // method names alone are weak evidence of runtime behaviour.
+            return when (key) {
+                "isfullversion", "getisfullversion", "hasfullversion",
+                "gethasfullversion", "ispremium", "getispremium",
+                "haspremium", "gethaspremium", "premiumunlocked",
+                "ispremiumunlocked", "isprounlocked", "isproversion",
+                "getisproversion", "getfullversion", "getpremium",
+                "getproversion", "isfullgame", "getisfullgame" ->
+                    DexLocalCategory.FULL_VERSION to DexLocalAction.TRUE
+
+                "isinvincible", "getisinvincible", "isimmortal",
+                "getisimmortal", "isgodmode", "getisgodmode",
+                "hasinfinitehealth", "isinvulnerable",
+                "getisinvulnerable", "isundamageable",
+                "getisundamageable" ->
+                    DexLocalCategory.HEALTH to DexLocalAction.TRUE
+
+                "isdead", "getisdead", "isdamageable",
+                "getisdamageable", "candamageplayer",
+                "cantakedamage", "istakingdamage" ->
+                    DexLocalCategory.HEALTH to DexLocalAction.FALSE
+
+                "hasinfinitestamina", "isinfiniteenergy",
+                "hasinfiniteenergy", "isinfinitestamina",
+                "isunlimitedstamina", "hasunlimitedenergy",
+                "isendlessstamina", "canalwayssprint" ->
+                    DexLocalCategory.STAMINA to DexLocalAction.TRUE
+
+                "hasinfiniteammo", "isinfiniteammo",
+                "isunlimitedammo", "hasunlimitedammo" ->
+                    DexLocalCategory.AMMO to DexLocalAction.TRUE
+
+                "canrun", "cansprint", "canmove", "canjump",
+                "canfly", "isnoclip", "getisnoclip",
+                "cannoclip", "isflying", "getisflying" ->
+                    DexLocalCategory.MOVEMENT to DexLocalAction.TRUE
+
+                "isoncooldown", "getisoncooldown",
+                "hascooldown", "iscooldownactive",
+                "isstunned", "getisstunned",
+                "ismovementblocked", "isreloading",
+                "getisreloading" ->
+                    DexLocalCategory.COOLDOWN to DexLocalAction.FALSE
+
+                "isdebug", "getisdebug", "isdebugmode",
+                "getisdebugmode", "isdebugenabled",
+                "getisdebugenabled", "showfps",
+                "getshowfps", "isshowfps",
+                "showdebugmenu", "getshowdebugmenu",
+                "isdevelopermode", "getisdevelopermode" ->
+                    DexLocalCategory.DEBUG_UI to DexLocalAction.TRUE
+
+                else -> null
+            }
+        }
+
+        if (returnType == "I") {
+            return when (key) {
+                "gethealth", "gethp", "getmaxhp", "getcurrenthp",
+                "getmaxhealth", "getcurrenthealth",
+                "getplayerhealth", "getplayerhp",
+                "gethitpoints", "getmaxhitpoints",
+                "getmaxhitpoint" ->
+                    DexLocalCategory.HEALTH to DexLocalAction.INT_9999
+
+                "getammo", "getmaxammo", "getbullets",
+                "getammunition", "getmaxammunition",
+                "getmagazinesize" ->
+                    DexLocalCategory.AMMO to DexLocalAction.INT_9999
+
+                "getstamina", "getmaxstamina",
+                "getenergy", "getmaxenergy",
+                "getcurrentstamina" ->
+                    DexLocalCategory.STAMINA to DexLocalAction.INT_9999
+
+                "getexp", "getxp", "getexperience",
+                "getcurrentxp", "getcurrentexperience",
+                "getskillpoints", "getabilitypoints" ->
+                    DexLocalCategory.EXPERIENCE to DexLocalAction.INT_9999
+
+                "getlevel", "getplayerlevel",
+                "getcharacterlevel", "getcurrentlevel",
+                "getskilllevel" ->
+                    DexLocalCategory.EXPERIENCE to DexLocalAction.INT_99
+
+                "getinventorysize", "getinventorycapacity",
+                "getmaxinventorysize", "getmaxinventoryslots",
+                "getmaxslots", "getbagcapacity",
+                "getbackpackslots" ->
+                    DexLocalCategory.INVENTORY to DexLocalAction.INT_99
+                else -> null
+            }
+        }
+
+        if (returnType == "F") {
+            return when (key) {
+                "getmovespeed", "getrunspeed",
+                "getwalkspeed", "getsprintspeed",
+                "getmovementspeed", "getplayerspeed" ->
+                    DexLocalCategory.MOVEMENT to DexLocalAction.FLOAT_2
+                else -> null
+            }
+        }
+        return null
+    }
+
+    private fun normalizeName(name: String): String =
+        name.lowercase().filter(Char::isLetterOrDigit)
+
+    private fun sensitiveMethodName(name: String): Boolean =
+        listOf(
+            "billing", "receipt", "license", "server",
+            "verify", "authenticate", "payment",
+            "anticheat", "integrity", "purchase",
+            "checkout", "transaction", "account",
+        ).any(name::contains)
+
+    private fun looksLikeGameplay(
+        methodName: String,
+        definingClass: String,
+    ): Boolean {
+        val key = normalizeName(methodName)
+        if (sensitiveMethodName(key)) return false
+        if (DexGameplayContext.isProgressionGetter(methodName)) {
+            return DexGameplayContext.acceptProgressionGetter(
+                definingClass, methodName,
+            )
+        }
+        return listOf(
+            "health", "hitpoint", "invincib",
+            "immortal", "damage", "godmode",
+            "stamina", "energy", "ammo",
+            "ammunition", "sprint", "run",
+            "walk", "move", "noclip",
+            "fly", "cooldown", "stun",
+            "reloading", "inventory", "capacity", "debug",
+            "fps", "fullversion", "premium",
+            "proversion",
+        ).any(key::contains) ||
+            key == "gethp"
+    }
+
+    private fun excludedClass(name: String): Boolean {
+        val path = name.lowercase()
+        val sensitive = listOf(
+            "billing", "receipt", "purchaseclient",
+            "payment", "authentication", "anticheat",
+            "integrity", "remoteservice", "server",
+            "account", "licensing",
+        )
+        // Only exclude framework namespaces when they are a prefix.
+        // Game packages such as Lcom/example/android/game/ must be kept.
+        val framework = listOf(
+            "landroid/", "landroidx/", "lkotlin/", "lkotlinx/",
+            "ljava/", "lcom/google/", "lorg/junit/",
+            "lcom/unity3d/",
+        )
+        return sensitive.any { it in path } ||
+            framework.any(path::startsWith)
+    }
+
+    internal fun stableId(
+        apkIndex: Int,
+        dexEntry: String,
+        method: Method,
+    ): String = apkIndex.toString() + ":" + dexEntry + ":" +
+        method.definingClass + "->" + method.name +
+        "(" + method.parameterTypes.joinToString("") + ")" + method.returnType
+
+    private fun parseDex(bytes: ByteArray): DexBackedDexFile {
+        require(bytes.size >= 112 && bytes[0] == 0x64.toByte() &&
+            bytes[1] == 0x65.toByte() && bytes[2] == 0x78.toByte()
+        ) { "Unsupported or corrupt DEX magic." }
+        return DexBackedDexFile(null, bytes)
+    }
+
+    private fun readBounded(input: java.io.InputStream, limit: Long, cancellation: CancellationSignal): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(128 * 1024)
+        var bytes = 0L
+        while (true) {
+            checkCancelled(cancellation)
+            val count = input.read(buffer)
+            if (count < 0) break
+            bytes += count
+            require(bytes <= limit) { "DEX expansion limit exceeded." }
+            out.write(buffer, 0, count)
+        }
+        return out.toByteArray()
+    }
+
+    private fun sha256(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+    private fun checkCancelled(cancellation: CancellationSignal) {
+        if (cancellation.isCancelled()) throw AnalysisCancelledException()
     }
 }
