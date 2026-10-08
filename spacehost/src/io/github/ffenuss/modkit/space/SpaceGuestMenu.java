@@ -184,8 +184,11 @@ final class SpaceGuestMenu {
         if (root == null || !(root.getParent() instanceof ViewGroup)) return;
         ViewGroup parent = (ViewGroup) root.getParent();
         int available = parent.getWidth() > 0 ? parent.getWidth() : a.getResources().getDisplayMetrics().widthPixels;
-        root.getLayoutParams().width = expanded ? Math.min(dp(312), available - dp(24)) : dp(112);
-        root.requestLayout();
+        int width = expanded ? Math.min(dp(312), available - dp(24)) : dp(112);
+        if (root.getLayoutParams().width != width) {
+            root.getLayoutParams().width = width;
+            root.requestLayout();
+        }
     }
     private void place() {
         if (root == null || !(root.getParent() instanceof ViewGroup)) return;
