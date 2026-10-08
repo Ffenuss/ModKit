@@ -27,17 +27,17 @@ fun SpaceMenuCard(result: FastAnalysisResult) {
                 Text(menu.packageName)
                 Text("Движок: " + menu.plan.engines.joinToString { it.title })
                 Text("Жанр: ${menu.plan.genre.genre.title}" + if (menu.plan.genre.evidence.isNotEmpty()) " · предварительная оценка" else "")
-                Text("Приоритет поиска: " + menu.plan.searchPriorities.joinToString())
                 Text("Кандидатов: ${menu.candidates}. Статических рецептов: ${menu.staticRecipes}.")
+                Text("Для включения в пространстве: ${menu.runtimeRecipes}")
                 if (menu.truncated) Text("Результат неполный: проверьте ограничения анализа.")
                 Text("После установки откройте пространство: оно автоматически получит это меню из ModKit. Выберите оригинальное приложение в списке пространства.")
-                Text("В пространстве откроется меню этого приложения. Исполнитель игровых изменений ещё не подключён; найденные пункты показываются с доказательствами без активных переключателей.")
+                Text("Исполнимые native-рецепты появятся переключателями в меню приложения. Перед включением пространство проверит версию, библиотеку и исходные байты. Другие кандидаты пока не включаются.")
                 Button(onClick = {
                     try {
                         io.github.ffenuss.modkit.space.SpaceMenuHandoff.open(context, File(menu.profilePath))
                         message = "Меню передано. Выберите приложение в пространстве."
                     } catch (error: Exception) { message = error.message ?: "Не удалось открыть пространство" }
-                }, modifier = Modifier.fillMaxWidth()) { Text("Передать меню в пространство") }
+                }, modifier = Modifier.fillMaxWidth()) { Text("Открыть пространство") }
                 message?.let { Text(it) }
             }
         }

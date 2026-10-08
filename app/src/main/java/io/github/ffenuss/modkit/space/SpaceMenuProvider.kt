@@ -33,6 +33,19 @@ class SpaceMenuProvider : ContentProvider() {
             throw FileNotFoundException("Read-only menu endpoint")
         val menus = SavedSpaceMenus.load(requireNotNull(context)).take(256)
         val bytes = when {
+            uri.pathSegments == listOf("runtime") -> {
+                val payloads = JSONArray()
+                for (abi in listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")) {
+                    val payload = requireNotNull(context).assets.open("modkit-runtime-probe-native/$abi/libmodkit_runtime_probe.so").use { it.readBytes() }
+                    payloads.put(JSONObject().put("abi", abi).put("sha256", sha256(payload)).put("size", payload.size))
+                }
+                JSONObject().put("schema", 1).put("api", "native-v1").put("payloads", payloads).toString().toByteArray(Charsets.UTF_8)
+            }
+            uri.pathSegments.size == 2 && uri.pathSegments[0] == "native" -> {
+                val abi = uri.pathSegments[1]
+                if (abi !in listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")) throw FileNotFoundException("Unsupported runtime ABI")
+                requireNotNull(context).assets.open("modkit-runtime-probe-native/$abi/libmodkit_runtime_probe.so").use { it.readBytes() }
+            }
             uri.pathSegments == listOf("index") -> {
                 val entries = JSONArray()
                 menus.forEach { menu ->

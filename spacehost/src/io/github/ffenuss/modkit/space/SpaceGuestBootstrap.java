@@ -28,19 +28,19 @@ final class SpaceGuestBootstrap {
             Object original = coreType.getMethod("bo").invoke(core);
             Object chained = GuestCallbackChain.wrap(contract, original, (method, args) -> {
                 if (("b".equals(method.getName()) || "d".equals(method.getName())) && args != null && args.length == 1) {
-                    try { observe(loader, (Application) args[0], "b".equals(method.getName())); }
+                    try { observe(host, loader, (Application) args[0], "b".equals(method.getName())); }
                     catch (Exception error) { Log.w("ModKitGuest", "Guest session rejected", error); }
                 }
             });
             coreType.getMethod("ax", contract).invoke(core, chained);
             installed = true;
-            Log.i("ModKitGuest", "Guest lifecycle bridge installed; runtime executor unavailable");
+            Log.i("ModKitGuest", "Guest lifecycle bridge installed");
         } catch (Exception | LinkageError error) {
             Log.w("ModKitGuest", "Guest lifecycle bridge unavailable", error);
         }
     }
 
-    private static void observe(ClassLoader hostLoader, Application guest, boolean created) throws Exception {
+    private static void observe(Application host, ClassLoader hostLoader, Application guest, boolean created) throws Exception {
         Class<?> clientType = Class.forName("com.lody.virtual.client.b", false, hostLoader);
         Object client = clientType.getMethod("get").invoke(null);
         String pkg = (String) clientType.getMethod("getCurrentPackage").invoke(client);
@@ -54,7 +54,8 @@ final class SpaceGuestBootstrap {
         // Google dependencies keep their original lifecycle and are never mod targets here.
         if ("com.android.vending".equals(pkg) || pkg.startsWith("com.google.android.")) return;
         session = new Session(pkg, user, guest, guest.getClassLoader(), created);
-        Log.i("ModKitGuest", "Guest lifecycle package=" + pkg + " user=" + user + " created=" + created + " backend=none");
+        Log.i("ModKitGuest", "Guest lifecycle package=" + pkg + " user=" + user + " created=" + created);
+        if (created) SpaceGuestMenu.install(host, session);
     }
 
     static Session current() { return session; }

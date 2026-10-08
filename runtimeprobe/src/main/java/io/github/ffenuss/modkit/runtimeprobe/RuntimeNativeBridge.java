@@ -9,6 +9,39 @@ public final class RuntimeNativeBridge {
 
     private RuntimeNativeBridge() {}
 
+    /** Load a verified private payload staged by the signed-space bridge. */
+    public static synchronized boolean loadVerifiedFile(java.io.File file) {
+        if (loaded) return true;
+        try {
+            if (file == null || !file.isFile() || file.canWrite()) return false;
+            System.load(file.getCanonicalPath());
+            loaded = true; loadAttempted = true;
+            return true;
+        } catch (Exception | LinkageError error) { return false; }
+    }
+
+    public static String loadedModulePath(String module) {
+        return validModule(module) && ensureLoaded() ? nativeLoadedModulePath(module) : null;
+    }
+
+    public static boolean codeMatches(String module, long address, byte[] expected) {
+        return validModule(module) && address > 0 && expected != null && expected.length > 0 &&
+            expected.length <= 64 && expected.length % 4 == 0 && ensureLoaded() &&
+            nativeCodeMatches(module, address, expected);
+    }
+
+    /** 1: applied and protections restored; 0: rejected; -1: write/protection state uncertain. */
+    public static int patchCodeStatus(String module, long address, byte[] expected, byte[] replacement) {
+        if (!validModule(module) || address <= 0 || expected == null || replacement == null ||
+            expected.length == 0 || expected.length != replacement.length || expected.length > 64 ||
+            expected.length % 4 != 0 || !ensureLoaded()) return 0;
+        return nativePatchCodeStatus(module, address, expected, replacement);
+    }
+
+    private static native String nativeLoadedModulePath(String module);
+    private static native boolean nativeCodeMatches(String module, long address, byte[] expected);
+    private static native int nativePatchCodeStatus(String module, long address, byte[] expected, byte[] replacement);
+
     public static boolean ensureLoaded() {
         if (loadAttempted) return loaded;
         synchronized (RuntimeNativeBridge.class) {

@@ -28,7 +28,7 @@ dependencies {
 // Exercise the exact host loader on owned Android fixtures, without a proprietary host.
 val deviceFixtureRoot = layout.buildDirectory.dir("generated/spaceDeviceFixtures")
 val prepareSpaceDeviceFixtures = tasks.register("prepareSpaceDeviceFixtures") {
-    dependsOn("assembleDebug")
+    dependsOn("assembleDebug", ":runtimeprobe:assembleDebug", ":nativefixture:assembleDebug")
     inputs.files(
         rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SpaceEngine.java"),
         rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SourceInventory.java"),
@@ -36,17 +36,28 @@ val prepareSpaceDeviceFixtures = tasks.register("prepareSpaceDeviceFixtures") {
         rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/MenuProfile.java"),
         rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/MenuProfileStore.java"),
         rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/GuestCallbackChain.java"),
+        rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/NativePatch.java"),
+        rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SpaceNativeController.java"),
+        rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SpaceNativeBackend.java"),
+        rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SpaceNativePayload.java"),
+        rootProject.file("runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/RuntimeNativeBridge.java"),
     )
     inputs.file(layout.buildDirectory.file("outputs/apk/debug/spaceengine-debug.apk"))
     outputs.dir(deviceFixtureRoot)
     doLast {
         val root = deviceFixtureRoot.get().asFile
         val javaDir = root.resolve("java/io/github/ffenuss/modkit/space").apply { mkdirs() }
-        for (name in listOf("SpaceEngine.java", "SourceInventory.java", "SpacePolicy.java", "MenuProfile.java", "MenuProfileStore.java", "GuestCallbackChain.java")) {
+        for (name in listOf("SpaceEngine.java", "SourceInventory.java", "SpacePolicy.java", "MenuProfile.java", "MenuProfileStore.java", "GuestCallbackChain.java", "NativePatch.java", "SpaceNativeController.java", "SpaceNativeBackend.java", "SpaceNativePayload.java")) {
             rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/$name").copyTo(javaDir.resolve(name), overwrite = true)
         }
         val carrier = layout.buildDirectory.file("outputs/apk/debug/spaceengine-debug.apk").get().asFile.readBytes()
         val assets = root.resolve("assets").apply { mkdirs() }
+        rootProject.file("runtimeprobe/build/outputs/apk/debug/runtimeprobe-debug.apk").copyTo(assets.resolve("native-runtime.apk"), overwrite = true)
+        rootProject.file("nativefixture/build/outputs/apk/debug/nativefixture-debug.apk").copyTo(assets.resolve("native-fixture.apk"), overwrite = true)
+        val bridge = root.resolve("java/io/github/ffenuss/modkit/runtimeprobe").apply { mkdirs() }
+        rootProject.file("runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/RuntimeNativeBridge.java").copyTo(bridge.resolve("RuntimeNativeBridge.java"), overwrite = true)
+        val fixture = root.resolve("java/dev/modkit/nativefixture").apply { mkdirs() }
+        fixture.resolve("GameActivity.java").writeText("package dev.modkit.nativefixture; public final class GameActivity { public static native int readNativeValue(); }\n")
         assets.resolve("modkit-space-engine.apk").writeBytes(carrier)
         val sha = MessageDigest.getInstance("SHA-256").digest(carrier).joinToString("") { "%02x".format(it.toInt() and 255) }
         assets.resolve("modkit-space-engine.sha256").writeText(sha, Charsets.US_ASCII)

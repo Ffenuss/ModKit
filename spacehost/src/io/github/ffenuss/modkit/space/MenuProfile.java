@@ -16,17 +16,21 @@ final class MenuProfile {
     final List<String> sourceIdentities = new ArrayList<>();
     final boolean truncated;
     static final class Item {
-        final String title, detail, evidence, state;
+        final String id, title, detail, evidence, state, category;
+        final NativePatch patch;
         Item(JSONObject json) throws Exception {
-            text(json, "id", 512); text(json, "category", 180);
+            id = text(json, "id", 512); category = text(json, "category", 180);
             title = text(json, "title", 180); detail = text(json, "detail", 1200);
             evidence = text(json, "evidence", 512); state = text(json, "state", 32);
             if (!"candidate".equals(state) && !"static_recipe".equals(state)) throw new IllegalArgumentException("Unknown item state");
+            patch = json.isNull("patch") ? null : new NativePatch(json.getJSONObject("patch"));
+            if (patch != null && !"static_recipe".equals(state)) throw new IllegalArgumentException("Candidate has no runtime recipe");
         }
     }
     MenuProfile(String content) throws Exception {
         JSONObject json = new JSONObject(content);
-        if (json.getInt("schema") != 1 || !"none".equals(json.getString("backend")))
+        int schema = json.getInt("schema");
+        if (!((schema == 1 && "none".equals(json.getString("backend"))) || (schema == 2 && "native_v1".equals(json.getString("backend")))))
             throw new IllegalArgumentException("Unsupported menu contract/backend");
         packageName = text(json, "packageName", 255);
         if (!SpacePolicy.validSession(packageName, 0)) throw new IllegalArgumentException("Invalid package");
@@ -52,7 +56,15 @@ final class MenuProfile {
         }
         JSONArray menu = json.getJSONArray("items");
         if (menu.length() > 256) throw new IllegalArgumentException("Too many menu items");
-        for (int i = 0; i < menu.length(); i++) items.add(new Item(menu.getJSONObject(i)));
+        java.util.Set<String> ids = new java.util.HashSet<>();
+        for (int i = 0; i < menu.length(); i++) {
+            Item item = new Item(menu.getJSONObject(i));
+            if (item.id.isEmpty() || !ids.add(item.id) || (schema == 1 && item.patch != null))
+                throw new IllegalArgumentException("Ambiguous or incompatible menu item");
+            if (item.patch != null) for (Item other : items)
+                if (other.patch != null && item.patch.overlaps(other.patch)) throw new IllegalArgumentException("Overlapping native recipes");
+            items.add(item);
+        }
     }
     boolean matches(List<File> sources, SourceInventory.Cancellation token) throws Exception {
         if (sources.size() != sourceIdentities.size()) return false;

@@ -37,7 +37,7 @@ fun SavedSpaceMenusScreen(onBack: () -> Unit) {
                         Text(menu.packageName)
                         Text("Жанр: ${menu.genre}. Пунктов: ${menu.items}, статических рецептов: ${menu.staticRecipes}.")
                         if (menu.truncated) Text("Анализ содержит ограничения")
-                        Text("Исполнитель модов пока не подключён")
+                        Text("Для включения в пространстве: ${menu.runtimeRecipes}")
                         Button(onClick = {
                             try { SpaceMenuHandoff.open(context, menu.file); message = "Меню передано: ${menu.label}" }
                             catch (error: Exception) { message = error.message ?: "Не удалось передать меню" }

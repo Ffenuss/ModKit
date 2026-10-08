@@ -139,8 +139,8 @@ public final class SpaceHost {
                 cancelProfileCheck(); target = packageName; userId = virtualUser; generation++;
                 rememberTarget(packageName, virtualUser);
                 Log.i(TAG, "Launch requested package=" + target + " user=" + userId);
-                if (Settings.canDrawOverlays(application)) { showOverlay(); if (panel != null) panel.setVisibility(View.VISIBLE); }
-                else Log.i(TAG, "Overlay permission absent; guest launch remains available");
+                // The guest owns its Activity overlay. Never leave a second system window over it.
+                removeOverlay();
             });
         } catch (ReflectiveOperationException | RuntimeException error) {
             Log.e(TAG, "Host launch identity rejected", error);
@@ -309,8 +309,7 @@ public final class SpaceHost {
                         UI.post(() -> {
                             if (!accepted) { toast("Ядро отклонило запуск приложения"); return; }
                             cancelProfileCheck(); target = selectedPackage; userId = selectedUser; generation++;
-                            rememberTarget(target, userId); showOverlay();
-                            if (panel != null) panel.setVisibility(View.VISIBLE);
+                            rememberTarget(target, userId); removeOverlay();
                         });
                     } catch (Exception error) { Log.w(TAG, "Target selection failed", error); UI.post(() -> toast("Не удалось выбрать приложение")); }
                 });

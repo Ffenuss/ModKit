@@ -183,6 +183,7 @@ typedef struct {
     size_t length;
     void* address;
     int found;
+    int matches;
 } code_patch_lookup;
 
 static int locate_code_patch_target(
@@ -198,16 +199,18 @@ static int locate_code_patch_target(
             strcmp(actual, lookup->module_name) != 0) {
         return 0;
     }
+    lookup->matches++;
+    if (lookup->matches > 1) { lookup->found = 0; lookup->address = NULL; return 0; }
 
     const uintptr_t base = (uintptr_t)info->dlpi_addr;
     if (lookup->binary_virtual_address > UINTPTR_MAX - base) {
-        return 1;
+        return 0;
     }
     const uintptr_t target =
             base + lookup->binary_virtual_address;
     if (lookup->length == 0 ||
             lookup->length - 1 > UINTPTR_MAX - target) {
-        return 1;
+        return 0;
     }
     const uintptr_t last =
             target + lookup->length - 1;
@@ -237,10 +240,10 @@ static int locate_code_patch_target(
                 last < end) {
             lookup->address = (void*)target;
             lookup->found = 1;
-            return 1;
+            return 0;
         }
     }
-    return 1;
+    return 0;
 }
 
 static int change_code_range_protection(
@@ -1873,8 +1876,7 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePassiveJniR
             : JNI_FALSE;
 }
 
-JNIEXPORT jboolean JNICALL
-Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePatchCode(
+static int patch_code_status(
         JNIEnv* env,
         jclass clazz,
         jstring module_name,
@@ -1997,12 +1999,14 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePatchCode(
                             target,
                             (size_t)expected_length,
                             start_prot);
-                success =
-                        restored &&
-                        memcmp(
+                success = restored && memcmp(
                             target,
                             replacement,
-                            (size_t)replacement_length) == 0;
+                            (size_t)replacement_length) == 0 ? 1 : -1;
+            } else {
+                /* A failed multi-page permission change may have changed earlier pages. */
+                success = change_code_range_protection(target,
+                        (size_t)expected_length, start_prot) ? 0 : -1;
             }
         }
     }
@@ -2012,7 +2016,65 @@ Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePatchCode(
             env,
             module_name,
             module);
-    return success ? JNI_TRUE : JNI_FALSE;
+    return success;
+}
+
+JNIEXPORT jboolean JNICALL Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePatchCode(
+        JNIEnv* env, jclass clazz, jstring module, jlong address, jbyteArray expected, jbyteArray replacement) {
+    return patch_code_status(env, clazz, module, address, expected, replacement) == 1 ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jint JNICALL Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativePatchCodeStatus(
+        JNIEnv* env, jclass clazz, jstring module, jlong address, jbyteArray expected, jbyteArray replacement) {
+    return patch_code_status(env, clazz, module, address, expected, replacement);
+}
+
+JNIEXPORT jboolean JNICALL Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeCodeMatches(
+        JNIEnv* env, jclass clazz, jstring module_name, jlong address, jbyteArray bytes) {
+    (void)clazz;
+    if (!module_name || !bytes || address <= 0) return JNI_FALSE;
+    jsize length = (*env)->GetArrayLength(env, bytes);
+    if (length <= 0 || length > 64 || length % 4) return JNI_FALSE;
+    const char* module = (*env)->GetStringUTFChars(env, module_name, NULL);
+    if (!module) return JNI_FALSE;
+    if (!valid_module(module)) { (*env)->ReleaseStringUTFChars(env, module_name, module); return JNI_FALSE; }
+    uint8_t expected[64];
+    (*env)->GetByteArrayRegion(env, bytes, 0, length, (jbyte*)expected);
+    if ((*env)->ExceptionCheck(env)) { (*env)->ReleaseStringUTFChars(env, module_name, module); return JNI_FALSE; }
+    code_patch_lookup lookup; memset(&lookup, 0, sizeof(lookup));
+    lookup.module_name = module; lookup.binary_virtual_address = (uintptr_t)address; lookup.length = length;
+    pthread_mutex_lock(&g_code_patch_lock);
+    dl_iterate_phdr(locate_code_patch_target, &lookup);
+    int prot = lookup.address ? query_protection(lookup.address) : 0;
+    int last_prot = lookup.address ? query_protection((uint8_t*)lookup.address + length - 1) : 0;
+    int matches = lookup.found && lookup.matches == 1 && prot == last_prot &&
+        (prot & (PROT_READ | PROT_EXEC)) == (PROT_READ | PROT_EXEC) && memcmp(lookup.address, expected, length) == 0;
+    pthread_mutex_unlock(&g_code_patch_lock);
+    (*env)->ReleaseStringUTFChars(env, module_name, module);
+    return matches ? JNI_TRUE : JNI_FALSE;
+}
+
+typedef struct { const char* module; char path[4096]; int matches; } module_path_lookup;
+static int locate_module_path(struct dl_phdr_info* info, size_t size, void* data) {
+    (void)size; module_path_lookup* lookup = data;
+    const char* name = base_name(info->dlpi_name);
+    if (name && strcmp(name, lookup->module) == 0) {
+        lookup->matches++;
+        const size_t length = strlen(info->dlpi_name);
+        if (length < sizeof(lookup->path)) memcpy(lookup->path, info->dlpi_name, length + 1);
+        else lookup->path[0] = '\0';
+    }
+    return 0;
+}
+JNIEXPORT jstring JNICALL Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeLoadedModulePath(
+        JNIEnv* env, jclass clazz, jstring module_name) {
+    (void)clazz; if (!module_name) return NULL;
+    const char* module = (*env)->GetStringUTFChars(env, module_name, NULL);
+    if (!module) return NULL;
+    module_path_lookup lookup; memset(&lookup, 0, sizeof(lookup)); lookup.module = module;
+    if (valid_module(module)) dl_iterate_phdr(locate_module_path, &lookup);
+    jstring result = lookup.matches == 1 && lookup.path[0] ? (*env)->NewStringUTF(env, lookup.path) : NULL;
+    (*env)->ReleaseStringUTFChars(env, module_name, module); return result;
 }
 
 JNIEXPORT jlong JNICALL

@@ -23,7 +23,7 @@ object SpaceMenuHandoff {
 }
 
 data class SavedSpaceMenu(val packageName: String, val label: String, val genre: String,
-    val items: Int, val staticRecipes: Int, val truncated: Boolean, val file: File)
+    val items: Int, val staticRecipes: Int, val truncated: Boolean, val file: File, val runtimeRecipes: Int = 0)
 
 object SavedSpaceMenus {
     fun load(context: Context): List<SavedSpaceMenu> {
@@ -33,13 +33,14 @@ object SavedSpaceMenus {
             runCatching {
                 require(file.isFile && file.length() in 1..(256 * 1024) && file.canonicalFile.parentFile == root.canonicalFile)
                 val json = JSONObject(file.readText())
-                require(json.getInt("schema") == 1 && json.getString("backend") == "none")
+                require((json.getInt("schema") == 1 && json.getString("backend") == "none") ||
+                    (json.getInt("schema") == 2 && json.getString("backend") == "native_v1"))
                 val pkg = json.getString("packageName")
                 require(pkg.length <= 255 && pkg.matches(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+")))
                 val items = json.getJSONArray("items")
                 SavedSpaceMenu(pkg, json.getString("label"), json.getString("genre"), items.length(),
                     (0 until items.length()).count { items.getJSONObject(it).getString("state") == "static_recipe" },
-                    json.getBoolean("truncated"), file)
+                    json.getBoolean("truncated"), file, (0 until items.length()).count { !items.getJSONObject(it).isNull("patch") })
             }.getOrNull()
         }.distinctBy { it.packageName }.sortedBy { it.label }
     }

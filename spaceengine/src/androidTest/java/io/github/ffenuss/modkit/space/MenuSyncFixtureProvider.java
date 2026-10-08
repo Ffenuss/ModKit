@@ -28,6 +28,7 @@ public final class MenuSyncFixtureProvider extends ContentProvider {
     @Override public synchronized ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
         if (!"r".equals(mode)) throw new FileNotFoundException("Read only");
         try {
+            if ("/runtime".equals(uri.getPath()) || uri.getPath().startsWith("/native/")) return runtime(uri);
             String text;
             if ("/index".equals(uri.getPath())) {
                 JSONArray entries = new JSONArray();
@@ -48,6 +49,34 @@ public final class MenuSyncFixtureProvider extends ContentProvider {
         } catch (Exception error) { throw new FileNotFoundException(error.toString()); }
     }
     @Override public String getType(Uri uri) { return "application/json"; }
+    private ParcelFileDescriptor runtime(Uri uri) throws Exception {
+        Map<String, byte[]> payloads = new LinkedHashMap<>();
+        try (java.util.zip.ZipInputStream zip = new java.util.zip.ZipInputStream(getContext().getAssets().open("native-runtime.apk"))) {
+            java.util.zip.ZipEntry entry;
+            while ((entry = zip.getNextEntry()) != null) {
+                String[] parts = entry.getName().split("/");
+                if (parts.length != 3 || !"lib".equals(parts[0]) || !"libmodkit_runtime_probe.so".equals(parts[2])) continue;
+                java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream(); byte[] buffer = new byte[8192]; int n;
+                while ((n = zip.read(buffer)) != -1) bytes.write(buffer, 0, n);
+                payloads.put(parts[1], bytes.toByteArray());
+            }
+        }
+        byte[] data;
+        if ("/runtime".equals(uri.getPath())) {
+            JSONArray entries = new JSONArray();
+            for (Map.Entry<String, byte[]> entry : payloads.entrySet()) {
+                StringBuilder hash = new StringBuilder();
+                for (byte b : MessageDigest.getInstance("SHA-256").digest(entry.getValue())) hash.append(String.format(java.util.Locale.ROOT, "%02x", b & 255));
+                entries.put(new JSONObject().put("abi", entry.getKey()).put("size", entry.getValue().length).put("sha256", hash.toString()));
+            }
+            data = new JSONObject().put("schema", 1).put("api", "native-v1").put("payloads", entries).toString().getBytes(StandardCharsets.UTF_8);
+        } else data = payloads.get(uri.getLastPathSegment());
+        if (data == null) throw new FileNotFoundException();
+        return openPipeHelper(uri, "application/octet-stream", null, data, (output, u, mime, options, bytes) -> {
+            try (ParcelFileDescriptor.AutoCloseOutputStream stream = new ParcelFileDescriptor.AutoCloseOutputStream(output)) { stream.write(bytes); }
+            catch (Exception error) { throw new IllegalStateException(error); }
+        });
+    }
     @Override public Cursor query(Uri uri, String[] projection, String selection, String[] args, String order) { return null; }
     @Override public Uri insert(Uri uri, ContentValues values) { throw new IllegalStateException("Read only"); }
     @Override public int update(Uri uri, ContentValues values, String selection, String[] args) { return 0; }

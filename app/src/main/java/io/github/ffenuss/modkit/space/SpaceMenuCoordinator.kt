@@ -13,7 +13,7 @@ import java.io.File
 /** Display profiles contain evidence, never an implied runtime patch capability. */
 data class SpaceMenuSummary(val packageName: String, val label: String, val profilePath: String,
     val plan: GameAnalysisPlan, val candidates: Int, val staticRecipes: Int,
-    val truncated: Boolean, val warnings: List<String>)
+    val truncated: Boolean, val warnings: List<String>, val runtimeRecipes: Int = 0)
 
 object SpaceMenuCoordinator {
     suspend fun prepare(context: Context, target: AnalysisTargetDescriptor, initial: FastAnalysisResult,
@@ -51,8 +51,41 @@ object SpaceMenuCoordinator {
                 }.thenBy { it.id })
                 val included = ordered.take(128)
                 val warnings = (dex.warnings + result.engineWarnings + result.index.warnings + preparation.globalBlockers).distinct().take(32).map { it.take(1000) }
-                val profile = JSONObject().put("schema", 1).put("packageName", pkg).put("label", target.label.take(180))
-                    .put("artifactSha256", result.index.artifactSha256).put("backend", "none")
+                val imageHashes = mutableMapOf<String, String>()
+                val patchRanges = mutableListOf<Pair<Long, Long>>()
+                val nativePatches = included.mapNotNull { recipe ->
+                    val candidate = recipe.native ?: return@mapNotNull null
+                    if (!recipe.selectable || !recipe.verification.recipePrepared) return@mapNotNull null
+                    runCatching {
+                        val window = Il2CppNativeMutationDraftBuilder.readCodeWindow(result, candidate.targetId,
+                            File(context.filesDir, "analysis-results"))
+                        require(window.abi == "arm64-v8a")
+                        val address = requireNotNull(window.binaryVirtualAddress)
+                        val replacement = Il2CppNativeMutationDraftBuilder.parseHex(requireNotNull(candidate.replacementHex))
+                        val expected = Il2CppNativeMutationDraftBuilder.parseHex(window.originalHex).take(replacement.size).toByteArray()
+                        require(address > 0 && address % 4L == 0L && replacement.size in 4..64 && replacement.size % 4 == 0 && expected.size == replacement.size)
+                        require(address <= Long.MAX_VALUE - replacement.size)
+                        val end = address + replacement.size
+                        require(patchRanges.none { (start, stop) -> address < stop && start < end })
+                        val image = File(window.extractedLibraryPath)
+                        fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
+                        val imageHash = imageHashes.getOrPut(image.canonicalPath) {
+                            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                            image.inputStream().use { input ->
+                            val buffer = ByteArray(32768)
+                            while (true) { if (cancellation.isCancelled()) throw AnalysisCancelledException()
+                                val count = input.read(buffer); if (count < 0) break; digest.update(buffer, 0, count) }
+                            }
+                            hex(digest.digest())
+                        }
+                        patchRanges.add(address to end)
+                        recipe.id to JSONObject().put("module", "libil2cpp.so").put("abi", window.abi)
+                            .put("address", address).put("expected", hex(expected)).put("replacement", hex(replacement))
+                            .put("imageSha256", imageHash)
+                    }.getOrElse { error -> if (error is AnalysisCancelledException) throw error; null }
+                }.toMap()
+                val profile = JSONObject().put("schema", 2).put("packageName", pkg).put("label", target.label.take(180))
+                    .put("artifactSha256", result.index.artifactSha256).put("backend", "native_v1")
                     .put("genre", plan.genre.genre.title).put("genreEvidence", JSONArray(plan.genre.evidence.map { it.take(256) }))
                     .put("engines", JSONArray(plan.engines.map { "${it.title} · ${it.status}" }))
                     .put("priorities", JSONArray(plan.searchPriorities))
@@ -66,6 +99,7 @@ object SpaceMenuCoordinator {
                         .put("title", recipe.title.take(180)).put("category", recipe.category.take(180))
                         .put("evidence", recipe.targetLabel.take(256))
                         .put("state", if (recipe.selectable && recipe.verification.recipePrepared) "static_recipe" else "candidate")
+                        .put("patch", nativePatches[recipe.id] ?: JSONObject.NULL)
                         .put("detail", (recipe.blocker ?: recipe.description).take(400)) }))
                 if (cancellation.isCancelled()) throw AnalysisCancelledException()
                 // Rehash after scanners; no profile may bind stale or changing source bytes.
@@ -80,6 +114,6 @@ object SpaceMenuCoordinator {
                 try { stream.write(bytes); atomic.finishWrite(stream) }
                 catch (failure: Throwable) { atomic.failWrite(stream); throw failure }
                 SpaceMenuSummary(pkg, target.label, file.absolutePath, plan, recipes.size,
-                    recipes.count { it.selectable && it.verification.recipePrepared }, profile.getBoolean("truncated"), warnings)
+                    recipes.count { it.selectable && it.verification.recipePrepared }, profile.getBoolean("truncated"), warnings, nativePatches.size)
         }
 }
