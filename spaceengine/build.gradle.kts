@@ -41,8 +41,11 @@ val prepareSpaceDeviceFixtures = tasks.register("prepareSpaceDeviceFixtures") {
         rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SpaceNativeBackend.java"),
         rootProject.file("spacehost/src/io/github/ffenuss/modkit/space/SpaceNativePayload.java"),
         rootProject.file("runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/RuntimeNativeBridge.java"),
+        rootProject.file("runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/RuntimeNativeTraceBuffer.java"),
     )
     inputs.file(layout.buildDirectory.file("outputs/apk/debug/spaceengine-debug.apk"))
+    inputs.file(rootProject.file("runtimeprobe/build/outputs/apk/debug/runtimeprobe-debug.apk"))
+    inputs.file(rootProject.file("nativefixture/build/outputs/apk/debug/nativefixture-debug.apk"))
     outputs.dir(deviceFixtureRoot)
     doLast {
         val root = deviceFixtureRoot.get().asFile
@@ -55,7 +58,9 @@ val prepareSpaceDeviceFixtures = tasks.register("prepareSpaceDeviceFixtures") {
         rootProject.file("runtimeprobe/build/outputs/apk/debug/runtimeprobe-debug.apk").copyTo(assets.resolve("native-runtime.apk"), overwrite = true)
         rootProject.file("nativefixture/build/outputs/apk/debug/nativefixture-debug.apk").copyTo(assets.resolve("native-fixture.apk"), overwrite = true)
         val bridge = root.resolve("java/io/github/ffenuss/modkit/runtimeprobe").apply { mkdirs() }
-        rootProject.file("runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/RuntimeNativeBridge.java").copyTo(bridge.resolve("RuntimeNativeBridge.java"), overwrite = true)
+        for (name in listOf("RuntimeNativeBridge.java", "RuntimeNativeTraceBuffer.java")) {
+            rootProject.file("runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/$name").copyTo(bridge.resolve(name), overwrite = true)
+        }
         val fixture = root.resolve("java/dev/modkit/nativefixture").apply { mkdirs() }
         fixture.resolve("GameActivity.java").writeText("package dev.modkit.nativefixture; public final class GameActivity { public static native int readNativeValue(); }\n")
         assets.resolve("modkit-space-engine.apk").writeBytes(carrier)

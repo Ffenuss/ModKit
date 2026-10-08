@@ -25,7 +25,7 @@ python3 "$SPACE_SOURCE/patch_host.py" bootstrap "$SPACE_WORK/decoded"
 # Application bootstrap and launch Runnable both reside in classes2.dex.
 apktool b -f "$SPACE_WORK/decoded" -o "$SPACE_WORK/rebuilt.apk"
 mapfile -t SPACE_JAVA < <(find "$SPACE_SOURCE/src" -name '*.java' -type f | sort)
-SPACE_JAVA+=("$SPACE_SOURCE/../runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/RuntimeNativeBridge.java")
+SPACE_JAVA+=("$SPACE_SOURCE/../runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/RuntimeNativeBridge.java" "$SPACE_SOURCE/../runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/RuntimeNativeTraceBuffer.java")
 java com.sun.tools.javac.Main -source 8 -target 8 -encoding UTF-8 -classpath "$SPACE_ANDROID_JAR" -d "$SPACE_WORK/classes" "${SPACE_JAVA[@]}"
 mapfile -t SPACE_CLASSES < <(find "$SPACE_WORK/classes" -name '*.class' -type f | sort)
 "$SPACE_TOOLS/d8" --lib "$SPACE_ANDROID_JAR" --min-api 26 --output "$SPACE_WORK/dex" "${SPACE_CLASSES[@]}"
