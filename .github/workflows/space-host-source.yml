@@ -2,10 +2,10 @@ name: Space host source checks
 on:
   push:
     branches: ["feature/space-**"]
-    paths: [spacehost/**, analysiscore/**, spaceengine/**, "*.gradle.kts", app/build.gradle.kts, app/src/main/java/io/github/ffenuss/modkit/analysis/**, .github/workflows/space-host-source.yml]
+    paths: [spacehost/**, analysiscore/**, spaceengine/**, nativefixture/**, runtimeprobe/**, "*.gradle.kts", app/build.gradle.kts, app/src/main/java/io/github/ffenuss/modkit/analysis/**, .github/workflows/space-host-source.yml]
   pull_request:
     branches: [integration/road-to-1.0-20260929, main]
-    paths: [spacehost/**, analysiscore/**, spaceengine/**, "*.gradle.kts", app/build.gradle.kts, app/src/main/java/io/github/ffenuss/modkit/analysis/**, .github/workflows/space-host-source.yml]
+    paths: [spacehost/**, analysiscore/**, spaceengine/**, nativefixture/**, runtimeprobe/**, "*.gradle.kts", app/build.gradle.kts, app/src/main/java/io/github/ffenuss/modkit/analysis/**, .github/workflows/space-host-source.yml]
   workflow_dispatch:
 jobs:
   source:
@@ -24,7 +24,11 @@ jobs:
           SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
           test -x "$SDK_MANAGER"
           yes | "$SDK_MANAGER" --licenses >/dev/null || true
-          "$SDK_MANAGER" 'platforms;android-35' 'ndk;28.2.13676358'
+          for ATTEMPT in 1 2 3; do
+            "$SDK_MANAGER" 'platforms;android-35' 'ndk;28.2.13676358' && break
+            test "$ATTEMPT" -lt 3 || exit 1
+          done
+          test -x "$ANDROID_HOME/ndk/28.2.13676358/ndk-build"
           mkdir -p build/space-host
           mapfile -t SOURCES < <(find spacehost/src -name '*.java' -type f | sort)
           SOURCES+=(runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/RuntimeNativeBridge.java runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/RuntimeNativeTraceBuffer.java)
@@ -95,15 +99,19 @@ jobs:
           SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
           test -x "$SDK_MANAGER"
           yes | "$SDK_MANAGER" --licenses >/dev/null || true
-          "$SDK_MANAGER" 'platforms;android-35' 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+          for ATTEMPT in 1 2 3; do
+            "$SDK_MANAGER" 'platforms;android-35' 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;28.2.13676358' && break
+            test "$ATTEMPT" -lt 3 || exit 1
+          done
+          test -x "$ANDROID_HOME/ndk/28.2.13676358/ndk-build"
       - name: Build owned engine and loader instrumentation
-        run: gradle --no-daemon :spaceengine:assembleDebug :spaceengine:assembleDebugAndroidTest
+        run: gradle --no-daemon :spaceengine:assembleDebug :spaceengine:assembleDebugAndroidTest :nativefixture:assembleDebugAndroidTest
       - name: Enable emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Execute real private DEX loading on Android 35
+      - name: Execute engine and original guest overlay on Android 35
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -113,7 +121,14 @@ jobs:
           disable-animations: true
           script: |
             adb logcat -c
-            set +e; gradle --no-daemon :spaceengine:connectedDebugAndroidTest; RESULT=$?; adb logcat -d > space-engine-device-logcat.txt; exit $RESULT
+            set +e
+            gradle --no-daemon :spaceengine:connectedDebugAndroidTest; ENGINE_RESULT=$?
+            adb logcat -d > space-engine-device-logcat.txt
+            adb uninstall io.github.ffenuss.modkit.spaceengine.test >/dev/null 2>&1 || true
+            adb logcat -c
+            gradle --no-daemon :nativefixture:connectedDebugAndroidTest; MENU_RESULT=$?
+            adb logcat -d > guest-menu-device-logcat.txt
+            test "$ENGINE_RESULT" -eq 0 && test "$MENU_RESULT" -eq 0
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -122,6 +137,9 @@ jobs:
             spaceengine/build/reports/androidTests/
             spaceengine/build/outputs/androidTest-results/
             space-engine-device-logcat.txt
+            guest-menu-device-logcat.txt
+            nativefixture/build/reports/androidTests/
+            nativefixture/build/outputs/androidTest-results/
 
   build_tools:
     runs-on: ubuntu-latest

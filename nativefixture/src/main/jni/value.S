@@ -25,6 +25,29 @@ modkit_fixture_value:
 #error Unsupported fixture architecture
 #endif
 .size modkit_fixture_value, .-modkit_fixture_value
+
+// Separate typed JNI getter for engine-neutral recipe discovery; no alias of the value fixture.
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getHealth
+#if defined(__aarch64__)
+.type Java_dev_modkit_nativefixture_GameActivity_getHealth, %function
+Java_dev_modkit_nativefixture_GameActivity_getHealth:
+    mov w0, #7
+    ret
+#elif defined(__arm__)
+.type Java_dev_modkit_nativefixture_GameActivity_getHealth, %function
+Java_dev_modkit_nativefixture_GameActivity_getHealth:
+    mov r0, #7
+    bx lr
+#else
+.type Java_dev_modkit_nativefixture_GameActivity_getHealth, @function
+Java_dev_modkit_nativefixture_GameActivity_getHealth:
+    mov $7, %eax
+    ret
+    nop
+    nop
+#endif
+.size Java_dev_modkit_nativefixture_GameActivity_getHealth, .-Java_dev_modkit_nativefixture_GameActivity_getHealth
 #if defined(__aarch64__) || defined(__arm__)
 .section .note.GNU-stack,"",%progbits
 #else

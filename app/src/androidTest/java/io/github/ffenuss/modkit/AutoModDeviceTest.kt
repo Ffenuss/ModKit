@@ -228,6 +228,31 @@ class AutoModDeviceTest {
         } finally { archive.delete(); profile?.delete() }
     }
 
+    @Test fun a0b_typedJniGetterProducesExecutableRecipeWithoutIl2cpp() = runBlocking {
+        val apk = File(context.cacheDir, "jni-original-fixture.apk")
+        InstrumentationRegistry.getInstrumentation().context.assets.open("native-fixture.apk").use { input -> apk.outputStream().use { input.copyTo(it) } }
+        val before = java.security.MessageDigest.getInstance("SHA-256").digest(apk.readBytes()).toList()
+        var profile: File? = null
+        try {
+            val result = FastArtifactIndexer.index(listOf(apk), signal, progress)
+            val workspace = AnalysisWorkspace(result.index, listOf(WorkspaceSource(result.index.sources.single(), apk)))
+            val menu = io.github.ffenuss.modkit.space.SpaceMenuCoordinator.prepare(context,
+                AnalysisTargetDescriptor.InstalledPackage("dev.modkit.nativefixture", "Owned JNI fixture"), result, signal, progress, workspace)
+            profile = File(menu.profilePath)
+            val items = JSONObject(profile!!.readText()).getJSONArray("items")
+            val getter = (0 until items.length()).map { items.getJSONObject(it) }.single { it.getString("id").startsWith("jni:") }
+            assertTrue(getter.getString("evidence").endsWith("->getHealth()I"))
+            val patch = getter.getJSONObject("patch")
+            assertEquals("libmodkit_fixture.so", patch.getString("module"))
+            assertEquals("arm64-v8a", patch.getString("abi"))
+            assertTrue(patch.getLong("address") > 0)
+            assertEquals(64, patch.getString("imageSha256").length)
+            assertNotEquals(patch.getString("expected"), patch.getString("replacement"))
+            assertEquals(1, menu.runtimeRecipes)
+            assertEquals(before, java.security.MessageDigest.getInstance("SHA-256").digest(apk.readBytes()).toList())
+        } finally { profile?.delete(); apk.delete() }
+    }
+
     @Test fun a_simpleInterfaceKeepsSpaceResultAndBuildsOnlyAfterExpertSelection() {
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val homeReady = device.wait(Until.hasObject(By.text("Выбрать игру")), 45_000)

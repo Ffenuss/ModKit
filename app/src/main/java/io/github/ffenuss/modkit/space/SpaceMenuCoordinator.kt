@@ -40,6 +40,7 @@ object SpaceMenuCoordinator {
                 val native = if (result.il2cppFastDump != null || result.il2cppBinaryBinding != null)
                     NativeRecipeCatalog.create(result, preparation, File(context.filesDir, "analysis-results"), cancellation)
                     else emptyList()
+                val jni = JniSpaceRecipeScanner.scan(files, File(context.cacheDir, "space-jni"), cancellation)
                 val recipes = DexRecipeCatalog.create(dex) + native
                 val symbols = (result.il2cppFastDump?.metadata?.methods.orEmpty().asSequence().map { it.name } +
                     result.il2cppFastDump?.metadata?.fields.orEmpty().asSequence().map { it.name } +
@@ -49,10 +50,11 @@ object SpaceMenuCoordinator {
                     plan.searchPriorities.indexOfFirst { priority -> recipe.category.contains(priority.substringBefore(" /"), true) }
                         .let { if (it < 0) Int.MAX_VALUE else it }
                 }.thenBy { it.id })
-                val included = ordered.take(128)
-                val warnings = (dex.warnings + result.engineWarnings + result.index.warnings + preparation.globalBlockers).distinct().take(32).map { it.take(1000) }
+                val jniIncluded = jni.recipes.take(128)
+                val included = ordered.take(128 - jniIncluded.size)
+                val warnings = (dex.warnings + jni.warnings + result.engineWarnings + result.index.warnings + preparation.globalBlockers).distinct().take(32).map { it.take(1000) }
                 val imageHashes = mutableMapOf<String, String>()
-                val patchRanges = mutableListOf<Pair<Long, Long>>()
+                val patchRanges = jniIncluded.filter { it.module == "libil2cpp.so" }.map { it.address to (it.address + it.expected.length / 2) }.toMutableList()
                 val nativePatches = included.mapNotNull { recipe ->
                     val candidate = recipe.native ?: return@mapNotNull null
                     if (!recipe.selectable || !recipe.verification.recipePrepared) return@mapNotNull null
@@ -92,10 +94,15 @@ object SpaceMenuCoordinator {
                     .put("coverage", JSONObject().put("apkCount", files.size).put("indexedEntries", fresh.entries.size)
                         .put("dexFilesExamined", dex.dexFilesExamined).put("dexMethodsExamined", dex.methodsExamined)
                         .put("dexMethodsWithCode", dex.methodsWithCode).put("universalDeepAnalysis", false))
-                    .put("truncated", result.index.truncated || recipes.size > included.size || result.il2cppFastDump?.metadata?.truncated == true)
+                    .put("truncated", result.index.truncated || recipes.size > included.size || jni.truncated || result.il2cppFastDump?.metadata?.truncated == true)
                     .put("warnings", JSONArray(warnings))
                     .put("sources", JSONArray(fresh.sources.map { JSONObject().put("sha256", it.sha256).put("size", it.size) }))
-                    .put("items", JSONArray(included.map { recipe -> JSONObject().put("id", recipe.id.take(512))
+                    .put("items", JSONArray(jniIncluded.map { recipe -> JSONObject().put("id", recipe.id.take(512))
+                        .put("title", recipe.title).put("category", recipe.category).put("evidence", recipe.evidence.take(512))
+                        .put("state", "static_recipe").put("detail", "Проверены Java-сигнатура и JNI-экспорт без вызовов и записи состояния. Игровой эффект требует проверки.")
+                        .put("patch", JSONObject().put("module", recipe.module).put("abi", "arm64-v8a").put("address", recipe.address)
+                            .put("expected", recipe.expected).put("replacement", recipe.replacement).put("imageSha256", recipe.imageSha256))
+                    } + included.map { recipe -> JSONObject().put("id", recipe.id.take(512))
                         .put("title", recipe.title.take(180)).put("category", recipe.category.take(180))
                         .put("evidence", recipe.targetLabel.take(256))
                         .put("state", if (recipe.selectable && recipe.verification.recipePrepared) "static_recipe" else "candidate")
@@ -113,7 +120,7 @@ object SpaceMenuCoordinator {
                 val stream = atomic.startWrite()
                 try { stream.write(bytes); atomic.finishWrite(stream) }
                 catch (failure: Throwable) { atomic.failWrite(stream); throw failure }
-                SpaceMenuSummary(pkg, target.label, file.absolutePath, plan, recipes.size,
-                    recipes.count { it.selectable && it.verification.recipePrepared }, profile.getBoolean("truncated"), warnings, nativePatches.size)
+                SpaceMenuSummary(pkg, target.label, file.absolutePath, plan, recipes.size + jni.recipes.size,
+                    recipes.count { it.selectable && it.verification.recipePrepared } + jni.recipes.size, profile.getBoolean("truncated"), warnings, nativePatches.size + jniIncluded.size)
         }
 }

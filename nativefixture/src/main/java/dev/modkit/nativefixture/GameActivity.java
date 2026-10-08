@@ -11,6 +11,7 @@ import android.widget.TextView;
 public final class GameActivity extends Activity {
     static { System.loadLibrary("modkit_fixture"); }
     private static native int readNativeValue();
+    public static native int getHealth();
     private TextView value;
 
     @Override public void onCreate(Bundle saved) {
