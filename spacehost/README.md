@@ -6,20 +6,21 @@ This module adapts the exact user-provided `Launcher MLBB V2.3.apk` already used
 
 ## Implemented
 
-- Host `MultiSpaceApplication.onCreate` registers the ModKit UI only in the host's main process.
-- The original host launch Runnable supplies the target's real package and virtual user ID. Guests are not modified.
-- A single MK window appears on a launch request when overlay permission exists. The host has an explicit permission button; returning from Settings only checks the grant and does not reopen Settings.
-- The overlay inspects `com.android.vending`, `com.google.android.gms` and `com.google.android.gsf` through the virtual package manager for that same virtual user. Missing packages are reported as missing; an exception is not converted into "Google ready".
-- The Google Play button uses the virtual activity manager, never an outside-device Play Store Intent.
-- Original base/split paths are resolved via `VirtualCore.ck(package, 0)` and `InstalledAppInfo.f(virtualUser)`, after checking installation for that user. The host PackageManager is not a fallback.
-- The overlay can start/cancel a read-only inventory of the actual original APK set. It reports SHA-256 identities, ZIP entry count, DEX/ELF/IL2CPP metadata header counts and ABI paths. Headers are observations, not validated engine detections or discovered mods.
-- Every result has a unique session ID. All source hashes and the virtual package record are checked again before displaying a result. Switching target/user, cancelling, or hiding the overlay invalidates outstanding progress/results.
-- Six exact host advertisement methods are patched: interstitial launch wrappers, the direct interstitial display method, the advertisement-only resume receiver, and advertisement Activities. The Activity superclass callback and the existing AppCompat theme initialization are preserved before immediate finish.
-- DEX, manifest, resources and native-engine preservation are checked during packaging. Existing output is replaced only after signature, alignment and payload verification.
+- Analyze original APK/APKS/XAPK/split sets in ModKit; the guest APKs are not rewritten.
+- Keep one version-bound menu per package in one shared host, with authenticated automatic profile synchronization.
+- Preserve the selected package and virtual user across imports and process recreation.
+- Chain the pinned virtual kernel's original guest Application callbacks and attach a compact menu to guest Activities without root or system overlay permission.
+- Execute only explicit native patches with checked ABI, ELF address, image hash and original bytes; disable restores the original bytes and uncertain restoration stays an error.
+- Obtain the native runtime from the authenticated installed ModKit provider and stage it read-only in host private code cache.
+- Keep the original virtual engine, Google resources and per-user virtual Google package handling.
+- Suppress six exact host advertisement methods while preserving their required superclass/theme setup.
+- Replace output only after signature, alignment and payload-preservation verification.
 
 ## Deliberate limits
 
-This is a source integration stage, not a verified release APK. The shared artifact indexer, DEX header inventory and universal ELF structural inventory are now wired to the host via a private engine carrier. This wiring still needs APK/device validation. Metadata definition inventory is connected; IL2CPP code-address binding and runtime mutation controllers are not connected; there are no pretend gameplay toggles. Successful launch, overlay lifetime, all host advertising surfaces, Google sign-in and actual game compatibility still require Android device tests. Advertising SDKs and their network initialization remain present; this stage suppresses the proven launch/resume interstitial surfaces, not every possible advertisement format. Google APKs are neither fabricated nor redistributed. Their existing handling in the kernel is preserved; this module does not claim that every device already has all Google packages in its virtual user.
+Signed test APKs are assembled and the owned native executor fixture passed on Android 35 (x86_64), including 7 → 999 → 7, restore-all, wrong-image rejection and unchanged APK/library files. Main-app ARM64 recipe vectors passed independently. These checks do not prove proprietary host startup, overlay lifetime, real third-party game effects or Google sign-in; those still require phone verification. The main recipe exporter currently emits verified ARM64 IL2CPP patches only. Structural detection of other engines or versions is not executable support. Root devices can use the same guest-process route; no root-only external-process executor is added here.
+
+Advertising SDKs and their network initialization remain present: the patch suppresses the proven launch/resume interstitial surfaces. Google APKs are neither fabricated nor redistributed, and their existing kernel handling is preserved. An updated ModKit installation is required together with the updated space host.
 
 The old host package identity is retained because changing it previously broke virtual initialization. Do not uninstall an existing working space just to install this build. A same-package update requires its existing signing key; an unrelated key will cause Android's normal signer conflict.
 
@@ -75,7 +76,7 @@ The shared reader now sweeps bounded field indices rather than expanding each ty
 
 Analysis stays in the ModKit application. A completed analysis offers **Скачать пространство**. The download channel checks non-draft, non-prerelease GitHub releases for the exact `modkit-space.apk` asset; the empty channel reports that the host has not been published. It never substitutes the engine carrier or a per-game repack.
 
-The host no longer exposes analysis controls. Its existing original application picker remains responsible for installation and launch. Launch opens the overlay menu immediately when overlay permission is granted. Settings retain separate package/virtual-user targets across host updates and can launch a previously opened target after checking it is still installed. Adding a new target does not remove other targets. Google components and the virtual kernel are retained.
+The host no longer exposes analysis controls. Its existing original application picker remains responsible for installation and launch. Guest Activity resume opens the in-process menu without a system overlay grant. Settings retain separate package/virtual-user targets across host updates and can launch a previously opened target after checking it is still installed. Adding a new target does not remove other targets. Google components and the virtual kernel are retained.
 
 Menu transfer, per-package selection and APK-version binding are implemented below. Guest-process native recipe execution is implemented in the current source; device validation is pending. Only explicit native patches receive switches. The `spaceengine` carrier remains packaged for internal validation but is not exposed as analysis UI in the host.
 
@@ -115,4 +116,4 @@ The guest menu attaches to resumed Activity decor without requiring root or the 
 
 The runtime payload is obtained from the authenticated installed ModKit provider, verified by SHA-256 and ELF ABI, and staged read-only in host private code cache. An updated ModKit installation is required as well as the updated space host. The main exporter currently emits ARM64 IL2CPP patches only; DEX candidates and other engines do not become executable merely because they were detected. Native loader support for four ABIs is infrastructure, not universal engine/version compatibility. Root devices can use the same guest-process route, but this change adds no root-only external-process executor.
 
-A new owned-fixture Android test loads a real ELF, applies a recipe, observes 7 → 999 → 7, checks restore-all, rejects a wrong library hash and verifies unchanged source APK and library bytes. This test is pending CI at publication. Java/API35 compilation passed locally. Proprietary host startup, Google login and third-party game effects still require device verification.
+A new owned-fixture Android test loads a real ELF, applies a recipe, observes 7 → 999 → 7, checks restore-all, rejects a wrong library hash and verifies unchanged source APK and library bytes. All nine space device tests passed in workflow run 37818451654. Java/API35 compilation and the exact-reference Python checks passed locally. Proprietary host startup, Google login and third-party game effects still require device verification.

@@ -277,12 +277,12 @@ public final class SpaceHost {
         menuContent.addView(label(profile.label + " · " + profile.genre, 16));
         menuContent.addView(label(android.text.TextUtils.join("\n", profile.engines), 12));
         if (profile.truncated) menuContent.addView(label("Анализ неполный: часть пунктов/данных не включена", 12));
-        menuContent.addView(label("Исполнитель модов пространства ещё не подключён. Ни один пункт не изменяет игру.", 12));
-        if (profile.items.isEmpty()) menuContent.addView(label("Проверенные кандидаты для этой версии не найдены", 12));
-        for (MenuProfile.Item item : profile.items) {
-            menuContent.addView(label(item.title + " · " + ("static_recipe".equals(item.state) ? "статический рецепт" : "кандидат"), 14));
-            menuContent.addView(label(item.evidence + "\n" + item.detail, 11));
-        }
+        int executable = 0;
+        for (MenuProfile.Item item : profile.items) if (item.patch != null) executable++;
+        menuContent.addView(label("Рецептов для включения: " + executable, 14));
+        menuContent.addView(label(executable > 0
+                ? "Переключатели откроются в меню запущенного приложения после проверки библиотеки."
+                : "Для этой версии пока нет исполнимых рецептов. Остальные находки доступны в ModKit.", 12));
     }
 
     private static void rememberTarget(String pkg, int user) {
