@@ -174,7 +174,11 @@ class AutoModDeviceTest {
                 assertTrue("Fixture gameplay candidates must reach the profile", menu.candidates > 0)
                 profile = File(menu.profilePath)
                 val json = JSONObject(profile!!.readText())
-                assertEquals("none", json.getString("backend"))
+                assertEquals(2, json.getInt("schema"))
+                assertEquals("native_v1", json.getString("backend"))
+                assertEquals("DEX candidates must not become native switches", 0, menu.runtimeRecipes)
+                val items = json.getJSONArray("items")
+                assertTrue((0 until items.length()).all { items.getJSONObject(it).isNull("patch") })
                 assertEquals(result.index.artifactSha256, json.getString("artifactSha256"))
                 assertEquals(installed.apkFiles.size, json.getJSONArray("sources").length())
                 assertTrue(json.getJSONArray("items").length() > 0)
@@ -185,6 +189,18 @@ class AutoModDeviceTest {
                 val autoRoot = "content://" + context.packageName + ".space-menu"
                 val autoIndex = JSONObject(requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/index")))
                     .use { it.readBytes().toString(Charsets.UTF_8) })
+                val runtime = JSONObject(requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/runtime")))
+                    .use { it.readBytes().toString(Charsets.UTF_8) })
+                assertEquals(1, runtime.getInt("schema"))
+                assertEquals("native-v1", runtime.getString("api"))
+                val abi = (if (android.os.Process.is64Bit()) android.os.Build.SUPPORTED_64_BIT_ABIS else android.os.Build.SUPPORTED_32_BIT_ABIS).first()
+                val payloads = runtime.getJSONArray("payloads")
+                val payload = (0 until payloads.length()).map { payloads.getJSONObject(it) }.single { it.getString("abi") == abi }
+                val nativeBytes = requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/native/" + abi)))
+                    .use { it.readBytes() }
+                assertEquals(payload.getLong("size"), nativeBytes.size.toLong())
+                assertEquals(payload.getString("sha256"), java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(nativeBytes).joinToString("") { "%02x".format(it) })
                 val entries = autoIndex.getJSONArray("profiles")
                 val entry = (0 until entries.length()).map { entries.getJSONObject(it) }
                     .single { it.getString("file") == profile!!.name }
