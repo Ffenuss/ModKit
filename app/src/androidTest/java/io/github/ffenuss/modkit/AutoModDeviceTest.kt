@@ -249,6 +249,23 @@ class AutoModDeviceTest {
             assertEquals(64, patch.getString("imageSha256").length)
             assertNotEquals(patch.getString("expected"), patch.getString("replacement"))
             assertEquals(1, menu.runtimeRecipes)
+            val unsupported = File(context.cacheDir, "jni-unsupported-module.apk")
+            try {
+                java.util.zip.ZipFile(apk).use { input -> java.util.zip.ZipOutputStream(unsupported.outputStream()).use { output ->
+                    input.entries().asSequence().forEach { entry ->
+                        val name = if (entry.name == "lib/arm64-v8a/libmodkit_fixture.so") "lib/arm64-v8a/libfixture.v1.so" else entry.name
+                        output.putNextEntry(java.util.zip.ZipEntry(name))
+                        if (!entry.isDirectory) input.getInputStream(entry).use { it.copyTo(output) }
+                        output.closeEntry()
+                    }
+                } }
+                val unsupportedResult = FastArtifactIndexer.index(listOf(unsupported), signal, progress)
+                val unsupportedWorkspace = AnalysisWorkspace(unsupportedResult.index, listOf(WorkspaceSource(unsupportedResult.index.sources.single(), unsupported)))
+                val rejected = io.github.ffenuss.modkit.space.SpaceMenuCoordinator.prepare(context,
+                    AnalysisTargetDescriptor.InstalledPackage("dev.modkit.nativefixture", "Unsupported JNI module"), unsupportedResult, signal, progress, unsupportedWorkspace)
+                assertEquals("An unsupported module identity cannot invalidate a guest profile", 0, rejected.runtimeRecipes)
+                assertTrue(rejected.warnings.any { it.contains("неподдерживаемое имя библиотеки") })
+            } finally { unsupported.delete() }
             assertEquals(before, java.security.MessageDigest.getInstance("SHA-256").digest(apk.readBytes()).toList())
         } finally { profile?.delete(); apk.delete() }
     }
