@@ -24,7 +24,7 @@ jobs:
           SDK_MANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
           test -x "$SDK_MANAGER"
           yes | "$SDK_MANAGER" --licenses >/dev/null || true
-          "$SDK_MANAGER" 'platforms;android-35' 
+          "$SDK_MANAGER" 'platforms;android-35' 'ndk;28.2.13676358'
           mkdir -p build/space-host
           mapfile -t SOURCES < <(find spacehost/src -name '*.java' -type f | sort)
           SOURCES+=(runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/RuntimeNativeBridge.java)

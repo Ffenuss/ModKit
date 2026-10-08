@@ -3,7 +3,7 @@ package io.github.ffenuss.modkit.space
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.modkit.nativefixture.GameActivity
-import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
+import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.analysis.ElfImage
 import org.json.JSONArray
 import org.json.JSONObject
@@ -16,6 +16,7 @@ import java.util.zip.ZipFile
 
 @RunWith(AndroidJUnit4::class)
 class SpaceNativeDeviceTest {
+    private val running = object : CancellationSignal { override fun isCancelled() = false }
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
     private fun patch(abi: String, address: Long, original: String, replacement: String, hash: String) = JSONObject()
         .put("abi", abi).put("module", "libmodkit_fixture.so").put("address", address)
@@ -46,7 +47,7 @@ class SpaceNativeDeviceTest {
             System.load(image.canonicalPath)
             assertEquals(7, GameActivity.readNativeValue())
             val bytes = ByteArray(8)
-            val address = ElfImage.open(image, AtomicCancellationSignal()).use { elf ->
+            val address = ElfImage.open(image, running).use { elf ->
                 val symbol = elf.dynamicSymbols.single { it.name == "modkit_fixture_value" && it.defined }
                 assertEquals(8L, symbol.size)
                 RandomAccessFile(image, "r").use { it.seek(requireNotNull(elf.fileOffsetForVa(symbol.value, 8))); it.readFully(bytes) }
@@ -76,7 +77,7 @@ class SpaceNativeDeviceTest {
             } finally { assertTrue(controller.restoreAll()) }
             assertEquals(before, SourceInventory.hash(original, token))
             assertEquals(hex(bytes), hex(RandomAccessFile(image, "r").use { raf ->
-                ElfImage.open(image, AtomicCancellationSignal()).use { elf -> raf.seek(requireNotNull(elf.fileOffsetForVa(address, 8))) }
+                ElfImage.open(image, running).use { elf -> raf.seek(requireNotNull(elf.fileOffsetForVa(address, 8))) }
                 ByteArray(8).also { raf.readFully(it) }
             }))
             val wrong = JSONObject(json.toString())
