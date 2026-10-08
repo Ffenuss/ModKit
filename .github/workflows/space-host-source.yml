@@ -119,16 +119,7 @@ jobs:
           target: google_apis
           profile: pixel_2
           disable-animations: true
-          script: |
-            adb logcat -c
-            set +e
-            gradle --no-daemon :spaceengine:connectedDebugAndroidTest; ENGINE_RESULT=$?
-            adb logcat -d > space-engine-device-logcat.txt
-            adb uninstall io.github.ffenuss.modkit.spaceengine.test >/dev/null 2>&1 || true
-            adb logcat -c
-            gradle --no-daemon :nativefixture:connectedDebugAndroidTest; MENU_RESULT=$?
-            adb logcat -d > guest-menu-device-logcat.txt
-            test "$ENGINE_RESULT" -eq 0 && test "$MENU_RESULT" -eq 0
+          script: bash spacehost/test-device.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
