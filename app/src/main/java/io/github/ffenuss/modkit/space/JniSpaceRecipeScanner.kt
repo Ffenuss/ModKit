@@ -71,7 +71,7 @@ internal object JniSpaceRecipeScanner {
         if (truncated) return Scan(emptyList(), warnings + "JNI: неполный индекс деклараций; привязки не выдаются", true)
         data class Image(val apk: File, val entry: String, val module: String)
         val images = files.flatMap { apk -> ZipFile(apk).use { zip -> zip.entries().asSequence()
-            .filter { !it.isDirectory && Regex("lib/arm64-v8a/[A-Za-z0-9_.-]+\\.so").matches(it.name) }
+            .filter { !it.isDirectory && Regex("lib/arm64-v8a/[^/]+\\.so").matches(it.name) }
             .map { Image(apk, it.name, it.name.substringAfterLast('/')) }.toList() } }
         if (images.size > 64) return Scan(emptyList(), warnings + "JNI: слишком много библиотек; однозначность не доказана", true)
         if (images.map { it.module }.distinct().size != images.size) return Scan(emptyList(), warnings + "JNI: неоднозначные имена библиотек", false)
@@ -103,10 +103,14 @@ internal object JniSpaceRecipeScanner {
                     val exported = elf.dynamicSymbols.filter { it.defined && it.binding in 1..2 }.map { it.name }.toSet()
                     exported.filter { it in knownSymbols }.forEach { owners[it] = (owners[it] ?: 0) + 1 }
                     if (exported.none { it in knownSymbols }) return@use
+                    // Inspect all APK libraries for ambiguity, but emit only identities accepted by the runtime contract.
+                    if (img.module.length > 255 || !Regex("[A-Za-z0-9_-]+\\.so").matches(img.module)) {
+                        warnings += "JNI: неподдерживаемое имя библиотеки: ${img.module}"; return@use
+                    }
                     candidates.forEach candidate@ { method ->
                         val name = exportName(method, declarations, exported) ?: return@candidate
                         val symbol = symbols.singleOrNull { it.name == name } ?: return@candidate
-                        if (symbols.count { it.value == symbol.value } != 1 || symbol.value <= 0 || symbol.value % 4L != 0L ||
+                        if (symbols.count { it.value == symbol.value } != 1 || symbol.value <= 0 || symbol.value > Long.MAX_VALUE - 64 || symbol.value % 4L != 0L ||
                             symbol.size !in 8..1024 || symbol.size % 4L != 0L || !elf.isExecutableVa(symbol.value) ||
                             elf.fileOffsetForVa(symbol.value, symbol.size) == null) return@candidate
                         val code = elf.readFileWindowAtVa(symbol.value, symbol.size.toInt()) ?: return@candidate
