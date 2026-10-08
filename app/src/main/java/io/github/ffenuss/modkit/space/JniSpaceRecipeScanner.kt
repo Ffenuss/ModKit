@@ -2,7 +2,6 @@ package io.github.ffenuss.modkit.space
 
 import io.github.ffenuss.modkit.analysis.*
 import io.github.ffenuss.modkit.analysis.nativecode.AArch64ReadOnlyBody
-import io.github.ffenuss.modkit.analysis.nativecode.AArch64ScalarReturnEncoder
 import io.github.ffenuss.modkit.patch.*
 import org.jf.dexlib2.AccessFlags
 import org.jf.dexlib2.Opcodes
