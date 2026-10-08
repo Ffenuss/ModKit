@@ -10,7 +10,7 @@ import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.BuildConfig
 
 @Composable
-fun TargetSelectionScreen(onSelectGames: () -> Unit, onSelectApps: () -> Unit, onSelectFile: () -> Unit) {
+fun TargetSelectionScreen(onSelectGames: () -> Unit, onSelectApps: () -> Unit, onSelectFile: () -> Unit, onOpenSavedMenus: () -> Unit = {}) {
     Scaffold { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets), contentPadding = PaddingValues(24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -20,7 +20,7 @@ fun TargetSelectionScreen(onSelectGames: () -> Unit, onSelectApps: () -> Unit, o
                 Spacer(Modifier.height(14.dp))
                 Text("Ваше приложение.\nВаши изменения.", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(12.dp))
-                Text("Выберите приложение. Мы найдём доступные рецепты и подготовим APK прямо на телефоне.",
+                Text("Проанализируйте файлы приложения и подготовьте его меню для единого пространства.",
                     style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             item {
@@ -30,6 +30,7 @@ fun TargetSelectionScreen(onSelectGames: () -> Unit, onSelectApps: () -> Unit, o
                         Text("Выберите игру\nили приложение", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                         Button(onClick = onSelectGames, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Выбрать игру") }
                         OutlinedButton(onClick = onSelectApps, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Выбрать приложение") }
+                        TextButton(onClick = onOpenSavedMenus, modifier = Modifier.fillMaxWidth()) { Text("Сохранённые меню") }
                     }
                 }
             }
@@ -37,13 +38,13 @@ fun TargetSelectionScreen(onSelectGames: () -> Unit, onSelectApps: () -> Unit, o
                 OutlinedCard(onClick = onSelectFile, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("02  •  Из файла", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                        Text("Открыть APK", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                        Text("Открыть APK или комплект", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                         Text("Выберите установочный файл на устройстве.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
             item {
-                Text("Анализ → выбор изменений → сборка", style = MaterialTheme.typography.labelMedium)
+                Text("Анализ → меню → запуск в пространстве", style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.height(6.dp))
                 Text("Без root и облачных сервисов. Доступность изменений зависит от кода приложения.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

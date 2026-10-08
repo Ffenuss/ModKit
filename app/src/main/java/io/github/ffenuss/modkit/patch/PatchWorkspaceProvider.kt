@@ -11,6 +11,8 @@ import io.github.ffenuss.modkit.analysis.EngineResultCache
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.FastArtifactIndexer
 import io.github.ffenuss.modkit.analysis.ProgressSink
+import io.github.ffenuss.modkit.analysis.TargetPackageSet
+import io.github.ffenuss.modkit.analysis.OpenedTarget
 import io.github.ffenuss.modkit.analysis.TargetMaterializer
 import io.github.ffenuss.modkit.analysis.WorkspaceSource
 import io.github.ffenuss.modkit.data.InstalledAppRepository
@@ -19,9 +21,11 @@ import java.io.File
 data class PatchWorkspaceSnapshot(
     val workspace: AnalysisWorkspace,
     val temporaryFiles: List<File>,
+    private val cleanup: (() -> Unit)? = null,
 ) : AutoCloseable {
     override fun close() {
         temporaryFiles.forEach(File::delete)
+        cleanup?.invoke()
     }
 }
 
@@ -44,29 +48,15 @@ object PatchWorkspaceProvider {
         val knownSha: Map<String, String>
         val temporary: List<File>
 
+        var opened: OpenedTarget? = null
         when (target) {
             is AnalysisTargetDescriptor.FileUri -> {
-                val materialized = TargetMaterializer.fromUri(
-                    context = context,
-                    uri = Uri.parse(target.uri),
-                    cancellation = cancellation,
-                    progress = progress,
-                )
-                if (
-                    materialized.sha256.lowercase() !=
-                    expected.index.artifactSha256.lowercase()
-                ) {
-                    materialized.file.delete()
-                    error(
-                        "Исходный файл изменился после анализа. " +
-                            "Старые подтверждения использовать нельзя.",
-                    )
-                }
-                files = listOf(materialized.file)
-                knownSha = mapOf(
-                    materialized.file.absolutePath to materialized.sha256,
-                )
-                temporary = listOf(materialized.file)
+                val source = TargetPackageSet.open(context, target, cancellation, progress)
+                opened = source
+                files = source.files
+                knownSha = source.knownSha256
+                temporary = emptyList()
+
             }
 
             is AnalysisTargetDescriptor.InstalledPackage -> {
@@ -110,9 +100,11 @@ object PatchWorkspaceProvider {
                     },
                 ),
                 temporaryFiles = temporary,
+                cleanup = { opened?.close() },
             )
         } catch (failure: Throwable) {
             temporary.forEach(File::delete)
+            opened?.close()
             throw failure
         }
     }

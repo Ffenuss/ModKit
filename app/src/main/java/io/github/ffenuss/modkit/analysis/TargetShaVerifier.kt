@@ -39,15 +39,9 @@ object TargetShaVerifier {
         val expected = expectedSha256.lowercase()
         return runCatching {
             val sources = when (target) {
-                is AnalysisTargetDescriptor.FileUri -> listOf(
-                    hashUri(
-                        context = context,
-                        uri = Uri.parse(target.uri),
-                        displayName = target.label,
-                        cancellation = cancellation,
-                        progress = progress,
-                    ),
-                )
+                is AnalysisTargetDescriptor.FileUri -> TargetPackageSet.open(context, target, cancellation, progress).use { opened ->
+                    opened.files.mapIndexed { index, file -> hashFile(file, cancellation, progress, index, opened.files.size) }
+                }
                 is AnalysisTargetDescriptor.InstalledPackage -> {
                     val installed = InstalledAppRepository(context)
                         .find(target.packageName)

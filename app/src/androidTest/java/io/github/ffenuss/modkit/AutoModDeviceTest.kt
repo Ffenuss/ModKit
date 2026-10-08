@@ -153,7 +153,124 @@ class AutoModDeviceTest {
         return RepackedRuntimeInstallStatusStore.status.value
     }
 
-    @Test fun a_simpleInterfaceSelectsAndBuildsWithoutExpertTools() {
+    @Test fun a0_originalApkSetProducesVersionBoundSpaceMenuAndReadableHandoff() = runBlocking {
+        val installed = io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(fixturePackage)!!
+        val before = installed.apkFiles.map { java.security.MessageDigest.getInstance("SHA-256").digest(it.readBytes()).toList() }
+        val archive = File(context.cacheDir, "space-fixture.apks")
+        java.util.zip.ZipOutputStream(archive.outputStream()).use { zip ->
+            installed.apkFiles.forEach { file ->
+                zip.putNextEntry(java.util.zip.ZipEntry("original/" + file.name))
+                file.inputStream().use { it.copyTo(zip) }; zip.closeEntry()
+            }
+        }
+        var profile: File? = null
+        try {
+            ArtifactPackageLoader.open(archive, File(context.cacheDir, "space-fixture-set"), signal, progress).use { loaded ->
+                val result = FastArtifactIndexer.index(loaded.files, signal, progress)
+                val workspace = AnalysisWorkspace(result.index, result.index.sources.zip(loaded.files).map { (descriptor, file) -> WorkspaceSource(descriptor, file) })
+                val menu = io.github.ffenuss.modkit.space.SpaceMenuCoordinator.prepare(context,
+                    AnalysisTargetDescriptor.InstalledPackage(fixturePackage, "Owned fixture"), result, signal, progress, workspace)
+                assertEquals(fixturePackage, menu.packageName)
+                assertTrue("Fixture gameplay candidates must reach the profile", menu.candidates > 0)
+                profile = File(menu.profilePath)
+                val json = JSONObject(profile!!.readText())
+                assertEquals(2, json.getInt("schema"))
+                assertEquals("native_v1", json.getString("backend"))
+                assertEquals("DEX candidates must not become native switches", 0, menu.runtimeRecipes)
+                val items = json.getJSONArray("items")
+                assertTrue((0 until items.length()).all { items.getJSONObject(it).isNull("patch") })
+                assertEquals(result.index.artifactSha256, json.getString("artifactSha256"))
+                assertEquals(installed.apkFiles.size, json.getJSONArray("sources").length())
+                assertTrue(json.getJSONArray("items").length() > 0)
+                val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", profile!!)
+                assertTrue(uri.path!!.startsWith("/space_menu/"))
+                val handoff = requireNotNull(context.contentResolver.openInputStream(uri)).use { it.readBytes().toString(Charsets.UTF_8) }
+                assertEquals(profile!!.readText(), handoff)
+                val autoRoot = "content://" + context.packageName + ".space-menu"
+                val autoIndex = JSONObject(requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/index")))
+                    .use { it.readBytes().toString(Charsets.UTF_8) })
+                val runtime = JSONObject(requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/runtime")))
+                    .use { it.readBytes().toString(Charsets.UTF_8) })
+                assertEquals(1, runtime.getInt("schema"))
+                assertEquals("native-v1", runtime.getString("api"))
+                val abi = (if (android.os.Process.is64Bit()) android.os.Build.SUPPORTED_64_BIT_ABIS else android.os.Build.SUPPORTED_32_BIT_ABIS).first()
+                val payloads = runtime.getJSONArray("payloads")
+                val payload = (0 until payloads.length()).map { payloads.getJSONObject(it) }.single { it.getString("abi") == abi }
+                val nativeBytes = requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/native/" + abi)))
+                    .use { it.readBytes() }
+                assertEquals(payload.getLong("size"), nativeBytes.size.toLong())
+                assertEquals(payload.getString("sha256"), java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(nativeBytes).joinToString("") { "%02x".format(it) })
+                val entries = autoIndex.getJSONArray("profiles")
+                val entry = (0 until entries.length()).map { entries.getJSONObject(it) }
+                    .single { it.getString("file") == profile!!.name }
+                val autoBytes = requireNotNull(context.contentResolver.openInputStream(android.net.Uri.parse(autoRoot + "/profile/" + profile!!.name)))
+                    .use { it.readBytes() }
+                assertEquals(profile!!.readText(), autoBytes.toString(Charsets.UTF_8))
+                assertEquals(entry.getString("sha256"), java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(autoBytes).joinToString("") { "%02x".format(it) })
+                val probe = requireNotNull(context.contentResolver.call(android.net.Uri.parse(
+                    "content://" + context.packageName + ".test.menu-access-probe"), "probe", null, null))
+                assertNotEquals("Probe must run under a separate APK UID", context.applicationInfo.uid, probe.getInt("uid"))
+                assertTrue("Untrusted APK must not receive profiles: ${probe.getString("error")}", probe.getBoolean("denied"))
+                assertEquals(fixturePackage, io.github.ffenuss.modkit.space.SavedSpaceMenus.load(context)
+                    .single { it.packageName == fixturePackage }.packageName)
+                context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                assertTrue(device.wait(Until.hasObject(By.text("Выбрать игру")), 45_000))
+                val saved = device.wait(Until.findObject(By.text("Сохранённые меню")), 10_000)
+                assertNotNull("Stored menu must be accessible without restarting analysis", saved)
+                saved.click()
+                assertTrue(device.wait(Until.hasObject(By.text(fixturePackage)), 15_000))
+                device.findObject(By.text("Назад")).click()
+            }
+            val after = installed.apkFiles.map { java.security.MessageDigest.getInstance("SHA-256").digest(it.readBytes()).toList() }
+            assertEquals("Menu preparation must leave all original APKs untouched", before, after)
+        } finally { archive.delete(); profile?.delete() }
+    }
+
+    @Test fun a0b_typedJniGetterProducesExecutableRecipeWithoutIl2cpp() = runBlocking {
+        val apk = File(context.cacheDir, "jni-original-fixture.apk")
+        InstrumentationRegistry.getInstrumentation().context.assets.open("native-fixture.apk").use { input -> apk.outputStream().use { input.copyTo(it) } }
+        val before = java.security.MessageDigest.getInstance("SHA-256").digest(apk.readBytes()).toList()
+        var profile: File? = null
+        try {
+            val result = FastArtifactIndexer.index(listOf(apk), signal, progress)
+            val workspace = AnalysisWorkspace(result.index, listOf(WorkspaceSource(result.index.sources.single(), apk)))
+            val menu = io.github.ffenuss.modkit.space.SpaceMenuCoordinator.prepare(context,
+                AnalysisTargetDescriptor.InstalledPackage("dev.modkit.nativefixture", "Owned JNI fixture"), result, signal, progress, workspace)
+            profile = File(menu.profilePath)
+            val items = JSONObject(profile!!.readText()).getJSONArray("items")
+            val getter = (0 until items.length()).map { items.getJSONObject(it) }.single { it.getString("id").startsWith("jni:") }
+            assertTrue(getter.getString("evidence").endsWith("->getHealth()I"))
+            val patch = getter.getJSONObject("patch")
+            assertEquals("libmodkit_fixture.so", patch.getString("module"))
+            assertEquals("arm64-v8a", patch.getString("abi"))
+            assertTrue(patch.getLong("address") > 0)
+            assertEquals(64, patch.getString("imageSha256").length)
+            assertNotEquals(patch.getString("expected"), patch.getString("replacement"))
+            assertEquals(1, menu.runtimeRecipes)
+            val unsupported = File(context.cacheDir, "jni-unsupported-module.apk")
+            try {
+                java.util.zip.ZipFile(apk).use { input -> java.util.zip.ZipOutputStream(unsupported.outputStream()).use { output ->
+                    input.entries().asSequence().forEach { entry ->
+                        val name = if (entry.name == "lib/arm64-v8a/libmodkit_fixture.so") "lib/arm64-v8a/libfixture.v1.so" else entry.name
+                        output.putNextEntry(java.util.zip.ZipEntry(name))
+                        if (!entry.isDirectory) input.getInputStream(entry).use { it.copyTo(output) }
+                        output.closeEntry()
+                    }
+                } }
+                val unsupportedResult = FastArtifactIndexer.index(listOf(unsupported), signal, progress)
+                val unsupportedWorkspace = AnalysisWorkspace(unsupportedResult.index, listOf(WorkspaceSource(unsupportedResult.index.sources.single(), unsupported)))
+                val rejected = io.github.ffenuss.modkit.space.SpaceMenuCoordinator.prepare(context,
+                    AnalysisTargetDescriptor.InstalledPackage("dev.modkit.nativefixture", "Unsupported JNI module"), unsupportedResult, signal, progress, unsupportedWorkspace)
+                assertEquals("An unsupported module identity cannot invalidate a guest profile", 0, rejected.runtimeRecipes)
+                assertTrue(rejected.warnings.any { it.contains("неподдерживаемое имя библиотеки") })
+            } finally { unsupported.delete() }
+            assertEquals(before, java.security.MessageDigest.getInstance("SHA-256").digest(apk.readBytes()).toList())
+        } finally { profile?.delete(); apk.delete() }
+    }
+
+    @Test fun a_simpleInterfaceKeepsSpaceResultAndBuildsOnlyAfterExpertSelection() {
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val homeReady = device.wait(Until.hasObject(By.text("Выбрать игру")), 45_000)
         if (!homeReady) evidence("modkit-home-timeout.png") { device.takeScreenshot(it) }
@@ -162,6 +279,14 @@ class AutoModDeviceTest {
         device.findObject(By.text("Выбрать игру")).click()
         assertTrue(device.wait(Until.hasObject(By.text("ModKit Test Game")), 15_000))
         device.findObject(By.text("Анализ")).click()
+        assertTrue("Completed analysis must remain on the space result", device.wait(Until.hasObject(By.text("Скачать пространство")), 90_000))
+        val profile = File(context.filesDir, "space-menu-profiles").listFiles().orEmpty()
+            .firstOrNull { it.name.startsWith(fixturePackage + "-") && it.name.endsWith(".json") }
+        assertNotNull("The one analysis pipeline must automatically create the menu", profile)
+        assertEquals(fixturePackage, JSONObject(profile!!.readText()).getString("packageName"))
+        val expert = device.wait(Until.findObject(By.text("Экспертный режим · изменения APK")), 5_000)
+        assertNotNull("APK editing requires explicit expert selection", expert)
+        expert.click()
         assertTrue(device.wait(Until.hasObject(By.text("Настройте свой мод")), 90_000))
         val health = device.wait(Until.findObject(By.text("Здоровье · значение 9999")), 90_000)
         assertNotNull("Actual selectable recipe must appear", health)

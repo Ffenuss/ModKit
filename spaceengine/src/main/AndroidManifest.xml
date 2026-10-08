@@ -1,0 +1,4 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- DEX carrier loaded privately by the space host; no launcher or guest components. -->
+    <application android:allowBackup="false" android:hasCode="true" android:label="ModKit analysis engine" />
+</manifest>

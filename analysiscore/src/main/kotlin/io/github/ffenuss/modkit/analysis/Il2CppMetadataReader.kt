@@ -88,6 +88,9 @@ object Il2CppMetadataReader {
         progress: ProgressSink,
         limits: Limits = Limits(),
     ): Il2CppMetadataModel {
+        checkCancelled(cancellation)
+        require(limits.maxFileBytes >= 8 && limits.maxTypes >= 0 && limits.maxMethods >= 0 &&
+            limits.maxFields >= 0 && limits.maxImages >= 0 && limits.maxStringBytes > 0 && limits.maxCachedStrings >= 0)
         require(file.isFile && file.canRead()) { "global-metadata.dat is not readable" }
         require(file.length() in 8..limits.maxFileBytes) {
             "global-metadata.dat size is outside bounded random-access limits"
@@ -266,13 +269,38 @@ object Il2CppMetadataReader {
                 }
             }
 
+            // Sweep bounded field indices instead of expanding each type's claimed range.
+            // Malformed overlaps must not invent an owner or amplify work quadratically.
+            data class FieldInterval(val start: Int, val end: Int, val type: Il2CppTypeDefinition)
+            val invalidFieldRanges = types.count { type -> type.fieldCount > 0 &&
+                (type.fieldStart < 0 || type.fieldStart.toLong() + type.fieldCount > declaredFields) }
+            if (invalidFieldRanges > 0) {
+                truncated = true
+                warnings += "$invalidFieldRanges type field ranges exceed the declared field table; ownership is bounded to available fields."
+            }
+            val intervals = types.mapNotNull { type ->
+                if (type.fieldStart < 0 || type.fieldCount <= 0 || type.fieldStart >= fieldCount) null
+                else FieldInterval(type.fieldStart,
+                    minOf(fieldCount.toLong(), type.fieldStart.toLong() + type.fieldCount).toInt(), type)
+            }.sortedBy { it.start }
+            val active = HashMap<Int, Il2CppTypeDefinition>()
+            val ends = java.util.PriorityQueue<FieldInterval>(compareBy { it.end })
             val fieldOwners = HashMap<Int, Il2CppTypeDefinition>()
-            types.forEach { type ->
-                if (type.fieldStart >= 0 && type.fieldCount > 0) {
-                    repeat(type.fieldCount) { relative ->
-                        fieldOwners.putIfAbsent(type.fieldStart + relative, type)
-                    }
+            var nextInterval = 0
+            var ambiguousFields = 0
+            for (field in 0 until fieldCount) {
+                if (field % 256 == 0) checkCancelled(cancellation)
+                while (nextInterval < intervals.size && intervals[nextInterval].start <= field) {
+                    val interval = intervals[nextInterval++]
+                    active[interval.type.index] = interval.type; ends.add(interval)
                 }
+                while (ends.isNotEmpty() && ends.peek().end <= field) active.remove(ends.remove().type.index)
+                if (active.size == 1) fieldOwners[field] = active.values.first()
+                else if (active.size > 1) ambiguousFields++
+            }
+            if (ambiguousFields > 0) {
+                truncated = true
+                warnings += "Overlapping type field ranges: $ambiguousFields field owners are ambiguous and remain unresolved."
             }
 
             val fields = ArrayList<Il2CppFieldDefinition>(fieldCount)

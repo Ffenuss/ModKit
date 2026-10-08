@@ -1,0 +1,101 @@
+package io.github.ffenuss.modkit.space
+
+import android.app.Application
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.io.File
+import java.io.IOException
+import java.util.function.Consumer
+
+@RunWith(AndroidJUnit4::class)
+class SpaceEngineDeviceTest {
+    interface GuestLifecycleFixture {
+        fun d(app: Application)
+        fun b(app: Application)
+    }
+    @Test fun callbackChainPreservesOwnedApplicationStartupOnAndroid() {
+        val events = mutableListOf<String>()
+        val app = object : Application() {
+            override fun onCreate() { super.onCreate(); events.add("onCreate") }
+        }
+        val original = object : GuestLifecycleFixture {
+            override fun d(app: Application) { events.add("original-before") }
+            override fun b(app: Application) { events.add("original-after") }
+        }
+        val chain = GuestCallbackChain.wrap(GuestLifecycleFixture::class.java, original) { method, args ->
+            assertSame(app, args!![0])
+            events.add(if (method.name == "d") "bridge-before" else "bridge-after")
+        } as GuestLifecycleFixture
+        chain.d(app); app.onCreate(); chain.b(app)
+        assertEquals(listOf("original-before", "bridge-before", "onCreate", "original-after", "bridge-after"), events)
+    }
+    private fun hostApplication(): Application = object : Application() {
+        init { attachBaseContext(InstrumentationRegistry.getInstrumentation().targetContext) }
+        override fun getAssets() = InstrumentationRegistry.getInstrumentation().context.assets
+    }
+    @Test fun realDexLoaderRunsSharedEnginesWithPrivateKotlin() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val app = hostApplication()
+        val original = File(instrumentation.targetContext.applicationInfo.sourceDir)
+        val token = SourceInventory.Cancellation()
+        val before = SourceInventory.hash(original, token)
+        val sources = SourceInventory.scan("io.fixture.original", 7, listOf(original), token) { }
+        val messages = mutableListOf<String>()
+        val report = SpaceEngine.run(app, sources, token, Consumer { messages.add(it) })
+        assertTrue(report.contains("Анализаторы ModKit"))
+        assertTrue(report.contains("DEX · таблицы заголовка:"))
+        assertTrue(report.contains("types="))
+        assertTrue(messages.isNotEmpty())
+        val bridge = SpaceEngine::class.java.getDeclaredField("analyze").apply { isAccessible = true }.get(null) as java.lang.reflect.Method
+        val privateLoader = bridge.declaringClass.classLoader!!
+        assertNotSame(app.classLoader, privateLoader)
+        val privateKotlin = privateLoader.loadClass("kotlin.jvm.internal.Intrinsics")
+        assertSame(privateLoader, privateKotlin.classLoader)
+        assertNotSame(app.classLoader.loadClass("kotlin.jvm.internal.Intrinsics"), privateKotlin)
+        assertEquals(before, SourceInventory.hash(original, token))
+        assertFalse(File(app.cacheDir, "modkit-analysis/${sources.sessionId}").exists())
+        val loaded = File(app.codeCacheDir, "modkit-engine").listFiles().orEmpty().filter { it.name.endsWith(".apk") }
+        assertEquals(1, loaded.size)
+        assertFalse("Dynamic DEX must be read-only", loaded.single().canWrite())
+        assertTrue(SpaceEngine.privateNamespace("kotlin.jvm.internal.Intrinsics"))
+        assertFalse(SpaceEngine.privateNamespace("io.github.ffenuss.modkit.space.SpaceHost"))
+        assertFalse(SpaceEngine.privateNamespace("java.lang.String"))
+    }
+    @Test fun privateEngineDecodesMetadataFromAnOriginalSplitFixture() {
+        val app = hostApplication()
+        val hex = app.assets.open("metadata-v29.hex").bufferedReader().use { it.readText().trim() }
+        val bytes = ByteArray(hex.length / 2) { hex.substring(it * 2, it * 2 + 2).toInt(16).toByte() }
+        val original = File(app.cacheDir, "original-metadata-split.apk")
+        try {
+            java.util.zip.ZipOutputStream(original.outputStream()).use { zip ->
+                zip.putNextEntry(java.util.zip.ZipEntry("assets/bin/Data/Managed/Metadata/global-metadata.dat"))
+                zip.write(bytes); zip.closeEntry()
+            }
+            val token = SourceInventory.Cancellation()
+            val before = SourceInventory.hash(original, token)
+            val sources = SourceInventory.scan("io.fixture.original", 0, listOf(original), token) { }
+            val report = SpaceEngine.run(app, sources, token, Consumer { })
+            assertTrue(report.contains("Game.Player.Hit"))
+            assertTrue(report.contains("Game.Player.health"))
+            assertTrue(report.contains("token=0x6000001"))
+            assertEquals(before, SourceInventory.hash(original, token))
+            assertFalse(File(app.cacheDir, "modkit-analysis/${sources.sessionId}").exists())
+        } finally { original.delete() }
+    }
+    @Test fun cancellationLeavesNoTemporaryAnalysisWorkspace() {
+        val app = hostApplication()
+        val file = File(InstrumentationRegistry.getInstrumentation().targetContext.applicationInfo.sourceDir)
+        val token = SourceInventory.Cancellation()
+        val sources = SourceInventory.scan("io.fixture.original", 0, listOf(file), token) { }
+        token.cancel()
+        try {
+            SpaceEngine.run(app, sources, token, Consumer { })
+            fail("Cancelled engine must not return a report")
+        } catch (expected: IOException) {
+            assertFalse(File(app.cacheDir, "modkit-analysis/${sources.sessionId}").exists())
+        }
+    }
+}

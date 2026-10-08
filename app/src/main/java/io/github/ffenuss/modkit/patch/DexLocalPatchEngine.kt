@@ -539,6 +539,13 @@ object DexLocalPatchEngine {
         )
     }
 
+    internal fun nativeGameplayKind(className: String, methodName: String, returnType: String): Pair<DexLocalCategory, DexLocalAction>? {
+        if (excludedClass(className)) return null
+        return classify(methodName, returnType, className)?.takeUnless {
+            it.first in setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI)
+        }
+    }
+
     private fun classify(
         methodName: String,
         returnType: String,

@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application>
+    <!-- Owned test data source only. Production ModKit authenticates the host UID and signer. -->
+    <provider android:name="io.github.ffenuss.modkit.space.MenuSyncFixtureProvider"
+        android:authorities="io.github.ffenuss.modkit.test.space-menu" android:exported="true" />
+</application></manifest>

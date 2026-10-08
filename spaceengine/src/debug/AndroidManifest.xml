@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Visibility for the separate instrumentation APK's owned provider fixture. -->
+    <queries>
+        <provider android:authorities="io.github.ffenuss.modkit.test.space-menu" />
+    </queries>
+</manifest>

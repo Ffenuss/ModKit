@@ -11,6 +11,8 @@ import io.github.ffenuss.modkit.analysis.EvidenceTargetKind
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.ProgressSink
 import io.github.ffenuss.modkit.analysis.UserFindingStatus
+import io.github.ffenuss.modkit.analysis.TargetPackageSet
+import io.github.ffenuss.modkit.analysis.OpenedTarget
 import io.github.ffenuss.modkit.analysis.TargetMaterializer
 import io.github.ffenuss.modkit.data.InstalledAppRepository
 import io.github.ffenuss.modkit.domain.EngineProgress
@@ -46,6 +48,7 @@ object DexAutoModCoordinator {
         progress: ProgressSink,
     ): DexLocalScan = withContext(Dispatchers.IO) {
         val temporaryFiles = ArrayList<File>()
+        var opened: OpenedTarget? = null
         try {
             val files = when (target) {
                 is AnalysisTargetDescriptor.InstalledPackage -> {
@@ -62,14 +65,9 @@ object DexAutoModCoordinator {
                     }
                 }
                 is AnalysisTargetDescriptor.FileUri -> {
-                    val local = TargetMaterializer.fromUri(
-                        context = context,
-                        uri = Uri.parse(target.uri),
-                        cancellation = cancellation,
-                        progress = progress,
-                    )
-                    temporaryFiles += local.file
-                    listOf(local.file)
+                    val source = TargetPackageSet.open(context, target, cancellation, progress)
+                    opened = source
+                    source.files
                 }
             }
             // This first pass only reads DEX entries, not deep-indexes the
@@ -89,6 +87,7 @@ object DexAutoModCoordinator {
             )
         } finally {
             temporaryFiles.forEach(File::delete)
+            opened?.close()
         }
     }
 

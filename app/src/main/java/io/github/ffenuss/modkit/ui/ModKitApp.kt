@@ -36,6 +36,7 @@ private enum class Screen {
     TARGET,
     INSTALLED_APPS,
     AUTOMOD,
+    SAVED_SPACE_MENUS,
 }
 
 @Composable
@@ -175,16 +176,6 @@ fun ModKitApp() {
             }
         }
 
-    LaunchedEffect(analysisState) {
-        val completed = analysisState as? AnalysisRunState.Completed ?: return@LaunchedEffect
-        withContext(Dispatchers.IO) {
-            autoModSessionStore.save(completed.target, completed.result.index.artifactSha256)
-        }
-        autoModTarget = completed.target
-        autoModResult = completed.result
-        screen = Screen.AUTOMOD
-        AnalysisManager.clearTerminalState()
-    }
 
     when (val state = analysisState) {
         is AnalysisRunState.Interrupted ->
@@ -397,6 +388,7 @@ fun ModKitApp() {
                                     .APPLICATIONS,
                             )
                         },
+                        onOpenSavedMenus = { screen = Screen.SAVED_SPACE_MENUS },
                         onSelectFile = {
                             filePicker.launch(
                                 arrayOf(
@@ -407,6 +399,8 @@ fun ModKitApp() {
                             )
                         },
                     )
+
+                Screen.SAVED_SPACE_MENUS -> io.github.ffenuss.modkit.ui.screens.SavedSpaceMenusScreen(onBack = { screen = Screen.TARGET })
 
                 Screen.INSTALLED_APPS ->
                     InstalledAppsScreen(
