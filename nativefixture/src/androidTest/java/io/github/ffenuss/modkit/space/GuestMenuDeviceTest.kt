@@ -94,7 +94,7 @@ class GuestMenuDeviceTest {
                     a.window.decorView.findViewWithTag<Switch>("modkit-recipe:fixture-value").performClick()
                 }
                 ready()
-                device.findObject(By.text("Read native value")).click()
+                requireNotNull(device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("read native value", java.util.regex.Pattern.CASE_INSENSITIVE))), 10000)).click()
                 assertTrue(device.wait(Until.hasObject(By.text("Native value: 999")), 5000))
                 scenario.recreate(); ready()
                 scenario.onActivity { a ->
@@ -102,7 +102,7 @@ class GuestMenuDeviceTest {
                     val toggle = a.window.decorView.findViewWithTag<Switch>("modkit-recipe:fixture-value")
                     assertTrue(toggle.isChecked); toggle.performClick()
                 }
-                ready(); device.findObject(By.text("Read native value")).click()
+                ready(); requireNotNull(device.wait(Until.findObject(By.text(java.util.regex.Pattern.compile("read native value", java.util.regex.Pattern.CASE_INSENSITIVE))), 10000)).click()
                 assertTrue(device.wait(Until.hasObject(By.text("Native value: 7")), 5000))
                 scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-health").performClick() }
                 ready("jni-health")
