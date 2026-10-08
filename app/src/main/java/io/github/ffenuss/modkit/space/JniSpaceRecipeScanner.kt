@@ -48,7 +48,15 @@ internal object JniSpaceRecipeScanner {
             zip.entries().asSequence().filter { Regex("classes(?:[0-9]+)?\\.dex").matches(it.name) }.forEach dexEntry@ { entry ->
                 check(signal)
                 if (entry.size !in 1..(96L * 1024 * 1024)) { truncated = true; warnings += "JNI: DEX превышает лимит: ${entry.name}"; return@dexEntry }
-                val bytes = zip.getInputStream(entry).use { it.readBytes() }
+                val bytes = zip.getInputStream(entry).use { input ->
+                    val output = java.io.ByteArrayOutputStream(); val buffer = ByteArray(32768); val crc = CRC32()
+                    while (true) { check(signal); val n = input.read(buffer); if (n < 0) break
+                        require(output.size().toLong() + n <= entry.size) { "DEX expansion exceeds declared size" }
+                        output.write(buffer, 0, n); crc.update(buffer, 0, n)
+                    }
+                    require(output.size().toLong() == entry.size && crc.value == entry.crc) { "DEX size/CRC mismatch" }
+                    output.toByteArray()
+                }
                 val dex = DexBackedDexFile(Opcodes.getDefault(), bytes)
                 dex.classes.forEach { cls -> check(signal); cls.methods.forEach { method ->
                     if (AccessFlags.NATIVE.isSet(method.accessFlags)) {
@@ -64,11 +72,11 @@ internal object JniSpaceRecipeScanner {
         if (truncated) return Scan(emptyList(), warnings + "JNI: неполный индекс деклараций; привязки не выдаются", true)
         data class Image(val apk: File, val entry: String, val module: String)
         val images = files.flatMap { apk -> ZipFile(apk).use { zip -> zip.entries().asSequence()
-            .filter { !it.isDirectory && Regex("lib/arm64-v8a/[A-Za-z0-9_-]+\\.so").matches(it.name) }
+            .filter { !it.isDirectory && Regex("lib/arm64-v8a/[A-Za-z0-9_.-]+\\.so").matches(it.name) }
             .map { Image(apk, it.name, it.name.substringAfterLast('/')) }.toList() } }
         if (images.size > 64) return Scan(emptyList(), warnings + "JNI: слишком много библиотек; однозначность не доказана", true)
         if (images.map { it.module }.distinct().size != images.size) return Scan(emptyList(), warnings + "JNI: неоднозначные имена библиотек", false)
-        val found = mutableListOf<Pair<Method, Recipe>>()
+        val found = mutableListOf<Triple<Method, String, Recipe>>()
         val owners = mutableMapOf<String, Int>()
         var incomplete = false
         val knownSymbols = candidates.flatMap { listOf(it.shortName, it.longName) }.toSet()
@@ -113,9 +121,9 @@ internal object JniSpaceRecipeScanner {
                         val replacement = prefix + Il2CppNativeMutationDraftBuilder.parseHex(AArch64ScalarReturnEncoder.encodeHex(returnKind, value))
                         if (replacement.size > symbol.size || replacement.size > 64 || replacement.contentEquals(code.copyOf(replacement.size)) ||
                             symbols.any { it.value > symbol.value && it.value < symbol.value + replacement.size }) return@candidate
-                        found += method to Recipe("jni:" + hex(MessageDigest.getInstance("SHA-256").digest(method.key.toByteArray())), kind.first.label.substringBefore(" /") + " · значение $value",
+                        found += Triple(method, name, Recipe("jni:" + hex(MessageDigest.getInstance("SHA-256").digest(method.key.toByteArray())), kind.first.label.substringBefore(" /") + " · значение $value",
                             kind.first.label.substringBefore(" /"), method.key, img.module, symbol.value,
-                            hex(code.copyOf(replacement.size)), hex(replacement), imageHash)
+                            hex(code.copyOf(replacement.size)), hex(replacement), imageHash))
                     }
                 }
             } catch (error: Exception) {
@@ -127,7 +135,7 @@ internal object JniSpaceRecipeScanner {
         // The VM may search several loaded libraries. Never select an arbitrary matching export.
         if (incomplete) return Scan(emptyList(), warnings + "JNI: индекс библиотек не подтверждён", true)
         val recipes = found.groupBy { it.first.key }.values.filter { it.size == 1 }.map { it.single() }
-            .filter { (method, _) -> owners[exportName(method, declarations, owners.keys)] == 1 }.map { it.second }
+            .filter { (method, name, _) -> name == exportName(method, declarations, owners.keys) && owners[name] == 1 }.map { it.third }
         return Scan(recipes.take(128), warnings.distinct().take(32), recipes.size > 128)
     }
 }

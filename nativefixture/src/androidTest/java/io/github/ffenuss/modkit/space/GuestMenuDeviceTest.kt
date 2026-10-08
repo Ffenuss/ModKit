@@ -54,6 +54,18 @@ class GuestMenuDeviceTest {
                 .put("title", "Здоровье · 999").put("state", "static_recipe").put("detail", "Owned fixture").put("evidence", "modkit_fixture_value")
                 .put("patch", JSONObject().put("module", "libmodkit_fixture.so").put("abi", abi).put("address", address)
                     .put("expected", expected).put("replacement", replacement).put("imageSha256", SourceInventory.hash(image, SourceInventory.Cancellation())))))
+        val (getterAddress, getterExpected) = ElfImage.open(image, running).use { elf ->
+            val symbol = elf.dynamicSymbols.single { it.name == "Java_dev_modkit_nativefixture_GameActivity_getHealth" && it.defined }
+            symbol.value to hex(requireNotNull(elf.readFileWindowAtVa(symbol.value, 8)))
+        }
+        val getterReplacement = when (abi) {
+            "arm64-v8a" -> "e0e18452c0035fd6"; "armeabi-v7a" -> "0f0702e31eff2fe1"
+            "x86", "x86_64" -> "b80f270000c39090"; else -> error(abi)
+        }
+        json.getJSONArray("items").put(JSONObject().put("id", "jni-health").put("category", "Здоровье")
+            .put("title", "JNI · 9999").put("state", "static_recipe").put("detail", "Typed JNI getter").put("evidence", "getHealth()I")
+            .put("patch", JSONObject().put("module", "libmodkit_fixture.so").put("abi", abi).put("address", getterAddress)
+                .put("expected", getterExpected).put("replacement", getterReplacement).put("imageSha256", SourceInventory.hash(image, SourceInventory.Cancellation()))))
         val profile = MenuProfile(json.toString())
         var menu: SpaceGuestMenu? = null
         instrumentation.runOnMainSync {
@@ -92,6 +104,10 @@ class GuestMenuDeviceTest {
                 }
                 ready(); device.findObject(By.text("Read native value")).click()
                 assertTrue(device.wait(Until.hasObject(By.text("Native value: 7")), 5000))
+                scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-health").performClick() }
+                val getterDeadline = System.currentTimeMillis() + 10000
+                while (GameActivity.getHealth() != 9999 && System.currentTimeMillis() < getterDeadline) device.waitForIdle(200)
+                assertEquals("The original typed JNI getter must execute the changed code", 9999, GameActivity.getHealth())
                 device.findObject(By.desc("Свернуть или открыть меню ModKit")).click()
                 scenario.onActivity { a ->
                     val root = a.window.decorView.findViewWithTag<View>("modkit-guest-menu")
@@ -110,6 +126,7 @@ class GuestMenuDeviceTest {
             instrumentation.runOnMainSync { assertTrue("Closing the menu must restore enabled recipes", menu!!.close()) }
             image.delete()
         }
+        assertEquals("Closing must restore the original JNI getter", 7, GameActivity.getHealth())
         assertEquals("The original guest APK must stay unchanged", before, SourceInventory.hash(original, SourceInventory.Cancellation()))
     }
 }
