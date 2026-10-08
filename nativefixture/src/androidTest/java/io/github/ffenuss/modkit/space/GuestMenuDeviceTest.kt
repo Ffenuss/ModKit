@@ -78,11 +78,11 @@ class GuestMenuDeviceTest {
         try {
             ActivityScenario.launch(GameActivity::class.java).use { scenario ->
                 assertTrue(device.wait(Until.hasObject(By.text("Native value: 7")), 15000))
-                fun ready() {
+                fun ready(id: String = "fixture-value") {
                     val deadline = System.currentTimeMillis() + 20000
                     var available = false
                     while (!available && System.currentTimeMillis() < deadline) {
-                        scenario.onActivity { a -> available = a.window.decorView.findViewWithTag<Switch>("modkit-recipe:fixture-value")?.isEnabled == true }
+                        scenario.onActivity { a -> available = a.window.decorView.findViewWithTag<Switch>("modkit-recipe:$id")?.isEnabled == true }
                         if (!available) device.waitForIdle(200)
                     }
                     assertTrue("Real guest overlay must enable the verified recipe", available)
@@ -105,8 +105,7 @@ class GuestMenuDeviceTest {
                 ready(); device.findObject(By.text("Read native value")).click()
                 assertTrue(device.wait(Until.hasObject(By.text("Native value: 7")), 5000))
                 scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-health").performClick() }
-                val getterDeadline = System.currentTimeMillis() + 10000
-                while (GameActivity.getHealth() != 9999 && System.currentTimeMillis() < getterDeadline) device.waitForIdle(200)
+                ready("jni-health")
                 assertEquals("The original typed JNI getter must execute the changed code", 9999, GameActivity.getHealth())
                 device.findObject(By.desc("Свернуть или открыть меню ModKit")).click()
                 scenario.onActivity { a ->
