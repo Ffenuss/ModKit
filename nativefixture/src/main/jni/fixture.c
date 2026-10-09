@@ -9,7 +9,7 @@ JNIEXPORT jint JNICALL Java_dev_modkit_nativefixture_GameActivity_readNativeValu
     return modkit_fixture_value();
 }
 
-#if !defined(__aarch64__)
+#if !defined(__aarch64__) && !defined(__x86_64__)
 JNIEXPORT jlong JNICALL Java_dev_modkit_nativefixture_GameActivity_getStamina(JNIEnv* env, jclass type) {
     (void)env; (void)type; return 11;
 }

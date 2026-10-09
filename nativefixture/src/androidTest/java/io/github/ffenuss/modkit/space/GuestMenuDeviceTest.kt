@@ -66,6 +66,31 @@ class GuestMenuDeviceTest {
             .put("title", "JNI · 9999").put("state", "static_recipe").put("detail", "Typed JNI getter").put("evidence", "getHealth()I")
             .put("patch", JSONObject().put("module", "libmodkit_fixture.so").put("abi", abi).put("address", getterAddress)
                 .put("expected", getterExpected).put("replacement", getterReplacement).put("imageSha256", SourceInventory.hash(image, SourceInventory.Cancellation()))))
+        val wideReturns = abi == "arm64-v8a" || abi == "x86_64"
+        val staminaValue = if (abi == "x86_64") 4_294_977_295L else 9999L
+        val speedValue = if (abi == "x86_64") 2.5 else 2.0
+        if (wideReturns) {
+            fun addWideGetter(id: String, method: String, replacement: String) {
+                val length = replacement.length / 2
+                val (va, bytes) = ElfImage.open(image, running).use { elf ->
+                    val symbol = elf.dynamicSymbols.single {
+                        it.name == "Java_dev_modkit_nativefixture_GameActivity_$method" && it.defined
+                    }
+                    assertEquals("Fixture must expose the complete bounded JNI body", length.toLong(), symbol.size)
+                    symbol.value to hex(requireNotNull(elf.readFileWindowAtVa(symbol.value, length)))
+                }
+                json.getJSONArray("items").put(JSONObject().put("id", id).put("category", "Параметр")
+                    .put("title", "JNI · $method").put("state", "static_recipe")
+                    .put("detail", "Owned wide return fixture").put("evidence", method)
+                    .put("patch", JSONObject().put("module", "libmodkit_fixture.so").put("abi", abi)
+                        .put("address", va).put("expected", bytes).put("replacement", replacement)
+                        .put("imageSha256", SourceInventory.hash(image, SourceInventory.Cancellation()))))
+            }
+            addWideGetter("jni-stamina", "getStamina", if (abi == "x86_64")
+                "48b80f27000001000000c39090909090" else "e0e184d2c0035fd6")
+            addWideGetter("jni-speed", "getMoveSpeed", if (abi == "x86_64")
+                "48b8000000000000044066480f6ec0c3" else "0010601ec0035fd6")
+        }
         val profile = MenuProfile(json.toString())
         var menu: SpaceGuestMenu? = null
         instrumentation.runOnMainSync {
@@ -89,6 +114,8 @@ class GuestMenuDeviceTest {
                 }
                 ready()
                 assertEquals(7, GameActivity.getHealth())
+                assertEquals(11L, GameActivity.getStamina())
+                assertEquals(1.0, GameActivity.getMoveSpeed(), 0.0)
                 scenario.onActivity { a ->
                     assertEquals(1, count(a.window.decorView, "modkit-guest-menu"))
                     a.window.decorView.findViewWithTag<Switch>("modkit-recipe:fixture-value").performClick()
@@ -107,6 +134,26 @@ class GuestMenuDeviceTest {
                 scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-health").performClick() }
                 ready("jni-health")
                 assertEquals("The original typed JNI getter must execute the changed code", 9999, GameActivity.getHealth())
+                if (wideReturns) {
+                    scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-stamina").performClick() }
+                    ready("jni-stamina")
+                    assertEquals("JNI long must preserve its full return width", staminaValue, GameActivity.getStamina())
+                    assertEquals("Long recipe must not affect the double getter", 1.0, GameActivity.getMoveSpeed(), 0.0)
+                    scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-speed").performClick() }
+                    ready("jni-speed")
+                    assertEquals("JNI double must use its floating return register", speedValue, GameActivity.getMoveSpeed(), 0.0)
+                    assertEquals("Double recipe must not affect the long getter", staminaValue, GameActivity.getStamina())
+                    scenario.recreate(); ready("jni-stamina"); ready("jni-speed")
+                    assertEquals(staminaValue, GameActivity.getStamina())
+                    assertEquals(speedValue, GameActivity.getMoveSpeed(), 0.0)
+                    scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-stamina").performClick() }
+                    ready("jni-stamina")
+                    assertEquals(11L, GameActivity.getStamina())
+                    assertEquals(speedValue, GameActivity.getMoveSpeed(), 0.0)
+                    // Leave both wide recipes enabled to exercise close-time restoration.
+                    scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-stamina").performClick() }
+                    ready("jni-stamina")
+                }
                 device.findObject(By.desc("Свернуть или открыть меню ModKit")).click()
                 scenario.onActivity { a ->
                     val root = a.window.decorView.findViewWithTag<View>("modkit-guest-menu")
@@ -126,6 +173,8 @@ class GuestMenuDeviceTest {
             image.delete()
         }
         assertEquals("Closing must restore the original JNI getter", 7, GameActivity.getHealth())
+        assertEquals("Closing must restore the original JNI long", 11L, GameActivity.getStamina())
+        assertEquals("Closing must restore the original JNI double", 1.0, GameActivity.getMoveSpeed(), 0.0)
         assertEquals("The original guest APK must stay unchanged", before, SourceInventory.hash(original, SourceInventory.Cancellation()))
     }
 }

@@ -64,6 +64,24 @@ Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed:
     fmov d0, #1.0
     ret
 .size Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed, .-Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed
+#elif defined(__x86_64__)
+// Deterministic 16-byte JNI bodies let the emulator check full-width returns.
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getStamina
+.type Java_dev_modkit_nativefixture_GameActivity_getStamina, @function
+Java_dev_modkit_nativefixture_GameActivity_getStamina:
+    movabs $11, %rax
+    ret
+    .fill 5, 1, 0x90
+.size Java_dev_modkit_nativefixture_GameActivity_getStamina, .-Java_dev_modkit_nativefixture_GameActivity_getStamina
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed
+.type Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed, @function
+Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed:
+    movabs $0x3ff0000000000000, %rax
+    movq %rax, %xmm0
+    ret
+.size Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed, .-Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed
 #endif
 #if defined(__aarch64__) || defined(__arm__)
 .section .note.GNU-stack,"",%progbits
