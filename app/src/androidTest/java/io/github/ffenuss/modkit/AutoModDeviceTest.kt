@@ -7,6 +7,8 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
@@ -73,6 +75,22 @@ class AutoModDeviceTest {
         val gameReady = device.wait(Until.hasObject(By.textContains("Health:")), 45_000)
         if (!gameReady) evidence("fixture-launch-failure.png") { device.takeScreenshot(it) }
         assertTrue("Fixture must launch", gameReady)
+    }
+
+    /** Runner cleanup may still be destroying the preceding test's Activity. */
+    private fun awaitPreviousMainActivityDestroyed() {
+        val deadline = android.os.SystemClock.uptimeMillis() + 10_000
+        var remaining = true
+        while (remaining && android.os.SystemClock.uptimeMillis() < deadline) {
+            instrumentation.runOnMainSync {
+                val monitor = ActivityLifecycleMonitorRegistry.getInstance()
+                remaining = Stage.values().filter { it != Stage.DESTROYED }.any { stage ->
+                    monitor.getActivitiesInStage(stage).any { it is MainActivity }
+                }
+            }
+            if (remaining) android.os.SystemClock.sleep(50)
+        }
+        assertFalse("Previous test Activity must finish before the retained-build UI is launched", remaining)
     }
 
 
@@ -448,8 +466,10 @@ class AutoModDeviceTest {
         // The original certificate conflict was checked in b. The app produced by a
         // uses the same persistent ModKit key and can now update our owned fixture.
         assertTrue(context.packageManager.canRequestPackageInstalls())
+        awaitPreviousMainActivityDestroyed()
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val installButton = device.wait(Until.findObject(By.text("Установить")), 15_000)
+        if (installButton == null) evidence("retained-ui-build-missing.png") { device.takeScreenshot(it) }
         assertNotNull("Retained UI build must remain installable", installButton)
         val previousSessionId = RepackedRuntimeInstallStatusStore.status.value.sessionId
         val attemptedAt = System.currentTimeMillis()
