@@ -169,7 +169,8 @@ jobs:
             device-logcat.txt
 
   release:
-    if: github.event_name == 'workflow_dispatch' && inputs.build_release
+    # An explicit maintainer release request still waits for all validation jobs.
+    if: (github.event_name == 'workflow_dispatch' && inputs.build_release) || (github.event_name == 'push' && github.ref == 'refs/heads/feature/space-live-state-20261009' && contains(github.event.head_commit.message, '[build release]'))
     needs: [build, device]
     runs-on: ubuntu-latest
     steps:
