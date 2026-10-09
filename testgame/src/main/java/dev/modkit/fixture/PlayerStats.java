@@ -5,6 +5,10 @@ public final class PlayerStats {
     private int health = 20;
     private int stamina = 10;
     private int distance;
+    private long ammo = 4294967298L;
+    private static double runSpeed = 1.25;
+    public long getAmmo() { return ammo; }
+    public static double getRunSpeed() { return runSpeed; }
     public int getHealth() { return health; }
     public int a() { return health; } // Partial obfuscation; field dataflow is recoverable.
     public int getStamina() { return stamina; }

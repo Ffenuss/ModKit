@@ -13,13 +13,12 @@ import org.jf.dexlib2.iface.ClassDef
 import org.jf.dexlib2.iface.DexFile
 import org.jf.dexlib2.iface.Method
 import org.jf.dexlib2.iface.instruction.Instruction
-import org.jf.dexlib2.iface.instruction.NarrowLiteralInstruction
+import org.jf.dexlib2.iface.instruction.WideLiteralInstruction
+import org.jf.dexlib2.iface.instruction.OneRegisterInstruction
 import org.jf.dexlib2.immutable.ImmutableClassDef
 import org.jf.dexlib2.immutable.ImmutableMethod
 import org.jf.dexlib2.immutable.ImmutableMethodImplementation
-import org.jf.dexlib2.immutable.instruction.ImmutableInstruction11n
 import org.jf.dexlib2.immutable.instruction.ImmutableInstruction11x
-import org.jf.dexlib2.immutable.instruction.ImmutableInstruction31i
 import org.jf.dexlib2.writer.pool.DexPool
 
 /**
@@ -46,7 +45,7 @@ enum class DexLocalAction(val label: String) {
     FALSE("Возвращать false"),
     INT_9999("Возвращать 9999"),
     INT_99("Возвращать 99"),
-    FLOAT_2("Возвращать 2.0f"),
+    FLOAT_2("Возвращать 2.0"),
 }
 
 data class DexLocalOpportunity(
@@ -262,7 +261,7 @@ object DexLocalPatchEngine {
                 if (impl != null) methodsWithCode++
                 val noArgs = method.parameters.isEmpty()
                 if (noArgs) noArgumentMethods++
-                if (noArgs && method.returnType in setOf("Z", "I", "F")) {
+                if (noArgs && method.returnType in DexScalarReplacement.supportedTypes) {
                     scalarMethods++
                 }
                 if (DexGameplayContext.isProgressionGetter(method.name) &&
@@ -286,7 +285,7 @@ object DexLocalPatchEngine {
                     }
                 }
                 if (semantic && (!noArgs || method.returnType !in
-                        setOf("Z", "I", "F")
+                        DexScalarReplacement.supportedTypes
                     )
                 ) rejectedReturnTypes++
                 if (!noArgs || impl == null || impl.registerCount < 1) continue
@@ -413,25 +412,15 @@ object DexLocalPatchEngine {
                     val expectation = wanted[id] ?: continue
                     val instructions =
                         method.implementation?.instructions?.toList().orEmpty()
-                    val expectedOpcode = when (expectation.action) {
-                        DexLocalAction.TRUE, DexLocalAction.FALSE -> Opcode.CONST_4
-                        DexLocalAction.INT_9999, DexLocalAction.INT_99,
-                        DexLocalAction.FLOAT_2 -> Opcode.CONST
-                    }
-                    val expectedValue = when (expectation.action) {
-                        DexLocalAction.TRUE -> 1
-                        DexLocalAction.FALSE -> 0
-                        DexLocalAction.INT_9999 -> 9999
-                        DexLocalAction.INT_99 -> 99
-                        DexLocalAction.FLOAT_2 -> 2.0f.toBits()
-                    }
-                    val actualValue =
-                        (instructions.firstOrNull() as? NarrowLiteralInstruction)
-                            ?.narrowLiteral
+                    val expected = DexScalarReplacement.instruction(method.returnType, expectation.action)
+                    val actualValue = (instructions.firstOrNull() as? WideLiteralInstruction)?.wideLiteral
                     require(instructions.size == 2 &&
-                        instructions[0].opcode == expectedOpcode &&
-                        actualValue == expectedValue &&
-                        instructions[1].opcode == Opcode.RETURN
+                        instructions[0].opcode == expected.opcode &&
+                        actualValue == DexScalarReplacement.literal(method.returnType, expectation.action) &&
+                        (instructions[0] as? OneRegisterInstruction)?.registerA == 0 &&
+                        instructions[1].opcode == DexScalarReplacement.returnOpcode(method.returnType) &&
+                        (instructions[1] as? OneRegisterInstruction)?.registerA == 0 &&
+                        method.implementation!!.registerCount >= (if (DexScalarReplacement.isWide(method.returnType)) 2 else 1)
                     ) {
                         "Rewritten DEX failed exact return-value verification: " + id
                     }
@@ -503,27 +492,12 @@ object DexLocalPatchEngine {
         val id = stableId(apkIndex, dexEntry, original)
         val request = wanted[id] ?: return original
         val implementation = requireNotNull(original.implementation)
-        require(original.returnType == when (request.action) {
-            DexLocalAction.TRUE, DexLocalAction.FALSE -> "Z"
-            DexLocalAction.INT_9999, DexLocalAction.INT_99 -> "I"
-            DexLocalAction.FLOAT_2 -> "F"
-        })
-        require(implementation.registerCount >= 1)
-        val instruction = when (request.action) {
-            DexLocalAction.TRUE ->
-                ImmutableInstruction11n(Opcode.CONST_4, 0, 1)
-            DexLocalAction.FALSE ->
-                ImmutableInstruction11n(Opcode.CONST_4, 0, 0)
-            DexLocalAction.INT_9999 ->
-                ImmutableInstruction31i(Opcode.CONST, 0, 9999)
-            DexLocalAction.INT_99 ->
-                ImmutableInstruction31i(Opcode.CONST, 0, 99)
-            DexLocalAction.FLOAT_2 ->
-                ImmutableInstruction31i(Opcode.CONST, 0, 2.0f.toBits())
-        }
+        val instruction = DexScalarReplacement.instruction(original.returnType, request.action)
+        val requiredRegisters = if (DexScalarReplacement.isWide(original.returnType)) 2 else 1
+        require(implementation.registerCount >= requiredRegisters)
         val instructions: List<Instruction> = listOf(
             instruction,
-            ImmutableInstruction11x(Opcode.RETURN, 0),
+            ImmutableInstruction11x(DexScalarReplacement.returnOpcode(original.returnType), 0),
         )
         check(written.add(id)) { "Method identity is not unique: " + id }
         return ImmutableMethod(
@@ -541,8 +515,7 @@ object DexLocalPatchEngine {
 
     internal fun nativeGameplayKind(className: String, methodName: String, returnType: String): Pair<DexLocalCategory, DexLocalAction>? {
         if (excludedClass(className)) return null
-        // Native recipes encode the actual JNI ABI type separately. Keep DEX rewriting's
-        // narrower type support unchanged: long/double need different DEX instructions.
+        // Native recipes encode the actual JNI ABI type separately from the semantic action.
         val semanticType = when (returnType) { "J" -> "I"; "D" -> "F"; else -> returnType }
         return classify(methodName, semanticType, className)?.takeUnless {
             it.first in setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI)
@@ -622,7 +595,7 @@ object DexLocalPatchEngine {
             }
         }
 
-        if (returnType == "I") {
+        if (returnType == "I" || returnType == "J") {
             return when (key) {
                 "gethealth", "gethp", "getmaxhp", "getcurrenthp",
                 "getmaxhealth", "getcurrenthealth",
@@ -660,7 +633,7 @@ object DexLocalPatchEngine {
             }
         }
 
-        if (returnType == "F") {
+        if (returnType == "F" || returnType == "D") {
             return when (key) {
                 "getmovespeed", "getrunspeed",
                 "getwalkspeed", "getsprintspeed",

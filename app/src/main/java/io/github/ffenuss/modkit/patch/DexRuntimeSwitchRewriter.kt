@@ -104,32 +104,29 @@ object DexRuntimeSwitchRewriter {
     }
 
     private fun wrapper(original: Method, selection: DexRuntimeSelection, backup: String): Method {
-        require(original.parameterTypes.isEmpty() && original.returnType in setOf("Z", "I", "F"))
+        require(original.parameterTypes.isEmpty() && original.returnType in DexScalarReplacement.supportedTypes)
         val static = AccessFlags.STATIC.isSet(original.accessFlags)
-        val value = when (selection.method.action) {
-            DexLocalAction.TRUE -> 1
-            DexLocalAction.FALSE -> 0
-            DexLocalAction.INT_9999 -> 9999
-            DexLocalAction.INT_99 -> 99
-            DexLocalAction.FLOAT_2 -> 2.0f.toBits()
-        }
+        val wide = DexScalarReplacement.isWide(original.returnType)
+        val constant = DexScalarReplacement.instruction(original.returnType, selection.method.action)
+        val returnOp = DexScalarReplacement.returnOpcode(original.returnType)
+        val thisRegister = if (wide) 2 else 1
         val code = listOf(
             ImmutableInstruction31c(Opcode.CONST_STRING_JUMBO, 0, ImmutableStringReference(selection.switchId)),
             ImmutableInstruction35c(Opcode.INVOKE_STATIC, 1, 0, 0, 0, 0, 0,
                 ImmutableMethodReference(BRIDGE, "isEnabled", listOf("Ljava/lang/String;"), "Z")),
             ImmutableInstruction11x(Opcode.MOVE_RESULT, 0),
-            ImmutableInstruction21t(Opcode.IF_EQZ, 0, 6),
-            ImmutableInstruction31i(Opcode.CONST, 0, value),
-            ImmutableInstruction11x(Opcode.RETURN, 0),
+            ImmutableInstruction21t(Opcode.IF_EQZ, 0, 2 + constant.codeUnits + 1),
+            constant,
+            ImmutableInstruction11x(returnOp, 0),
             ImmutableInstruction35c(if (static) Opcode.INVOKE_STATIC else Opcode.INVOKE_DIRECT,
-                if (static) 0 else 1, if (static) 0 else 1, 0, 0, 0, 0,
+                if (static) 0 else 1, if (static) 0 else thisRegister, 0, 0, 0, 0,
                 ImmutableMethodReference(original.definingClass, backup, emptyList(), original.returnType)),
-            ImmutableInstruction11x(Opcode.MOVE_RESULT, 0),
-            ImmutableInstruction11x(Opcode.RETURN, 0),
+            ImmutableInstruction11x(if (wide) Opcode.MOVE_RESULT_WIDE else Opcode.MOVE_RESULT, 0),
+            ImmutableInstruction11x(returnOp, 0),
         )
         return ImmutableMethod(original.definingClass, original.name, original.parameters,
             original.returnType, original.accessFlags, original.annotations, original.hiddenApiRestrictions,
-            ImmutableMethodImplementation(if (static) 1 else 2, code, emptyList(), emptyList()))
+            ImmutableMethodImplementation(thisRegister + if (static) 0 else 1, code, emptyList(), emptyList()))
     }
 
     private fun canonicalBody(method: Method, opcodes: Opcodes): ByteArray {

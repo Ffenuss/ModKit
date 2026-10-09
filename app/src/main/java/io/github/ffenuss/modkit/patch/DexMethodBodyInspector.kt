@@ -24,21 +24,24 @@ object DexMethodBodyInspector {
     fun inspect(method: Method): DexMethodBodyEvidence {
         fun unsupported(why: String) = DexMethodBodyEvidence(DexMethodBodyKind.UNSUPPORTED, why)
         val body = method.implementation ?: return unsupported("Нет тела DEX-метода.")
-        if (method.parameterTypes.isNotEmpty() || method.returnType !in setOf("Z", "I", "F")) {
+        if (method.parameterTypes.isNotEmpty() || method.returnType !in DexScalarReplacement.supportedTypes) {
             return unsupported("Для этой сигнатуры ещё нет проверенного рецепта.")
         }
         if (body.tryBlocks.isNotEmpty()) return unsupported("В методе есть обработчики исключений.")
         // Read at most three instructions; never materialize a large method merely to reject it.
         val code = body.instructions.take(3)
-        if (code.size != 2 || code[1].opcode != Opcode.RETURN) {
-            return DexReadOnlyBody.inspect(method)
+        val wide = DexScalarReplacement.isWide(method.returnType)
+        if (code.size != 2 || code[1].opcode != DexScalarReplacement.returnOpcode(method.returnType)) {
+            return if (wide) unsupported("Для вычисляемого wide-результата ещё нет доказанного потока данных.")
+                else DexReadOnlyBody.inspect(method)
         }
         val source = code[0] as? OneRegisterInstruction ?: return unsupported("Источник результата не доказан.")
         val result = code[1] as? OneRegisterInstruction ?: return unsupported("Регистр результата не доказан.")
-        if (source.registerA != result.registerA || source.registerA !in 0 until body.registerCount) {
+        if (source.registerA != result.registerA || source.registerA !in 0 until (body.registerCount - if (wide) 1 else 0)) {
             return unsupported("Возвращается другой или недопустимый регистр.")
         }
-        if (code[0].opcode in setOf(Opcode.CONST_4, Opcode.CONST_16, Opcode.CONST, Opcode.CONST_HIGH16)) {
+        if (code[0].opcode in if (wide) setOf(Opcode.CONST_WIDE_16, Opcode.CONST_WIDE_32, Opcode.CONST_WIDE, Opcode.CONST_WIDE_HIGH16)
+            else setOf(Opcode.CONST_4, Opcode.CONST_16, Opcode.CONST, Opcode.CONST_HIGH16)) {
             return DexMethodBodyEvidence(DexMethodBodyKind.CONSTANT_RETURN,
                 "Тело метода возвращает константу без вызовов и записи состояния.")
         }
@@ -47,8 +50,8 @@ object DexMethodBodyInspector {
         if (field.definingClass != method.definingClass || field.type != method.returnType) {
             return unsupported("Тип или владелец прочитанного поля не совпадает с методом.")
         }
-        val instanceOpcode = if (field.type == "Z") Opcode.IGET_BOOLEAN else Opcode.IGET
-        val staticOpcode = if (field.type == "Z") Opcode.SGET_BOOLEAN else Opcode.SGET
+        val instanceOpcode = if (wide) Opcode.IGET_WIDE else if (field.type == "Z") Opcode.IGET_BOOLEAN else Opcode.IGET
+        val staticOpcode = if (wide) Opcode.SGET_WIDE else if (field.type == "Z") Opcode.SGET_BOOLEAN else Opcode.SGET
         if (code[0].opcode == instanceOpcode) {
             val read = code[0] as? TwoRegisterInstruction ?: return unsupported("Нет регистра объекта.")
             if (AccessFlags.STATIC.isSet(method.accessFlags) || read.registerB != body.registerCount - 1) {

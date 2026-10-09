@@ -11,6 +11,7 @@ public final class GameActivity extends Activity {
     private PlayerStats player;
     private TextView state;
     private TextView distance;
+    private TextView wideStats;
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         player = new PlayerStats();
@@ -24,6 +25,9 @@ public final class GameActivity extends Activity {
         distance = new TextView(this);
         distance.setTextSize(24);
         layout.addView(distance);
+        wideStats = new TextView(this);
+        wideStats.setTextSize(18);
+        layout.addView(wideStats);
         Button hit = new Button(this);
         hit.setText("Take damage");
         hit.setOnClickListener(v -> { player.hit(); showState(); });
@@ -42,5 +46,6 @@ public final class GameActivity extends Activity {
     private void showState() {
         state.setText((player.isDead() ? "GAME OVER" : "ALIVE") + " | Health: " + player.getHealth());
         distance.setText("Distance: " + player.distance());
+        wideStats.setText("Ammo: " + player.getAmmo() + " | Speed: " + PlayerStats.getRunSpeed());
     }
 }

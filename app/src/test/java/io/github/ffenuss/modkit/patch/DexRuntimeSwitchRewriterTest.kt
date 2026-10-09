@@ -96,6 +96,66 @@ class DexRuntimeSwitchRewriterTest {
             DexMethodBodyInspector.inspect(actual.single { it.name == DexRuntimeSwitchRewriter.backupName(sprint.id) }).kind)
     }
 
+    @Test fun wideGettersUseTwoResultRegistersAndKeepThisSeparate() {
+        for (type in listOf("J", "D")) for (static in listOf(false, true)) {
+            val name = if (type == "J") "getAmmo" else "getRunSpeed"
+            val sourceBits = if (type == "J") 4294967298L else 1.25.toBits()
+            val original = method(name, type, AccessFlags.PUBLIC.value or if (static) AccessFlags.STATIC.value else 0,
+                if (static) 2 else 3,
+                ImmutableInstruction51l(Opcode.CONST_WIDE, 0, sourceBits), ImmutableInstruction11x(Opcode.RETURN_WIDE, 0))
+            val bytes = dex(listOf(original))
+            val selected = scan(bytes).single()
+            assertTrue(selected.selectable)
+            val result = rewrite(bytes, listOf(DexRuntimeSelection(selected, DexRuntimeSwitchRewriter.switchId(selected.id))))
+            val methods = result.classes.single().methods.toList()
+            val wrapper = methods.single { it.name == name }.implementation!!
+            val code = wrapper.instructions.toList()
+            assertEquals(if (static) 2 else 3, wrapper.registerCount)
+            assertEquals(8, (code[3] as OffsetInstruction).codeOffset)
+            assertEquals(Opcode.CONST_WIDE, code[4].opcode)
+            assertEquals(if (type == "J") 9999L else 2.0.toBits(), (code[4] as WideLiteralInstruction).wideLiteral)
+            assertEquals(Opcode.RETURN_WIDE, code[5].opcode)
+            assertEquals(if (static) Opcode.INVOKE_STATIC else Opcode.INVOKE_DIRECT, code[6].opcode)
+            assertEquals(if (static) 0 else 2, (code[6] as FiveRegisterInstruction).registerC)
+            assertEquals(Opcode.MOVE_RESULT_WIDE, code[7].opcode)
+            assertEquals(Opcode.RETURN_WIDE, code[8].opcode)
+            val backup = methods.single { it.name == DexRuntimeSwitchRewriter.backupName(selected.id) }
+            assertEquals(sourceBits, (backup.implementation!!.instructions.first() as WideLiteralInstruction).wideLiteral)
+            val output = File.createTempFile("wide-direct", ".dex")
+            try {
+                DexLocalPatchEngine.rewriteDex(bytes, 0, "classes.dex", listOf(selected), output, false, signal)
+                val instructions = DexBackedDexFile(null, output.readBytes()).classes.single().methods.single().implementation!!.instructions.toList()
+                assertEquals(Opcode.CONST_WIDE, instructions[0].opcode)
+                assertEquals(if (type == "J") 9999L else 2.0.toBits(), (instructions[0] as WideLiteralInstruction).wideLiteral)
+                assertEquals(Opcode.RETURN_WIDE, instructions[1].opcode)
+            } finally { output.delete() }
+        }
+    }
+
+    @Test fun wideFieldProofRejectsWrongWidthMissingPairAndSideEffects() {
+        for (type in listOf("J", "D")) {
+            val name = if (type == "J") "getAmmo" else "getRunSpeed"
+            val reference = ImmutableFieldReference(owner, if (type == "J") "ammo" else "runSpeed", type)
+            val valid = method(name, type, registers = 3, instructions = arrayOf<Instruction>(
+                ImmutableInstruction22c(Opcode.IGET_WIDE, 0, 2, reference), ImmutableInstruction11x(Opcode.RETURN_WIDE, 0)))
+            assertEquals(DexMethodBodyKind.INSTANCE_FIELD_GETTER, DexMethodBodyInspector.inspect(valid).kind)
+            val static = method(name, type, AccessFlags.PUBLIC.value or AccessFlags.STATIC.value, 2,
+                ImmutableInstruction21c(Opcode.SGET_WIDE, 0, reference), ImmutableInstruction11x(Opcode.RETURN_WIDE, 0))
+            assertEquals(DexMethodBodyKind.STATIC_FIELD_GETTER, DexMethodBodyInspector.inspect(static).kind)
+            for (invalid in listOf(
+                method(name, type, registers = 1, instructions = arrayOf<Instruction>(
+                    ImmutableInstruction51l(Opcode.CONST_WIDE, 0, 11L), ImmutableInstruction11x(Opcode.RETURN_WIDE, 0))),
+                method(name, type, registers = 3, instructions = arrayOf<Instruction>(
+                    ImmutableInstruction22c(Opcode.IGET, 0, 2, reference), ImmutableInstruction11x(Opcode.RETURN_WIDE, 0))),
+                method(name, type, registers = 3, instructions = arrayOf<Instruction>(
+                    ImmutableInstruction22c(Opcode.IGET_WIDE, 0, 2, reference), ImmutableInstruction11x(Opcode.RETURN, 0))),
+                method(name, type, registers = 3, instructions = arrayOf<Instruction>(
+                    ImmutableInstruction22c(Opcode.IGET_WIDE, 0, 2, reference),
+                    ImmutableInstruction22c(Opcode.IPUT_WIDE, 0, 2, reference), ImmutableInstruction11x(Opcode.RETURN_WIDE, 0))),
+            )) assertFalse(DexMethodBodyInspector.inspect(invalid).supportsScalarReplacement)
+        }
+    }
+
     @Test fun staleDigestAndDuplicateSelectionsAreRejected() {
         val bytes = dex(listOf(getter("getHealth")))
         val original = scan(bytes).single()
