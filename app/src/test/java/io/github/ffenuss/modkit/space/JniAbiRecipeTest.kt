@@ -16,7 +16,7 @@ class JniAbiRecipeTest {
         assertFalse(JniAbiRecipe.inspect("armeabi-v7a", bytes("0700a0e3")).supported)
         assertFalse(JniAbiRecipe.inspect("armeabi-v7a", bytes("07207047")).supported)
         assertFalse(JniAbiRecipe.inspect("armeabi-v7a", byteArrayOf(1, 2, 3)).supported)
-        for (abi in listOf("x86", "x86_64", "unknown")) {
+        for (abi in listOf("x86", "unknown")) {
             assertFalse(JniAbiRecipe.inspect(abi, bytes("1eff2fe1")).supported)
             assertNull(JniAbiRecipe.encode(abi, "I", "9999"))
         }
@@ -44,4 +44,30 @@ class JniAbiRecipeTest {
         assertArrayEquals(prefix, JniAbiRecipe.encode("arm64-v8a", "I", "9999", prefix)!!.take(4).toByteArray())
         assertEquals(prefix.toList(), JniAbiRecipe.inspect("arm64-v8a", prefix + bytes("e0e18452c0035fd6")).prefix.toList())
     }
+    @Test fun x64InstructionBoundariesAndLandingPadsAreExact() {
+        val prefix = bytes("f30f1efa")
+        assertTrue(JniAbiRecipe.inspect("x86_64", bytes("b807000000c39090")).supported)
+        assertTrue(JniAbiRecipe.inspect("x86_64", bytes("8d420ac390909090")).supported)
+        for (code in listOf("e800000000c3", "eb00c3", "8907c3", "4889c3c3", "c20800", "b801", "48b801000000c3", "660f6ec1c3", "b801000000", "f30f1efbc3"))
+            assertFalse(code, JniAbiRecipe.inspect("x86_64", bytes(code)).supported)
+        val emitted = JniAbiRecipe.encode("x86_64", "I", "9999", prefix)!!
+        assertArrayEquals(prefix, emitted.take(4).toByteArray())
+        assertArrayEquals(prefix, JniAbiRecipe.inspect("x86_64", emitted).prefix)
+        assertEquals(0, emitted.size % 4)
+    }
+
+    @Test fun exportX64PrimitiveReturnsForIndependentExecution() {
+        val cases = listOf("Z" to "1", "B" to "127", "S" to "9999", "C" to "9999", "I" to "9999",
+            "J" to "4294977295", "F" to "2", "D" to "2", "I" to "-123456789", "D" to "2.5")
+        val rows = cases.map { (type, value) ->
+            val code = requireNotNull(JniAbiRecipe.encode("x86_64", type, value))
+            assertEquals(0, code.size % 4)
+            assertTrue(JniAbiRecipe.inspect("x86_64", code).supported)
+            "$type\t$value\t${hex(code)}"
+        }
+        assertEquals("b80f270000c39090", hex(JniAbiRecipe.encode("x86_64", "I", "9999")!!))
+        assertEquals("b800000040660f6ec0c39090", hex(JniAbiRecipe.encode("x86_64", "F", "2")!!))
+        File("build/native-x64-verification.tsv").apply { parentFile.mkdirs(); writeText(rows.joinToString("\n")) }
+    }
+
 }

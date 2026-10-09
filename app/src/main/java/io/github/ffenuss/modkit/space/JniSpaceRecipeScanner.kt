@@ -105,7 +105,7 @@ internal object JniSpaceRecipeScanner {
         if (truncated) return Scan(emptyList(), warnings + "JNI: неполный индекс деклараций; привязки не выдаются", true)
         data class Image(val apk: File, val entry: String, val module: String, val abi: String)
         val images = files.flatMap { apk -> ZipFile(apk).use { zip -> zip.entries().asSequence()
-            .filter { !it.isDirectory && Regex("lib/(?:arm64-v8a|armeabi-v7a)/[^/]+\\.so").matches(it.name) }
+            .filter { !it.isDirectory && Regex("lib/(?:arm64-v8a|armeabi-v7a|x86_64)/[^/]+\\.so").matches(it.name) }
             .map { Image(apk, it.name, it.name.substringAfterLast('/'), it.name.split('/')[1]) }.toList() } }
         if (images.size > 64) return Scan(emptyList(), warnings + "JNI: слишком много библиотек; однозначность не доказана", true)
         if (images.map { it.abi to it.module }.distinct().size != images.size) return Scan(emptyList(), warnings + "JNI: неоднозначные имена библиотек", false)
@@ -156,7 +156,7 @@ internal object JniSpaceRecipeScanner {
                             return@candidate
                         }
                         if (symbols.count { it.value == symbol.value } != 1 || symbol.value <= 0 || symbol.value > Long.MAX_VALUE - 64 || symbol.value % 4L != 0L ||
-                            symbol.size !in 4..1024 || symbol.size % 4L != 0L || !elf.isExecutableVa(symbol.value) ||
+                            symbol.size !in 1..1024 || (img.abi != "x86_64" && symbol.size % 4L != 0L) || !elf.isExecutableVa(symbol.value) ||
                             elf.fileOffsetForVa(symbol.value, symbol.size) == null) return@candidate
                         val code = elf.readFileWindowAtVa(symbol.value, symbol.size.toInt()) ?: return@candidate
                         val proof = JniAbiRecipe.inspect(img.abi, code)

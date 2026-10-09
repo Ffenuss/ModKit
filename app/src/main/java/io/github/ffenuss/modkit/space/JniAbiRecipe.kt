@@ -6,12 +6,12 @@ import io.github.ffenuss.modkit.patch.Il2CppNativeMutationDraftBuilder
 
 /** Each backend owns its exact instruction whitelist and platform return ABI. */
 internal object JniAbiRecipe {
-    val supportedAbis = setOf("arm64-v8a", "armeabi-v7a")
+    val supportedAbis = setOf("arm64-v8a", "armeabi-v7a", "x86_64")
     data class Proof(val supported: Boolean, val reason: String, val prefix: ByteArray = byteArrayOf())
     fun machine(abi: String) = when (abi) {
-        "arm64-v8a" -> 183; "armeabi-v7a" -> 40; else -> -1
+        "arm64-v8a" -> 183; "armeabi-v7a" -> 40; "x86_64" -> 62; else -> -1
     }
-    fun is64Bit(abi: String) = abi == "arm64-v8a"
+    fun is64Bit(abi: String) = abi in setOf("arm64-v8a", "x86_64")
     fun inspect(abi: String, bytes: ByteArray): Proof {
         if (abi == "arm64-v8a") {
             val p = AArch64ReadOnlyBody.inspect(bytes)
@@ -31,6 +31,30 @@ internal object JniAbiRecipe {
                 offset += 4
             }
             return Proof(false, "ARM: возврат не доказан")
+        }
+        if (abi == "x86_64") {
+            var offset = 0
+            val landing = byteArrayOf(0xf3.toByte(), 0x0f, 0x1e, 0xfa.toByte())
+            val prefix = if (bytes.size >= 4 && bytes.copyOfRange(0, 4).contentEquals(landing)) {
+                offset = 4; landing
+            } else byteArrayOf()
+            fun u(index: Int) = bytes.getOrNull(index)?.toInt()?.and(255) ?: -1
+            while (offset < bytes.size) {
+                val remaining = bytes.size - offset
+                val length = when {
+                    u(offset) == 0xc3 -> return Proof(true, "x86_64 leaf без вызовов и записи памяти", prefix)
+                    u(offset) == 0x90 -> 1
+                    u(offset) == 0xb8 -> 5 // MOV EAX, imm32
+                    u(offset) == 0x48 && u(offset + 1) == 0xb8 -> 10 // MOV RAX, imm64
+                    u(offset) == 0x66 && u(offset + 1) == 0x0f && u(offset + 2) == 0x6e && u(offset + 3) == 0xc0 -> 4 // MOVD XMM0,EAX
+                    u(offset) == 0x66 && u(offset + 1) == 0x48 && u(offset + 2) == 0x0f && u(offset + 3) == 0x6e && u(offset + 4) == 0xc0 -> 5 // MOVQ XMM0,RAX
+                    u(offset) == 0x8d && u(offset + 1) == 0x42 -> 3 // LEA EAX,[RDX+disp8], no memory access
+                    else -> return Proof(false, "x86_64: инструкция не входит в проверенный leaf-поднабор")
+                }
+                if (length > remaining) return Proof(false, "Неполная инструкция x86_64")
+                offset += length
+            }
+            return Proof(false, "x86_64: возврат не доказан")
         }
         return Proof(false, "Нет проверенного JNI-рецепта для ABI $abi")
     }
@@ -59,6 +83,19 @@ internal object JniAbiRecipe {
         return when (abi) {
             "armeabi-v7a" -> armMove(0, bits) +
                 (if (result in setOf("J", "D")) armMove(1, bits ushr 32) else byteArrayOf()) + word(0xe12fff1eL)
+            "x86_64" -> {
+                // Keep native_v1's aligned, four-byte-range contract. NOP padding follows RET.
+                fun immediate(size: Int) = ByteArray(size) { (bits ushr (8 * it)).toByte() }
+                val mov = if (result in setOf("J", "D")) byteArrayOf(0x48, 0xb8.toByte()) + immediate(8)
+                    else byteArrayOf(0xb8.toByte()) + immediate(4)
+                val transfer = when (result) {
+                    "F" -> byteArrayOf(0x66, 0x0f, 0x6e, 0xc0.toByte())
+                    "D" -> byteArrayOf(0x66, 0x48, 0x0f, 0x6e, 0xc0.toByte())
+                    else -> byteArrayOf()
+                }
+                val body = prefix + mov + transfer + byteArrayOf(0xc3.toByte())
+                body + ByteArray((4 - body.size % 4) % 4) { 0x90.toByte() }
+            }
             else -> null
         }
     }

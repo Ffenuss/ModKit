@@ -20,6 +20,9 @@ public final class GameActivity extends Activity {
     public static native byte getEnergy();
     public static native short getMaxHealth();
     public static native char getMagazineSize();
+    // These two exports are supplied by the x86_64 fixture only.
+    public static native boolean canSprint();
+    public static native float getRunSpeed();
     private TextView value;
 
     @Override public void onCreate(Bundle saved) {

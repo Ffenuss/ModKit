@@ -93,6 +93,20 @@ class GuestMenuDeviceTest {
             val ammoReplacement = if (abi == "x86_64") "b80f270000c39090" else "e0e18452c0035fd6"
             addWideGetter("jni-ammo-int", "getAmmo__I", ammoReplacement)
             addWideGetter("jni-ammo-long", "getAmmo__J", ammoReplacement)
+            if (abi == "x86_64") {
+                addWideGetter("jni-sprint", "canSprint", "b801000000c39090")
+                // The source body is 16 bytes; the complete 12-byte replacement preserves trailing bytes.
+                val (va, expected) = ElfImage.open(image, running).use { elf ->
+                    val symbol = elf.dynamicSymbols.single { it.name == "Java_dev_modkit_nativefixture_GameActivity_getRunSpeed" && it.defined }
+                    assertEquals(16L, symbol.size)
+                    symbol.value to hex(requireNotNull(elf.readFileWindowAtVa(symbol.value, 12)))
+                }
+                json.getJSONArray("items").put(JSONObject().put("id", "jni-run-speed").put("category", "Скорость")
+                    .put("title", "JNI float · 2").put("state", "static_recipe").put("detail", "Owned float return").put("evidence", "getRunSpeed()F")
+                    .put("patch", JSONObject().put("module", "libmodkit_fixture.so").put("abi", abi).put("address", va)
+                        .put("expected", expected).put("replacement", "b800000040660f6ec0c39090")
+                        .put("imageSha256", SourceInventory.hash(image, SourceInventory.Cancellation()))))
+            }
         }
         val profile = MenuProfile(json.toString())
         var menu: SpaceGuestMenu? = null
@@ -174,6 +188,18 @@ class GuestMenuDeviceTest {
                     scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-stamina").performClick() }
                     ready("jni-stamina")
                 }
+                if (abi == "x86_64") {
+                    assertFalse(GameActivity.canSprint())
+                    assertEquals(1f, GameActivity.getRunSpeed(), 0f)
+                    scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-sprint").performClick() }
+                    ready("jni-sprint"); assertTrue(GameActivity.canSprint())
+                    assertEquals("Boolean recipe must not affect float return", 1f, GameActivity.getRunSpeed(), 0f)
+                    scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-run-speed").performClick() }
+                    ready("jni-run-speed"); assertEquals(2f, GameActivity.getRunSpeed(), 0f)
+                    scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-sprint").performClick() }
+                    ready("jni-sprint"); assertFalse(GameActivity.canSprint())
+                    assertEquals("Boolean OFF must leave float ON", 2f, GameActivity.getRunSpeed(), 0f)
+                }
                 device.findObject(By.desc("Свернуть или открыть меню ModKit")).click()
                 scenario.onActivity { a ->
                     val root = a.window.decorView.findViewWithTag<View>("modkit-guest-menu")
@@ -198,6 +224,7 @@ class GuestMenuDeviceTest {
         assertEquals("Closing must restore the int-argument overload", 12, GameActivity.getAmmo(2))
         assertEquals("Closing must restore the long-argument overload", 22, GameActivity.getAmmo(4_294_967_298L))
         assertEquals("Unsupported reference-argument getter must remain untouched", 13, GameActivity.getBullets("slot"))
+        if (abi == "x86_64") { assertFalse(GameActivity.canSprint()); assertEquals(1f, GameActivity.getRunSpeed(), 0f) }
         assertEquals("The original guest APK must stay unchanged", before, SourceInventory.hash(original, SourceInventory.Cancellation()))
     }
     @Test fun delayedLoadCannotPublishIntoAReplacementSession() {

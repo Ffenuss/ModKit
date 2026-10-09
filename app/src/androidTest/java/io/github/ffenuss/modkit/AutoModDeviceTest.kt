@@ -276,8 +276,13 @@ class AutoModDeviceTest {
             assertTrue(patch.getLong("address") > 0)
             assertEquals(64, patch.getString("imageSha256").length)
             assertNotEquals(patch.getString("expected"), patch.getString("replacement"))
-            assertEquals(14, menu.runtimeRecipes)
-            assertEquals(14, getters.size)
+            assertEquals(24, menu.runtimeRecipes)
+            assertEquals(24, getters.size)
+            val x64Getters = getters.filter { it.getJSONObject("patch").getString("abi") == "x86_64" }
+            assertEquals(10, x64Getters.size)
+            assertEquals(setOf("Z", "B", "S", "C", "I", "J", "F", "D"), x64Getters.map { it.getString("evidence").takeLast(1) }.toSet())
+            assertEquals("b800000040660f6ec0c39090", x64Getters.single { it.getString("evidence").endsWith("->getRunSpeed()F") }.getJSONObject("patch").getString("replacement"))
+            assertEquals("b801000000c39090", x64Getters.single { it.getString("evidence").endsWith("->canSprint()Z") }.getJSONObject("patch").getString("replacement"))
             assertEquals(8, arm64Getters.size)
             assertEquals(6, arm32Getters.size)
             val arm32Health = arm32Getters.single { it.getString("evidence").endsWith("->getHealth()I") }

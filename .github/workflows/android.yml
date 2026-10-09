@@ -66,6 +66,7 @@ jobs:
           python -m pip install unicorn==2.1.4
           python tools/verify_arm64_vectors.py app/build/native-verification.tsv app/build/native-catalog-verification.tsv app/build/native-jni-verification.tsv
           python tools/verify_arm32_vectors.py app/build/native-arm32-verification.tsv
+          python tools/verify_x64_vectors.py app/build/native-x64-verification.tsv
 
       - name: Verify APK
         shell: bash

@@ -196,3 +196,25 @@ ARM_GETTER getMagazineSize, 50000
 ARM_GETTER getStamina, 11, 0
 ARM_GETTER getMoveSpeed, 0, 0x3ff00000
 #endif
+
+#if defined(__x86_64__)
+.text
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_canSprint
+.type Java_dev_modkit_nativefixture_GameActivity_canSprint, @function
+Java_dev_modkit_nativefixture_GameActivity_canSprint:
+    mov $0, %eax
+    ret
+    nop
+    nop
+.size Java_dev_modkit_nativefixture_GameActivity_canSprint, .-Java_dev_modkit_nativefixture_GameActivity_canSprint
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getRunSpeed
+.type Java_dev_modkit_nativefixture_GameActivity_getRunSpeed, @function
+Java_dev_modkit_nativefixture_GameActivity_getRunSpeed:
+    mov $0x3f800000, %eax
+    movd %eax, %xmm0
+    ret
+    .fill 6, 1, 0x90
+.size Java_dev_modkit_nativefixture_GameActivity_getRunSpeed, .-Java_dev_modkit_nativefixture_GameActivity_getRunSpeed
+#endif
