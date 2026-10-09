@@ -9,12 +9,15 @@ final class SpaceNativeController {
         boolean imageMatches(NativePatch patch) throws Exception;
         boolean bytesMatch(NativePatch patch, byte[] bytes);
         int write(NativePatch patch, byte[] expected, byte[] replacement);
+        default String unavailableReason(NativePatch patch) { return "Библиотека или версия ещё не подтверждена"; }
     }
     enum State { OFF, ON, UNAVAILABLE, ERROR }
     private final Backend backend;
     private final Map<String, NativePatch> patches = new HashMap<>();
     private final Map<String, State> states = new HashMap<>();
     private boolean closed;
+    private final Map<String, String> reasons = new HashMap<>();
+    synchronized String reason(String id) { return reasons.getOrDefault(id, "Библиотека или версия ещё не подтверждена"); }
     SpaceNativeController(MenuProfile profile, Backend backend) {
         this.backend = backend;
         for (MenuProfile.Item item : profile.items) if (item.patch != null) {
@@ -32,10 +35,12 @@ final class SpaceNativeController {
             if (before == State.ERROR) continue;
             try {
                 boolean matches = matchesState(entry.getValue(), before);
+                reasons.put(entry.getKey(), matches ? "" : backend.unavailableReason(entry.getValue()));
                 if (before == State.UNAVAILABLE) {
                     if (matches) states.put(entry.getKey(), State.OFF);
                 } else if (!matches) states.put(entry.getKey(), State.ERROR);
             } catch (Exception | LinkageError failure) {
+                reasons.put(entry.getKey(), "Исполнитель не смог подтвердить библиотеку и код");
                 if (before != State.UNAVAILABLE) states.put(entry.getKey(), State.ERROR);
             }
         }
@@ -54,11 +59,11 @@ final class SpaceNativeController {
             byte[] from = enabled ? patch.expected : patch.replacement;
             byte[] to = enabled ? patch.replacement : patch.expected;
             int result = backend.write(patch, from, to);
-            if (result == 1 && backend.bytesMatch(patch, to)) {
+            if (result == 1 && backend.imageMatches(patch) && backend.bytesMatch(patch, to)) {
                 states.put(id, enabled ? State.ON : State.OFF); return true;
             }
             // A rejected precondition may leave the known old state. A partial write is unknown.
-            states.put(id, result == 0 && backend.bytesMatch(patch, from) ? before : State.ERROR);
+            states.put(id, result == 0 && backend.imageMatches(patch) && backend.bytesMatch(patch, from) ? before : State.ERROR);
         } catch (Exception | LinkageError failure) { states.put(id, State.ERROR); }
         return false;
     }

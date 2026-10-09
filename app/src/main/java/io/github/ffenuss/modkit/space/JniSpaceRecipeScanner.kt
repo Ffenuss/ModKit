@@ -1,7 +1,6 @@
 package io.github.ffenuss.modkit.space
 
 import io.github.ffenuss.modkit.analysis.*
-import io.github.ffenuss.modkit.analysis.nativecode.AArch64ReadOnlyBody
 import io.github.ffenuss.modkit.patch.*
 import org.jf.dexlib2.AccessFlags
 import org.jf.dexlib2.Opcodes
@@ -19,7 +18,7 @@ internal object JniSpaceRecipeScanner {
         val longName get() = shortName + "__" + mangle(parameters.joinToString(""))
     }
     data class Recipe(val id: String, val title: String, val category: String, val evidence: String,
-        val module: String, val address: Long, val expected: String, val replacement: String, val imageSha256: String)
+        val module: String, val address: Long, val expected: String, val replacement: String, val imageSha256: String, val abi: String = "arm64-v8a")
     data class Scan(val recipes: List<Recipe>, val warnings: List<String>, val truncated: Boolean)
 
     // JNI escaping applies to UTF-16 code units, including each surrogate separately.
@@ -104,18 +103,18 @@ internal object JniSpaceRecipeScanner {
             DexLocalPatchEngine.nativeGameplayKind(it.owner, it.name, it.result) != null && declarationCounts[it.key] == 1 }
         if (candidates.isEmpty()) return Scan(emptyList(), warnings, truncated)
         if (truncated) return Scan(emptyList(), warnings + "JNI: неполный индекс деклараций; привязки не выдаются", true)
-        data class Image(val apk: File, val entry: String, val module: String)
+        data class Image(val apk: File, val entry: String, val module: String, val abi: String)
         val images = files.flatMap { apk -> ZipFile(apk).use { zip -> zip.entries().asSequence()
-            .filter { !it.isDirectory && Regex("lib/arm64-v8a/[^/]+\\.so").matches(it.name) }
-            .map { Image(apk, it.name, it.name.substringAfterLast('/')) }.toList() } }
+            .filter { !it.isDirectory && Regex("lib/(?:arm64-v8a|armeabi-v7a)/[^/]+\\.so").matches(it.name) }
+            .map { Image(apk, it.name, it.name.substringAfterLast('/'), it.name.split('/')[1]) }.toList() } }
         if (images.size > 64) return Scan(emptyList(), warnings + "JNI: слишком много библиотек; однозначность не доказана", true)
-        if (images.map { it.module }.distinct().size != images.size) return Scan(emptyList(), warnings + "JNI: неоднозначные имена библиотек", false)
+        if (images.map { it.abi to it.module }.distinct().size != images.size) return Scan(emptyList(), warnings + "JNI: неоднозначные имена библиотек", false)
         val found = mutableListOf<Triple<Method, String, Recipe>>()
         val owners = mutableMapOf<String, Int>()
         var incomplete = false
         val knownSymbols = candidates.flatMap { listOf(it.shortName, it.longName) }.toSet()
         temporaryRoot.mkdirs()
-        images.filter { img -> images.count { it.module == img.module } == 1 }.forEach { img ->
+        images.filter { img -> images.count { it.abi == img.abi && it.module == img.module } == 1 }.forEach { img ->
             check(signal)
             val extracted = File.createTempFile("jni-space-", ".so", temporaryRoot)
             try {
@@ -133,10 +132,17 @@ internal object JniSpaceRecipeScanner {
                 }
                 val imageHash = hex(digest.digest())
                 ElfImage.open(extracted, signal).use { elf ->
-                    require(elf.is64Bit && elf.machine == 183) { "Invalid ARM64 image" }
+                    require(elf.is64Bit == JniAbiRecipe.is64Bit(img.abi) && elf.machine == JniAbiRecipe.machine(img.abi)) { "ELF/ABI mismatch" }
+                    if (img.abi == "armeabi-v7a") {
+                        val flags = java.io.RandomAccessFile(extracted, "r").use { input ->
+                            input.seek(36); java.lang.Integer.reverseBytes(input.readInt())
+                        }
+                        // Only Android EABI5 base/softfp calling convention. Hard-float changes result registers.
+                        require(flags ushr 24 == 5 && flags and 0x600 == 0x200) { "Unsupported ARM calling convention" }
+                    }
                     val symbols = elf.dynamicSymbols.filter { it.defined && it.type == 2 && it.binding in 1..2 }
                     val exported = elf.dynamicSymbols.filter { it.defined && it.binding in 1..2 }.map { it.name }.toSet()
-                    exported.filter { it in knownSymbols }.forEach { owners[it] = (owners[it] ?: 0) + 1 }
+                    exported.filter { it in knownSymbols }.forEach { owners[img.abi + ":" + it] = (owners[img.abi + ":" + it] ?: 0) + 1 }
                     if (exported.none { it in knownSymbols }) return@use
                     // Inspect all APK libraries for ambiguity, but emit only identities accepted by the runtime contract.
                     if (img.module.length > 255 || !Regex("[A-Za-z0-9_-]+\\.so").matches(img.module)) {
@@ -145,36 +151,46 @@ internal object JniSpaceRecipeScanner {
                     candidates.forEach candidate@ { method ->
                         val name = exportName(method, overloadCounts, longNameCounts, exported) ?: return@candidate
                         val symbol = symbols.singleOrNull { it.name == name } ?: return@candidate
+                        if (img.abi == "armeabi-v7a" && symbol.value % 4L != 0L) {
+                            if (warnings.size < 32) warnings += "JNI armeabi-v7a ${method.name}: Thumb/interworking пока не поддерживается"
+                            return@candidate
+                        }
                         if (symbols.count { it.value == symbol.value } != 1 || symbol.value <= 0 || symbol.value > Long.MAX_VALUE - 64 || symbol.value % 4L != 0L ||
-                            symbol.size !in 8..1024 || symbol.size % 4L != 0L || !elf.isExecutableVa(symbol.value) ||
+                            symbol.size !in 4..1024 || symbol.size % 4L != 0L || !elf.isExecutableVa(symbol.value) ||
                             elf.fileOffsetForVa(symbol.value, symbol.size) == null) return@candidate
                         val code = elf.readFileWindowAtVa(symbol.value, symbol.size.toInt()) ?: return@candidate
-                        val proof = AArch64ReadOnlyBody.inspect(code)
-                        if (!proof.supported) return@candidate
+                        val proof = JniAbiRecipe.inspect(img.abi, code)
+                        if (!proof.supported) {
+                            if (warnings.size < 32) warnings += "JNI ${img.abi} ${method.name}: ${proof.reason}"
+                            return@candidate
+                        }
                         val kind = requireNotNull(DexLocalPatchEngine.nativeGameplayKind(method.owner, method.name, method.result))
                         val value = replacementValue(method.result, kind.second)
-                        val returnKind = requireNotNull(returnKind(method.result))
-                        val prefix = proof.entryLandingPad?.let { word -> (0..3).map { (word ushr (it * 8)).toByte() }.toByteArray() } ?: byteArrayOf()
-                        val replacement = prefix + Il2CppNativeMutationDraftBuilder.parseHex(AArch64ScalarReturnEncoder.encodeHex(returnKind, value))
+                        val replacement = JniAbiRecipe.encode(img.abi, method.result, value, proof.prefix) ?: return@candidate
                         if (replacement.size > symbol.size || replacement.size > 64 || replacement.contentEquals(code.copyOf(replacement.size)) ||
                             symbols.any { it.value > symbol.value && it.value < symbol.value + replacement.size }) return@candidate
                         val argumentLabel = if (method.parameters.isEmpty() && method.result !in setOf("B", "S", "C")) "" else
                             " · ${method.name}(${method.parameters.joinToString(", ") { requireNotNull(primitiveNames[it]) }})"
-                        found += Triple(method, name, Recipe("jni:" + hex(MessageDigest.getInstance("SHA-256").digest(method.key.toByteArray())), kind.first.label.substringBefore(" /") + " · значение $value" + argumentLabel,
+                        found += Triple(method, name, Recipe("jni:" + hex(MessageDigest.getInstance("SHA-256").digest((if (img.abi == "arm64-v8a") method.key else img.abi + ":" + method.key).toByteArray())), kind.first.label.substringBefore(" /") + " · значение $value" + argumentLabel,
                             kind.first.label.substringBefore(" /"), method.key, img.module, symbol.value,
-                            hex(code.copyOf(replacement.size)), hex(replacement), imageHash))
+                            hex(code.copyOf(replacement.size)), hex(replacement), imageHash, img.abi))
                     }
                 }
             } catch (error: Exception) {
                 if (error is AnalysisCancelledException) throw error
                 incomplete = true
-                warnings += "JNI: ${img.module}: ${error.javaClass.simpleName}"
+                warnings += "JNI ${img.abi}: ${img.module}: ${error.message ?: error.javaClass.simpleName}"
             } finally { extracted.delete() }
         }
         // The VM may search several loaded libraries. Never select an arbitrary matching export.
         if (incomplete) return Scan(emptyList(), warnings + "JNI: индекс библиотек не подтверждён", true)
-        val recipes = found.groupBy { it.first.key }.values.filter { it.size == 1 }.map { it.single() }
-            .filter { (method, name, _) -> name == exportName(method, overloadCounts, longNameCounts, owners.keys) && owners[name] == 1 }.map { it.third }
-        return Scan(recipes.take(128), warnings.distinct().take(32), recipes.size > 128)
+        val recipes = found.groupBy { it.third.abi to it.first.key }.values.filter { it.size == 1 }.map { it.single() }
+            .filter { (method, name, recipe) -> name == exportName(method, overloadCounts, longNameCounts,
+                owners.keys.filter { it.startsWith(recipe.abi + ":") }.map { it.substringAfter(':') }.toSet()) && owners[recipe.abi + ":" + name] == 1 }.map { it.third }
+        val nonOverlapping = recipes.filter { candidate -> recipes.none { other ->
+            other !== candidate && other.abi == candidate.abi && other.module == candidate.module &&
+                candidate.address < other.address + other.expected.length / 2 && other.address < candidate.address + candidate.expected.length / 2
+        } }
+        return Scan(nonOverlapping.take(128), warnings.distinct().take(32), nonOverlapping.size > 128)
     }
 }

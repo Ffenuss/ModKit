@@ -200,4 +200,57 @@ class GuestMenuDeviceTest {
         assertEquals("Unsupported reference-argument getter must remain untouched", 13, GameActivity.getBullets("slot"))
         assertEquals("The original guest APK must stay unchanged", before, SourceInventory.hash(original, SourceInventory.Cancellation()))
     }
+    @Test fun delayedLoadCannotPublishIntoAReplacementSession() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val app = instrumentation.targetContext.applicationContext as Application
+        val original = File(app.applicationInfo.sourceDir)
+        fun profile(label: String) = MenuProfile(JSONObject().put("schema", 1).put("backend", "none")
+            .put("packageName", app.packageName).put("label", label).put("genre", "Fixture")
+            .put("artifactSha256", "a".repeat(64)).put("truncated", false).put("engines", JSONArray())
+            .put("sources", JSONArray().put(JSONObject().put("sha256", SourceInventory.hash(original, SourceInventory.Cancellation()))
+                .put("size", original.length()))).put("items", JSONArray()).toString())
+        val stale = profile("Stale session")
+        val fresh = profile("Fresh session")
+        val session = SpaceGuestBootstrap.Session(app.packageName, 0, app, app.classLoader, true)
+        val device = UiDevice.getInstance(instrumentation)
+        for (fail in listOf(false, true)) {
+            val entered = java.util.concurrent.CountDownLatch(1)
+            val release = java.util.concurrent.CountDownLatch(1)
+            var old: SpaceGuestMenu? = null
+            var current: SpaceGuestMenu? = null
+            try {
+                instrumentation.runOnMainSync {
+                    old = SpaceGuestMenu.bind(app, session, object : SpaceGuestMenu.Inputs {
+                        override fun profile(): MenuProfile {
+                            entered.countDown()
+                            check(release.await(20, java.util.concurrent.TimeUnit.SECONDS))
+                            if (fail) error("Late loader failure")
+                            return stale
+                        }
+                        override fun sources() = listOf(original)
+                    })
+                }
+                assertTrue(entered.await(20, java.util.concurrent.TimeUnit.SECONDS))
+                // Exercise non-UI close: view cleanup must run on the main thread.
+                assertTrue(old!!.close())
+                instrumentation.runOnMainSync {
+                    current = SpaceGuestMenu.bind(app, session, object : SpaceGuestMenu.Inputs {
+                        override fun profile() = fresh
+                        override fun sources() = listOf(original)
+                    })
+                }
+                release.countDown()
+                ActivityScenario.launch(GameActivity::class.java).use { scenario ->
+                    assertTrue(device.wait(Until.hasObject(By.text("Fresh session")), 20000))
+                    assertFalse(device.hasObject(By.text("Stale session")))
+                    assertFalse(device.hasObject(By.text("Late loader failure")))
+                    scenario.onActivity { a -> assertEquals(1, count(a.window.decorView, "modkit-guest-menu")) }
+                }
+            } finally {
+                release.countDown()
+                instrumentation.runOnMainSync { if (current != null) assertTrue(current!!.close()); if (old != null) assertTrue(old!!.close()) }
+            }
+        }
+    }
+
 }

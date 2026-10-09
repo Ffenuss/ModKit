@@ -1887,7 +1887,7 @@ static int patch_code_status(
     if (module_name == NULL ||
             expected_bytes == NULL ||
             replacement_bytes == NULL ||
-            binary_virtual_address <= 0) {
+            binary_virtual_address <= 0 || (uint64_t)binary_virtual_address > UINTPTR_MAX) {
         return JNI_FALSE;
     }
 
@@ -2032,7 +2032,7 @@ JNIEXPORT jint JNICALL Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeB
 JNIEXPORT jboolean JNICALL Java_io_github_ffenuss_modkit_runtimeprobe_RuntimeNativeBridge_nativeCodeMatches(
         JNIEnv* env, jclass clazz, jstring module_name, jlong address, jbyteArray bytes) {
     (void)clazz;
-    if (!module_name || !bytes || address <= 0) return JNI_FALSE;
+    if (!module_name || !bytes || address <= 0 || (uint64_t)address > UINTPTR_MAX) return JNI_FALSE;
     jsize length = (*env)->GetArrayLength(env, bytes);
     if (length <= 0 || length > 64 || length % 4) return JNI_FALSE;
     const char* module = (*env)->GetStringUTFChars(env, module_name, NULL);

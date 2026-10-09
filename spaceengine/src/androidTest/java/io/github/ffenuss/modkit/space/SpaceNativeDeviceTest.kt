@@ -293,4 +293,26 @@ class SpaceNativeDeviceTest {
             assertThrows(Exception::class.java) { MenuProfile(duplicate.toString()) }
         } finally { original.delete() }
     }
+    @Test fun imageIdentityMustRemainValidAfterTheWrite() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val source = File(context.cacheDir, "post-write-identity").apply { writeText("owned") }
+        try {
+            val menu = MenuProfile(profile(source, patch("arm64-v8a", 16,
+                "e0008052c0035fd6", "e07c8052c0035fd6", "a".repeat(64))).toString())
+            val backend = MutableBackend(menu.items.single().patch!!)
+            val controller = SpaceNativeController(menu, backend)
+            backend.available = false
+            controller.refresh()
+            assertTrue(controller.reason("fixture-value").isNotBlank())
+            assertEquals(SpaceNativeController.State.UNAVAILABLE, controller.state("fixture-value"))
+            backend.available = true
+            controller.refresh()
+            assertEquals("", controller.reason("fixture-value"))
+            backend.beforeWrite = { backend.available = false }
+            assertFalse("Matching bytes cannot override changed image identity", controller.set("fixture-value", true))
+            assertEquals(SpaceNativeController.State.ERROR, controller.state("fixture-value"))
+            assertFalse(controller.close())
+        } finally { source.delete() }
+    }
+
 }

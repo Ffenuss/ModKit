@@ -54,7 +54,7 @@ object SpaceMenuCoordinator {
                 val jniIncluded = jni.recipes.take(128)
                 val warnings = (dex.warnings + jni.warnings + result.engineWarnings + result.index.warnings + preparation.globalBlockers).distinct().take(32).map { it.take(1000) }
                 val imageHashes = mutableMapOf<String, String>()
-                val patchRanges = jniIncluded.filter { it.module == "libil2cpp.so" }.map { it.address to (it.address + it.expected.length / 2) }.toMutableList()
+                val patchRanges = jniIncluded.filter { it.abi == "arm64-v8a" && it.module == "libil2cpp.so" }.map { it.address to (it.address + it.expected.length / 2) }.toMutableList()
                 val nativePatches = ordered.asSequence().mapNotNull { recipe ->
                     val candidate = recipe.native ?: return@mapNotNull null
                     if (!recipe.selectable || !recipe.verification.recipePrepared) return@mapNotNull null
@@ -96,21 +96,24 @@ object SpaceMenuCoordinator {
                     .put("coverage", JSONObject().put("apkCount", files.size).put("indexedEntries", fresh.entries.size)
                         .put("dexFilesExamined", dex.dexFilesExamined).put("dexMethodsExamined", dex.methodsExamined)
                         .put("dexMethodsWithCode", dex.methodsWithCode).put("exportedItems", included.size + jniIncluded.size)
-                        .put("executableItems", nativePatches.size + jniIncluded.size).put("universalDeepAnalysis", false))
+                        .put("executableItems", nativePatches.size + jniIncluded.size)
+                        .put("jniRecipeAbis", JSONArray(jniIncluded.map { it.abi }.distinct())).put("universalDeepAnalysis", false))
                     .put("truncated", result.index.truncated || recipes.size > included.size || jni.truncated || result.il2cppFastDump?.metadata?.truncated == true)
                     .put("warnings", JSONArray(warnings))
                     .put("sources", JSONArray(fresh.sources.map { JSONObject().put("sha256", it.sha256).put("size", it.size) }))
                     .put("items", JSONArray(jniIncluded.map { recipe -> JSONObject().put("id", recipe.id.take(512))
                         .put("title", recipe.title).put("category", recipe.category).put("evidence", recipe.evidence.take(512))
                         .put("state", "static_recipe").put("detail", "Проверены Java-сигнатура и JNI-экспорт без вызовов и записи состояния. Игровой эффект требует проверки.")
-                        .put("patch", JSONObject().put("module", recipe.module).put("abi", "arm64-v8a").put("address", recipe.address)
+                        .put("patch", JSONObject().put("module", recipe.module).put("abi", recipe.abi).put("address", recipe.address)
                             .put("expected", recipe.expected).put("replacement", recipe.replacement).put("imageSha256", recipe.imageSha256))
                     } + included.map { recipe -> JSONObject().put("id", recipe.id.take(512))
                         .put("title", recipe.title.take(180)).put("category", recipe.category.take(180))
                         .put("evidence", recipe.targetLabel.take(256))
                         .put("state", if (recipe.selectable && recipe.verification.recipePrepared) "static_recipe" else "candidate")
                         .put("patch", nativePatches[recipe.id] ?: JSONObject.NULL)
-                        .put("detail", (recipe.blocker ?: recipe.description).take(400)) }))
+                        .put("detail", (recipe.blocker ?: if (recipe.id !in nativePatches)
+                            "Для этого рецепта нет исполнителя внутри оригинального Space. DEX-изменения доступны через экспертное перепаковывание."
+                            else recipe.description).take(400)) }))
                 if (cancellation.isCancelled()) throw AnalysisCancelledException()
                 // Rehash after scanners; no profile may bind stale or changing source bytes.
                 val after = PortableArtifactIndexer.index(files, cancellation, progress).index

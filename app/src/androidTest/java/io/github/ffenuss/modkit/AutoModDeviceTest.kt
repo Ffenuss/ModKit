@@ -266,7 +266,9 @@ class AutoModDeviceTest {
             profile = File(menu.profilePath)
             val items = JSONObject(profile!!.readText()).getJSONArray("items")
             val getters = (0 until items.length()).map { items.getJSONObject(it) }.filter { it.getString("id").startsWith("jni:") }
-            val getter = getters.single { it.getString("evidence").endsWith("->getHealth()I") }
+            val arm64Getters = getters.filter { it.getJSONObject("patch").getString("abi") == "arm64-v8a" }
+            val arm32Getters = getters.filter { it.getJSONObject("patch").getString("abi") == "armeabi-v7a" }
+            val getter = arm64Getters.single { it.getString("evidence").endsWith("->getHealth()I") }
             assertTrue(getter.getString("evidence").endsWith("->getHealth()I"))
             val patch = getter.getJSONObject("patch")
             assertEquals("libmodkit_fixture.so", patch.getString("module"))
@@ -274,20 +276,27 @@ class AutoModDeviceTest {
             assertTrue(patch.getLong("address") > 0)
             assertEquals(64, patch.getString("imageSha256").length)
             assertNotEquals(patch.getString("expected"), patch.getString("replacement"))
-            assertEquals(8, menu.runtimeRecipes)
-            assertEquals(8, getters.size)
+            assertEquals(14, menu.runtimeRecipes)
+            assertEquals(14, getters.size)
+            assertEquals(8, arm64Getters.size)
+            assertEquals(6, arm32Getters.size)
+            val arm32Health = arm32Getters.single { it.getString("evidence").endsWith("->getHealth()I") }
+            assertEquals("0f0702e31eff2fe1", arm32Health.getJSONObject("patch").getString("replacement"))
+            assertNotEquals(getter.getString("id"), arm32Health.getString("id"))
+            assertEquals(setOf("getHealth()I", "getEnergy()B", "getMaxHealth()S", "getMagazineSize()C", "getStamina()J", "getMoveSpeed()D"),
+                arm32Getters.map { it.getString("evidence").substringAfter("->") }.toSet())
             for ((signature, expected, replacement) in listOf(
                     Triple("getEnergy()B", "c0008012c0035fd6", "e00f80d2c0035fd6"),
                     Triple("getMaxHealth()S", "60258012c0035fd6", "e0e184d2c0035fd6"),
                     Triple("getMagazineSize()C", "006a9852c0035fd6", "e0e184d2c0035fd6"))) {
-                val narrow = getters.single { it.getString("evidence").endsWith("->$signature") }
+                val narrow = arm64Getters.single { it.getString("evidence").endsWith("->$signature") }
                 assertEquals(expected, narrow.getJSONObject("patch").getString("expected"))
                 assertEquals(replacement, narrow.getJSONObject("patch").getString("replacement"))
                 assertTrue(narrow.getString("title").contains(signature.substringBefore('(')))
                 if (signature.endsWith("B")) assertTrue(narrow.getString("title").contains("значение 127"))
             }
-            val intAmmo = getters.single { it.getString("evidence").endsWith("->getAmmo(I)I") }
-            val longAmmo = getters.single { it.getString("evidence").endsWith("->getAmmo(J)I") }
+            val intAmmo = arm64Getters.single { it.getString("evidence").endsWith("->getAmmo(I)I") }
+            val longAmmo = arm64Getters.single { it.getString("evidence").endsWith("->getAmmo(J)I") }
             assertNotEquals(intAmmo.getString("id"), longAmmo.getString("id"))
             assertNotEquals("Overloads must have distinguishable menu labels", intAmmo.getString("title"), longAmmo.getString("title"))
             assertNotEquals(intAmmo.getJSONObject("patch").getLong("address"), longAmmo.getJSONObject("patch").getLong("address"))
@@ -295,8 +304,8 @@ class AutoModDeviceTest {
             assertEquals("40500011c0035fd6", longAmmo.getJSONObject("patch").getString("expected"))
             assertFalse("Reference arguments remain outside the primitive getter contract",
                 getters.any { it.getString("evidence").contains("->getBullets(") })
-            assertEquals("e0e184d2c0035fd6", getters.single { it.getString("evidence").endsWith("->getStamina()J") }.getJSONObject("patch").getString("replacement"))
-            assertEquals("0010601ec0035fd6", getters.single { it.getString("evidence").endsWith("->getMoveSpeed()D") }.getJSONObject("patch").getString("replacement"))
+            assertEquals("e0e184d2c0035fd6", arm64Getters.single { it.getString("evidence").endsWith("->getStamina()J") }.getJSONObject("patch").getString("replacement"))
+            assertEquals("0010601ec0035fd6", arm64Getters.single { it.getString("evidence").endsWith("->getMoveSpeed()D") }.getJSONObject("patch").getString("replacement"))
             val beforeItems = getters.associate { it.getString("id") to it.getJSONObject("patch").toString() }
             val beforeSources = JSONObject(profile!!.readText()).getJSONArray("sources").toString()
             io.github.ffenuss.modkit.space.SavedSpaceMenus.updateGenre(context, profile!!, io.github.ffenuss.modkit.analysis.GameGenre.RACING)
@@ -312,7 +321,7 @@ class AutoModDeviceTest {
             try {
                 java.util.zip.ZipFile(apk).use { input -> java.util.zip.ZipOutputStream(unsupported.outputStream()).use { output ->
                     input.entries().asSequence().forEach { entry ->
-                        val name = if (entry.name == "lib/arm64-v8a/libmodkit_fixture.so") "lib/arm64-v8a/libfixture.v1.so" else entry.name
+                        val name = if (entry.name.endsWith("/libmodkit_fixture.so")) entry.name.substringBeforeLast('/') + "/libfixture.v1.so" else entry.name
                         output.putNextEntry(java.util.zip.ZipEntry(name))
                         if (!entry.isDirectory) input.getInputStream(entry).use { it.copyTo(output) }
                         output.closeEntry()

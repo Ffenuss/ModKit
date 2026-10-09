@@ -9,7 +9,7 @@ JNIEXPORT jint JNICALL Java_dev_modkit_nativefixture_GameActivity_readNativeValu
     return modkit_fixture_value();
 }
 
-#if !defined(__aarch64__) && !defined(__x86_64__)
+#if !defined(__aarch64__) && !defined(__x86_64__) && !defined(__arm__)
 JNIEXPORT jbyte JNICALL Java_dev_modkit_nativefixture_GameActivity_getEnergy(JNIEnv* env, jclass type) {
     (void)env; (void)type; return -7;
 }
@@ -25,6 +25,8 @@ JNIEXPORT jlong JNICALL Java_dev_modkit_nativefixture_GameActivity_getStamina(JN
 JNIEXPORT jdouble JNICALL Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed(JNIEnv* env, jclass type) {
     (void)env; (void)type; return 1.0;
 }
+#endif
+#if !defined(__aarch64__) && !defined(__x86_64__)
 JNIEXPORT jint JNICALL Java_dev_modkit_nativefixture_GameActivity_getAmmo__I(JNIEnv* env, jclass type, jint slot) {
     (void)env; (void)type; return 10 + slot;
 }

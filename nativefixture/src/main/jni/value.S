@@ -172,3 +172,26 @@ Java_dev_modkit_nativefixture_GameActivity_getMagazineSize:
 #else
 .section .note.GNU-stack,"",@progbits
 #endif
+
+#if defined(__arm__)
+// ARM-state, base AAPCS/softfp fixtures. No padding is counted as function code.
+.macro ARM_GETTER name, low, high=-1
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_\name
+.type Java_dev_modkit_nativefixture_GameActivity_\name, %function
+Java_dev_modkit_nativefixture_GameActivity_\name:
+    movw r0, #(\low & 0xffff)
+    movt r0, #((\low >> 16) & 0xffff)
+.if \high != -1
+    movw r1, #(\high & 0xffff)
+    movt r1, #((\high >> 16) & 0xffff)
+.endif
+    bx lr
+.size Java_dev_modkit_nativefixture_GameActivity_\name, .-Java_dev_modkit_nativefixture_GameActivity_\name
+.endm
+ARM_GETTER getEnergy, 0xfffffff9
+ARM_GETTER getMaxHealth, 0xfffffed4
+ARM_GETTER getMagazineSize, 50000
+ARM_GETTER getStamina, 11, 0
+ARM_GETTER getMoveSpeed, 0, 0x3ff00000
+#endif

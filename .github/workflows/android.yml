@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [ main, audit/automod-reliability-20260924, fix/api29-packageinstaller-confirmation-20260925, fix/il2cpp-extraction-progress-20260925, feature/native-runtime-overlay-20260925, fix/il2cpp-validated-metadata-routing-20260925, feat/il2cpp-unbounded-disk-bindings-20260925, feat/unreal-asset-inventory-20260925, feat/flutter-asset-manifest-20260925, fix/elf-progress-watchdog-20260925, release/0.0.31-integrated-analyzers-20260926, feature/engine-run-diagnostics-20260926, feature/native-overlay-e2e-20260926, feature/dex-runtime-overlay-20260927, integration/road-to-1.0-20260929 ]
   workflow_dispatch:
+    inputs:
+      build_release:
+        description: 'Build final production APK only after validation'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -54,12 +59,13 @@ jobs:
           java -cp build/math-fixture VerifyMathFixture
 
       - name: Unit tests, lint, assemble
-        run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
+        run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 
       - name: Execute emitted ARM64 recipes independently
         run: |
           python -m pip install unicorn==2.1.4
           python tools/verify_arm64_vectors.py app/build/native-verification.tsv app/build/native-catalog-verification.tsv app/build/native-jni-verification.tsv
+          python tools/verify_arm32_vectors.py app/build/native-arm32-verification.tsv
 
       - name: Verify APK
         shell: bash
@@ -91,28 +97,6 @@ jobs:
           cp "$APK" ModKit-v0.0.46-debug.apk
           sha256sum ModKit-v0.0.46-debug.apk > ModKit-v0.0.46-debug.apk.sha256
 
-      - name: Verify unsigned release APK
-        shell: bash
-        run: |
-          set -euo pipefail
-          APK="app/build/outputs/apk/release/app-release-unsigned.apk"
-          test -s "$APK"
-          unzip -t "$APK" >/dev/null
-          "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
-          "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$APK" > release-badging.txt
-          grep -q "^package: name='io.github.ffenuss.modkit' " release-badging.txt
-          cp "$APK" ModKit-v0.0.46-unsigned.apk
-          sha256sum ModKit-v0.0.46-unsigned.apk > ModKit-v0.0.46-unsigned.apk.sha256
-
-      - name: Upload unsigned release for existing maintainer key
-        uses: actions/upload-artifact@v4
-        with:
-          name: ModKit-v0.0.46-unsigned
-          path: |
-            ModKit-v0.0.46-unsigned.apk
-            ModKit-v0.0.46-unsigned.apk.sha256
-          if-no-files-found: error
-
       - name: Upload test and lint reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -124,15 +108,6 @@ jobs:
             app/build/reports/lint-results-debug.*
             apk-signature-verification.txt
             app/build/native*verification.*
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ModKit-v0.0.46-debug
-          path: |
-            ModKit-v0.0.46-debug.apk
-            ModKit-v0.0.46-debug.apk.sha256
-          if-no-files-found: error
 
   device:
     runs-on: ubuntu-latest
@@ -191,3 +166,44 @@ jobs:
             app/build/outputs/androidTest-results/
             device-validation/
             device-logcat.txt
+
+  release:
+    if: github.event_name == 'workflow_dispatch' && inputs.build_release
+    needs: [build, device]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - name: Install final build SDK and NDK
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
+          "$SDKMANAGER" "platforms;android-37.0" "build-tools;36.0.0" "ndk;28.2.13676358"
+      - name: Assemble final production package
+        run: gradle --no-daemon :app:assembleRelease
+      - name: Verify unsigned release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$APK" > release-badging.txt
+          grep -q "^package: name='io.github.ffenuss.modkit' " release-badging.txt
+          cp "$APK" ModKit-v0.0.46-unsigned.apk
+          sha256sum ModKit-v0.0.46-unsigned.apk > ModKit-v0.0.46-unsigned.apk.sha256
+
+      - name: Upload unsigned release for existing maintainer key
+        uses: actions/upload-artifact@v4
+        with:
+          name: ModKit-v0.0.46-unsigned
+          path: |
+            ModKit-v0.0.46-unsigned.apk
+            ModKit-v0.0.46-unsigned.apk.sha256
+          if-no-files-found: error
