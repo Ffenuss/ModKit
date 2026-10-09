@@ -21,21 +21,31 @@ final class SpaceNativeController {
         }
     }
     synchronized State state(String id) { return states.getOrDefault(id, State.UNAVAILABLE); }
+    private boolean matchesState(NativePatch patch, State state) throws Exception {
+        return backend.imageMatches(patch) && backend.bytesMatch(patch,
+            state == State.ON ? patch.replacement : patch.expected);
+    }
     synchronized void refresh() {
         for (Map.Entry<String, NativePatch> entry : patches.entrySet()) {
-            if (state(entry.getKey()) != State.UNAVAILABLE) continue;
+            State before = state(entry.getKey());
+            if (before == State.ERROR) continue;
             try {
-                if (backend.imageMatches(entry.getValue()) && backend.bytesMatch(entry.getValue(), entry.getValue().expected))
-                    states.put(entry.getKey(), State.OFF);
-            } catch (Exception | LinkageError ignored) { }
+                boolean matches = matchesState(entry.getValue(), before);
+                if (before == State.UNAVAILABLE) {
+                    if (matches) states.put(entry.getKey(), State.OFF);
+                } else if (!matches) states.put(entry.getKey(), State.ERROR);
+            } catch (Exception | LinkageError failure) {
+                if (before != State.UNAVAILABLE) states.put(entry.getKey(), State.ERROR);
+            }
         }
     }
     synchronized boolean set(String id, boolean enabled) {
         NativePatch patch = patches.get(id); State before = state(id);
         if (patch == null || before == State.ERROR || before == State.UNAVAILABLE) return false;
-        if ((before == State.ON) == enabled) return true;
         try {
-            if (!backend.imageMatches(patch)) { states.put(id, State.ERROR); return false; }
+            // Even an idempotent request must confirm the live image and bytes.
+            if (!matchesState(patch, before)) { states.put(id, State.ERROR); return false; }
+            if ((before == State.ON) == enabled) return true;
             byte[] from = enabled ? patch.expected : patch.replacement;
             byte[] to = enabled ? patch.replacement : patch.expected;
             int result = backend.write(patch, from, to);
@@ -48,6 +58,8 @@ final class SpaceNativeController {
         return false;
     }
     synchronized boolean restoreAll() {
+        // OFF is also evidence: do not report a clean session if its code drifted.
+        refresh();
         boolean restored = true;
         for (String id : patches.keySet()) {
             if (state(id) == State.ON) restored &= set(id, false);

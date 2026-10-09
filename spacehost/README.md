@@ -125,3 +125,9 @@ JNI preparation reads native Java declarations from original APK/split DEX files
 The guest menu can collapse and drag within screen insets. Its position persists across Activity recreation, lifecycle callbacks remove old views, busy switches prevent duplicate writes, and late-loaded native libraries are periodically rechecked. No additional visible controls are added.
 
 `GuestMenuDeviceTest` uses production overlay/controller code in the original owned `nativefixture` process. It checks the real native value, switch ON/OFF, Activity recreation, one overlay, collapse/drag bounds, restoration and unchanged source APK. This is distinct from proprietary virtual-kernel/Google sign-in verification on a phone. `AutoModDeviceTest` independently checks an executable JNI profile exported from an original APK without IL2CPP.
+
+### Live recipe state verification (2026-10-09)
+
+Capability refresh now rechecks confirmed OFF and ON recipes against the loaded image and actual code bytes. Repeated switch requests also verify their state before returning success. Restore-all revalidates inactive recipes before reporting a clean session. Changed bytes, a missing image or a failed image lookup invalidate confirmed states; the controller latches ERROR without overwriting foreign code. Unavailable recipes can still become ready when their libraries load later.
+
+Local Java 8-target compilation and an isolated JVM harness against the production controller passed 11 scenarios covering code drift, image loss/failure, late loading, repeated requests and normal restore. The same harness fails against the previous controller. Eight Python source tests passed; proprietary-reference tests were skipped because the reference APK is absent. New Android regressions exercise the real menu model but have not yet run in this environment. No new APK or phone validation is claimed.
