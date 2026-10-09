@@ -3,6 +3,7 @@ package io.github.ffenuss.modkit.patch
 import org.jf.dexlib2.AccessFlags
 import org.jf.dexlib2.Opcode
 import org.jf.dexlib2.iface.instruction.Instruction
+import org.jf.dexlib2.iface.reference.MethodReference
 import org.jf.dexlib2.immutable.*
 import org.jf.dexlib2.immutable.instruction.*
 import org.jf.dexlib2.immutable.reference.ImmutableMethodReference
@@ -11,9 +12,9 @@ import org.junit.Test
 
 class DexPureMathCallTest {
     private fun reference(name: String, type: String, owner: String = "Ljava/lang/Math;",
-                          parameters: List<String> = List(if (name == "min" || name == "max") 2 else 1) { type }) =
+                          parameters: List<String> = List(if (name == "min" || name == "max") 2 else 1) { type }): MethodReference =
         ImmutableMethodReference(owner, name, parameters, type)
-    private fun call(reference: ImmutableMethodReference, registers: List<Int>, range: Boolean = false,
+    private fun call(reference: MethodReference, registers: List<Int>, range: Boolean = false,
                      opcode: Opcode = Opcode.INVOKE_STATIC): Instruction = if (range)
         ImmutableInstruction3rc(Opcode.INVOKE_STATIC_RANGE, registers.first(), registers.size, reference)
         else (registers + List(5 - registers.size) { 0 }).let {
