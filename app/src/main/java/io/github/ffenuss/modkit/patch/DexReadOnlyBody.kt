@@ -21,6 +21,12 @@ object DexReadOnlyBody {
         var position = 0
         code.forEachIndexed { index, instruction -> addresses[index] = position; position += instruction.codeUnits }
         val indices = addresses.withIndex().associate { it.value to it.index }
+        // Switch offsets are relative to the opcode, not its data table. Use
+        // Long arithmetic so malformed signed offsets cannot wrap into the body.
+        fun target(index: Int, offset: Int): Int? {
+            val address = addresses[index].toLong() + offset
+            return if (address in 0L until position.toLong()) indices[address.toInt()] else null
+        }
         val states = IntArray(code.size)
         val successors = Array(code.size) { emptyList<Int>() }
         val postorder = ArrayList<Int>()
@@ -37,6 +43,7 @@ object DexReadOnlyBody {
                 op == DexScalarReplacement.returnOpcode(method.returnType) -> Flow(a = if (DexScalarReplacement.isWide(method.returnType)) 2 else 1)
                 op in unconditional || op == Opcode.NOP -> Flow()
                 op in jumps -> Flow(a = 1, b = if (instruction is TwoRegisterInstruction) 1 else 0)
+                op in switches -> Flow(a = 1)
                 op in reads -> Flow(write = if (op in wideReads) 2 else 1)
                 else -> registerFlows[op]
             } ?: run { reason = "Нужен анализ ${op.name}: возможны вызовы или побочные эффекты."; return false }
@@ -54,9 +61,31 @@ object DexReadOnlyBody {
             when {
                 op == DexScalarReplacement.returnOpcode(method.returnType) -> { returns++; next = emptyList() }
                 op in jumps -> {
-                    val destination = indices[addresses[index] + (instruction as OffsetInstruction).codeOffset]
+                    val destination = target(index, (instruction as OffsetInstruction).codeOffset)
                     if (destination == null) { reason = "Переход не указывает на начало инструкции."; return false }
                     next = if (op in unconditional) listOf(destination) else listOf(index + 1, destination)
+                }
+                op in switches -> {
+                    val tableIndex = target(index, (instruction as OffsetInstruction).codeOffset)
+                    val table = tableIndex?.let { code[it] as? SwitchPayload }
+                    val expected = if (op == Opcode.PACKED_SWITCH) Opcode.PACKED_SWITCH_PAYLOAD else Opcode.SPARSE_SWITCH_PAYLOAD
+                    if (tableIndex == null || addresses[tableIndex] % 2 != 0 || table == null || table.opcode != expected) {
+                        reason = "Таблица switch отсутствует, имеет неверный тип или выравнивание."; return false
+                    }
+                    val elements = table.switchElements.take(257)
+                    if (elements.size > 256 || elements.zipWithNext().any { (a, b) ->
+                            if (op == Opcode.PACKED_SWITCH) b.key.toLong() != a.key.toLong() + 1
+                            else b.key <= a.key
+                        }) {
+                        reason = "Таблица switch слишком велика или ключи некорректны."; return false
+                    }
+                    val destinations = elements.map { target(index, it.offset) }
+                    if (destinations.any { it == null }) {
+                        reason = "Ветвь switch не указывает на начало инструкции."; return false
+                    }
+                    // Include the no-match path even when every listed case returns.
+                    // Data tables themselves must never enter the executable CFG.
+                    next = (listOf(index + 1) + destinations.filterNotNull()).distinct()
                 }
                 op in reads -> {
                     val field = (instruction as ReferenceInstruction).reference as? FieldReference ?: return false
@@ -128,6 +157,7 @@ object DexReadOnlyBody {
     private const val LOW = 3
     private const val HIGH = 4
     private val unconditional = setOf(Opcode.GOTO, Opcode.GOTO_16, Opcode.GOTO_32)
+    private val switches = setOf(Opcode.PACKED_SWITCH, Opcode.SPARSE_SWITCH)
     private val jumps = unconditional + setOf(Opcode.IF_EQ, Opcode.IF_NE, Opcode.IF_LT, Opcode.IF_GE,
         Opcode.IF_GT, Opcode.IF_LE, Opcode.IF_EQZ, Opcode.IF_NEZ, Opcode.IF_LTZ, Opcode.IF_GEZ, Opcode.IF_GTZ, Opcode.IF_LEZ)
     private val instanceReads = setOf(Opcode.IGET, Opcode.IGET_BOOLEAN, Opcode.IGET_BYTE, Opcode.IGET_CHAR, Opcode.IGET_SHORT, Opcode.IGET_WIDE)

@@ -12,6 +12,7 @@ public final class GameActivity extends Activity {
     private TextView state;
     private TextView distance;
     private TextView wideStats;
+    private int mode;
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         player = new PlayerStats();
@@ -38,14 +39,19 @@ public final class GameActivity extends Activity {
         layout.addView(sprint);
         Button reset = new Button(this);
         reset.setText("Reset");
-        reset.setOnClickListener(v -> { player = new PlayerStats(); showState(); });
+        reset.setOnClickListener(v -> { player = new PlayerStats(); mode = 0; showState(); });
         layout.addView(reset);
+        Button nextMode = new Button(this);
+        nextMode.setText("Next mode");
+        nextMode.setOnClickListener(v -> { mode = (mode + 1) % 4; showState(); });
+        layout.addView(nextMode);
         setContentView(layout);
         showState();
     }
     private void showState() {
         state.setText((player.isDead() ? "GAME OVER" : "ALIVE") + " | Health: " + player.getHealth());
         distance.setText("Distance: " + player.distance());
-        wideStats.setText("Ammo: " + player.getAmmo(4294967298L) + " | Speed: " + PlayerStats.getRunSpeed(4294967299L, 2.0, 4294967298L));
+        int speedMode = mode == 1 ? 100 : mode == 2 ? 1000 : mode;
+        wideStats.setText("Ammo: " + player.getAmmo(4294967298L, mode) + " | Speed: " + PlayerStats.getRunSpeed(4294967299L, 2.0, 4294967298L, speedMode));
     }
 }

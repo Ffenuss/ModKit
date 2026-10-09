@@ -14,6 +14,7 @@ import io.github.ffenuss.modkit.ui.AutoModBuildRecord
 import java.io.File
 import java.security.MessageDigest
 import java.util.regex.Pattern
+import java.util.zip.ZipFile
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -37,13 +38,23 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             val root = File(context.filesDir, "dex-overlay-validation").apply { mkdirs() }
             val source = File(root, "fixture.apk")
             instrumentation.context.assets.open("fixture.apk").use { input -> source.outputStream().use { input.copyTo(it) } }
+            ZipFile(source).use { archive ->
+                val dex = org.jf.dexlib2.dexbacked.DexBackedDexFile(null,
+                    archive.getInputStream(requireNotNull(archive.getEntry("classes.dex"))).use { it.readBytes() })
+                val methods = dex.classes.single { it.type == "Ldev/modkit/fixture/PlayerStats;" }.methods.toList()
+                for ((name, opcode) in listOf("getAmmo" to org.jf.dexlib2.Opcode.PACKED_SWITCH,
+                        "getRunSpeed" to org.jf.dexlib2.Opcode.SPARSE_SWITCH)) {
+                    assertTrue("Owned fixture must execute $opcode", methods.single { it.name == name }
+                        .implementation!!.instructions.any { it.opcode == opcode })
+                }
+            }
             val analysis = FastArtifactIndexer.index(listOf(source), signal, progress)
             val scan = DexLocalPatchEngine.scanApks(listOf(source), false, signal)
             val recipes = DexRecipeCatalog.create(scan)
             val health = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getHealth" } }
             val sprint = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "canSprint" } }
-            val ammo = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getAmmo" && m.signature == "(J)J" } }
-            val speed = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getRunSpeed" && m.signature == "(JDJ)D" } }
+            val ammo = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getAmmo" && m.signature == "(JI)J" } }
+            val speed = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getRunSpeed" && m.signature == "(JDJI)D" } }
             assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, ammo.dex.single().bodyKind)
             assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, speed.dex.single().bodyKind)
             assertEquals(2, health.dex.size)
@@ -95,18 +106,33 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
 
             stage = "wide-getters"
             expect("Ammo: 4294967298 | Speed: 1.25", "wide-original-beyond-int-range")
+            for (mode in 1..3) {
+                action("Next mode")
+                expect("Ammo: ${4294967298L + mode} | Speed: ${1.25 + mode}", "switch-original-case-$mode")
+            }
+            action("Reset")
             toggle(ammo.title, true)
             action("Reset")
             expect("Ammo: 9999 | Speed: 1.25", "long-enabled-double-original")
             toggle(speed.title, true)
             action("Reset")
             expect("Ammo: 9999 | Speed: 2.0", "wide-both-enabled")
+            for (mode in 1..3) {
+                action("Next mode")
+                expect("Ammo: 9999 | Speed: 2.0", "switch-both-enabled-case-$mode")
+            }
+            action("Reset")
             toggle(ammo.title, false)
             action("Reset")
             expect("Ammo: 4294967298 | Speed: 2.0", "long-restored-double-independent")
             toggle(speed.title, false)
             action("Reset")
             expect("Ammo: 4294967298 | Speed: 1.25", "wide-original-restored")
+            for (mode in 1..3) {
+                action("Next mode")
+                expect("Ammo: ${4294967298L + mode} | Speed: ${1.25 + mode}", "switch-restored-case-$mode")
+            }
+            action("Reset")
 
             stage = "enable-health"
             toggle(health.title, true)
