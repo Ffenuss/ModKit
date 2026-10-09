@@ -326,16 +326,30 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
         context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(fixture)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         assertTrue(device.wait(Until.hasObject(By.textContains("Health:")), 15_000))
     }
+    private fun clearAccessibilityCache() {
+        // A resized/replaced overlay can remain visible while UiAutomation's
+        // cached window list omits it (captured on API29 and API35). Refresh
+        // observations only: never repeat a click or assume the requested state.
+        // API34 exposes clearCache; on older APIs AOSP setServiceInfo clears the
+        // connection cache before resending the unchanged service configuration.
+        val automation = instrumentation.uiAutomation
+        if (Build.VERSION.SDK_INT >= 34) automation.clearCache()
+        else automation.serviceInfo = automation.serviceInfo
+    }
     private fun openPanel() {
+        clearAccessibilityCache()
         if (!device.hasObject(By.text("ModKit · моды"))) requireNotNull(device.wait(Until.findObject(bubble), 10_000)).click()
+        clearAccessibilityCache()
         assertTrue("DEX panel must open", device.wait(Until.hasObject(By.text("ModKit · моды")), 10_000))
     }
     private fun closePanel() {
+        clearAccessibilityCache()
         // Reconfiguration and acknowledged switches announce a new subtree.
         // Android 29 can briefly omit a visible bubble from accessibility lookup.
         requireNotNull(device.wait(Until.findObject(bubble), 10_000)) {
             "MK button must remain available after the switch state settles"
         }.click()
+        clearAccessibilityCache()
         assertTrue("DEX panel must collapse", device.wait(Until.gone(By.text("ModKit · моды")), 10_000))
     }
     private fun assertExternalOnly(event: String) {
