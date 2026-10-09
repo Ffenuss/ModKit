@@ -51,11 +51,10 @@ object SpaceMenuCoordinator {
                         .let { if (it < 0) Int.MAX_VALUE else it }
                 }.thenBy { it.id })
                 val jniIncluded = jni.recipes.take(128)
-                val included = ordered.take(128 - jniIncluded.size)
                 val warnings = (dex.warnings + jni.warnings + result.engineWarnings + result.index.warnings + preparation.globalBlockers).distinct().take(32).map { it.take(1000) }
                 val imageHashes = mutableMapOf<String, String>()
                 val patchRanges = jniIncluded.filter { it.module == "libil2cpp.so" }.map { it.address to (it.address + it.expected.length / 2) }.toMutableList()
-                val nativePatches = included.mapNotNull { recipe ->
+                val nativePatches = ordered.asSequence().mapNotNull { recipe ->
                     val candidate = recipe.native ?: return@mapNotNull null
                     if (!recipe.selectable || !recipe.verification.recipePrepared) return@mapNotNull null
                     runCatching {
@@ -85,7 +84,8 @@ object SpaceMenuCoordinator {
                             .put("address", address).put("expected", hex(expected)).put("replacement", hex(replacement))
                             .put("imageSha256", imageHash)
                     }.getOrElse { error -> if (error is AnalysisCancelledException) throw error; null }
-                }.toMap()
+                }.take(128 - jniIncluded.size).toMap()
+                val included = SpaceMenuSelection.select(ordered, 128 - jniIncluded.size) { it.id in nativePatches }
                 val profile = JSONObject().put("schema", 2).put("packageName", pkg).put("label", target.label.take(180))
                     .put("artifactSha256", result.index.artifactSha256).put("backend", "native_v1")
                     .put("genre", plan.genre.genre.title).put("genreEvidence", JSONArray(plan.genre.evidence.map { it.take(256) }))
@@ -93,7 +93,8 @@ object SpaceMenuCoordinator {
                     .put("priorities", JSONArray(plan.searchPriorities))
                     .put("coverage", JSONObject().put("apkCount", files.size).put("indexedEntries", fresh.entries.size)
                         .put("dexFilesExamined", dex.dexFilesExamined).put("dexMethodsExamined", dex.methodsExamined)
-                        .put("dexMethodsWithCode", dex.methodsWithCode).put("universalDeepAnalysis", false))
+                        .put("dexMethodsWithCode", dex.methodsWithCode).put("exportedItems", included.size + jniIncluded.size)
+                        .put("executableItems", nativePatches.size + jniIncluded.size).put("universalDeepAnalysis", false))
                     .put("truncated", result.index.truncated || recipes.size > included.size || jni.truncated || result.il2cppFastDump?.metadata?.truncated == true)
                     .put("warnings", JSONArray(warnings))
                     .put("sources", JSONArray(fresh.sources.map { JSONObject().put("sha256", it.sha256).put("size", it.size) }))

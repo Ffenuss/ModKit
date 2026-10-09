@@ -12,9 +12,17 @@ class GameAnalysisPlannerTest {
         assertTrue("Боезапас" in plan.searchPriorities)
     }
     @Test fun genericOrAmbiguousSignalsDoNotAssertGenre() {
+        assertEquals(GameGenre.UNKNOWN, GameAnalysisPlanner.plan(index, listOf("AmmoReload")).genre.genre)
+        assertEquals(GameGenre.UNKNOWN, GameAnalysisPlanner.plan(index, List(1000) { "AmmoReload" }).genre.genre)
         assertEquals(GameGenre.UNKNOWN, GameAnalysisPlanner.plan(index, List(1000) { "GetAmmo" }).genre.genre)
         assertEquals(GameGenre.UNKNOWN, GameAnalysisPlanner.plan(index, listOf("Ammo", "Reload", "Quest", "Inventory")).genre.genre)
         assertEquals(GameGenre.UNKNOWN, GameAnalysisPlanner.plan(index, listOf("Health", "Speed", "Update")).genre.genre)
+    }
+    @Test fun compoundAndAcronymNamesKeepIndependentSymbolEvidence() {
+        val rpg = GameAnalysisPlanner.plan(index, listOf("getSkillTree", "getQuest"))
+        assertEquals(GameGenre.RPG, rpg.genre.genre)
+        assertEquals(listOf("getSkillTree", "getQuest"), rpg.genre.evidence)
+        assertEquals(GameGenre.SHOOTER, GameAnalysisPlanner.plan(index, listOf("HUDRecoil", "getAmmo")).genre.genre)
     }
     @Test fun engineDetectionRemainsIndependentFromGenreAndCoverageIsExplicit() {
         val runtime = RuntimeProfile("flutter", "Flutter", DetectionStatus.LIKELY, DetectionConfidence.MEDIUM, listOf("base:libflutter.so"))

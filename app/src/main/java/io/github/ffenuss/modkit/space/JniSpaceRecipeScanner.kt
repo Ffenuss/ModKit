@@ -31,10 +31,19 @@ internal object JniSpaceRecipeScanner {
         })
     }
     fun exportName(method: Method, declarations: List<Method>, exported: Set<String>): String? {
+        return exportName(method, declarations.groupingBy { it.owner to it.name }.eachCount(), exported)
+    }
+    private fun exportName(method: Method, overloadCounts: Map<Pair<String, String>, Int>, exported: Set<String>): String? {
         if (method.shortName in exported) return method.shortName.takeIf {
-            declarations.count { it.owner == method.owner && it.name == method.name } == 1
+            overloadCounts[method.owner to method.name] == 1
         }
         return method.longName.takeIf { it in exported }
+    }
+    internal fun returnKind(result: String): Il2CppNativeReturnKind? = when (result) {
+        "Z", "I", "J" -> Il2CppNativeReturnKind.INTEGER
+        "F" -> Il2CppNativeReturnKind.FLOAT32
+        "D" -> Il2CppNativeReturnKind.FLOAT64
+        else -> null
     }
     private fun check(signal: CancellationSignal) { if (signal.isCancelled()) throw AnalysisCancelledException() }
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
@@ -65,8 +74,10 @@ internal object JniSpaceRecipeScanner {
                 } }
             }
         } }
-        val candidates = declarations.filter { it.parameters.isEmpty() && DexLocalPatchEngine.nativeGameplayKind(it.owner, it.name, it.result) != null }
-            .filter { m -> declarations.count { it.key == m.key } == 1 }
+        val declarationCounts = declarations.groupingBy { it.key }.eachCount()
+        val overloadCounts = declarations.groupingBy { it.owner to it.name }.eachCount()
+        val candidates = declarations.filter { it.parameters.isEmpty() && returnKind(it.result) != null &&
+            DexLocalPatchEngine.nativeGameplayKind(it.owner, it.name, it.result) != null && declarationCounts[it.key] == 1 }
         if (candidates.isEmpty()) return Scan(emptyList(), warnings, truncated)
         if (truncated) return Scan(emptyList(), warnings + "JNI: неполный индекс деклараций; привязки не выдаются", true)
         data class Image(val apk: File, val entry: String, val module: String)
@@ -108,7 +119,7 @@ internal object JniSpaceRecipeScanner {
                         warnings += "JNI: неподдерживаемое имя библиотеки: ${img.module}"; return@use
                     }
                     candidates.forEach candidate@ { method ->
-                        val name = exportName(method, declarations, exported) ?: return@candidate
+                        val name = exportName(method, overloadCounts, exported) ?: return@candidate
                         val symbol = symbols.singleOrNull { it.name == name } ?: return@candidate
                         if (symbols.count { it.value == symbol.value } != 1 || symbol.value <= 0 || symbol.value > Long.MAX_VALUE - 64 || symbol.value % 4L != 0L ||
                             symbol.size !in 8..1024 || symbol.size % 4L != 0L || !elf.isExecutableVa(symbol.value) ||
@@ -119,7 +130,7 @@ internal object JniSpaceRecipeScanner {
                         val kind = requireNotNull(DexLocalPatchEngine.nativeGameplayKind(method.owner, method.name, method.result))
                         val value = when (kind.second) { DexLocalAction.TRUE -> "1"; DexLocalAction.FALSE -> "0";
                             DexLocalAction.INT_9999 -> "9999"; DexLocalAction.INT_99 -> "99"; DexLocalAction.FLOAT_2 -> "2" }
-                        val returnKind = if (method.result == "F") Il2CppNativeReturnKind.FLOAT32 else Il2CppNativeReturnKind.INTEGER
+                        val returnKind = requireNotNull(returnKind(method.result))
                         val prefix = proof.entryLandingPad?.let { word -> (0..3).map { (word ushr (it * 8)).toByte() }.toByteArray() } ?: byteArrayOf()
                         val replacement = prefix + Il2CppNativeMutationDraftBuilder.parseHex(AArch64ScalarReturnEncoder.encodeHex(returnKind, value))
                         if (replacement.size > symbol.size || replacement.size > 64 || replacement.contentEquals(code.copyOf(replacement.size)) ||
@@ -138,7 +149,7 @@ internal object JniSpaceRecipeScanner {
         // The VM may search several loaded libraries. Never select an arbitrary matching export.
         if (incomplete) return Scan(emptyList(), warnings + "JNI: индекс библиотек не подтверждён", true)
         val recipes = found.groupBy { it.first.key }.values.filter { it.size == 1 }.map { it.single() }
-            .filter { (method, name, _) -> name == exportName(method, declarations, owners.keys) && owners[name] == 1 }.map { it.third }
+            .filter { (method, name, _) -> name == exportName(method, overloadCounts, owners.keys) && owners[name] == 1 }.map { it.third }
         return Scan(recipes.take(128), warnings.distinct().take(32), recipes.size > 128)
     }
 }

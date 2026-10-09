@@ -12,6 +12,8 @@ public final class GameActivity extends Activity {
     static { System.loadLibrary("modkit_fixture"); }
     private static native int readNativeValue();
     public static native int getHealth();
+    public static native long getStamina();
+    public static native double getMoveSpeed();
     private TextView value;
 
     @Override public void onCreate(Bundle saved) {

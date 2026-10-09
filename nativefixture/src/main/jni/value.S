@@ -48,6 +48,23 @@ Java_dev_modkit_nativefixture_GameActivity_getHealth:
     nop
 #endif
 .size Java_dev_modkit_nativefixture_GameActivity_getHealth, .-Java_dev_modkit_nativefixture_GameActivity_getHealth
+#if defined(__aarch64__)
+// Wide typed getters exercise x0 and d0 independently of the int/float return ABI.
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getStamina
+.type Java_dev_modkit_nativefixture_GameActivity_getStamina, %function
+Java_dev_modkit_nativefixture_GameActivity_getStamina:
+    mov x0, #11
+    ret
+.size Java_dev_modkit_nativefixture_GameActivity_getStamina, .-Java_dev_modkit_nativefixture_GameActivity_getStamina
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed
+.type Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed, %function
+Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed:
+    fmov d0, #1.0
+    ret
+.size Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed, .-Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed
+#endif
 #if defined(__aarch64__) || defined(__arm__)
 .section .note.GNU-stack,"",%progbits
 #else

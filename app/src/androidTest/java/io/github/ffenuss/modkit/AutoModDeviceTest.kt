@@ -240,7 +240,8 @@ class AutoModDeviceTest {
                 AnalysisTargetDescriptor.InstalledPackage("dev.modkit.nativefixture", "Owned JNI fixture"), result, signal, progress, workspace)
             profile = File(menu.profilePath)
             val items = JSONObject(profile!!.readText()).getJSONArray("items")
-            val getter = (0 until items.length()).map { items.getJSONObject(it) }.single { it.getString("id").startsWith("jni:") }
+            val getters = (0 until items.length()).map { items.getJSONObject(it) }.filter { it.getString("id").startsWith("jni:") }
+            val getter = getters.single { it.getString("evidence").endsWith("->getHealth()I") }
             assertTrue(getter.getString("evidence").endsWith("->getHealth()I"))
             val patch = getter.getJSONObject("patch")
             assertEquals("libmodkit_fixture.so", patch.getString("module"))
@@ -248,7 +249,9 @@ class AutoModDeviceTest {
             assertTrue(patch.getLong("address") > 0)
             assertEquals(64, patch.getString("imageSha256").length)
             assertNotEquals(patch.getString("expected"), patch.getString("replacement"))
-            assertEquals(1, menu.runtimeRecipes)
+            assertEquals(3, menu.runtimeRecipes)
+            assertEquals("e0e184d2c0035fd6", getters.single { it.getString("evidence").endsWith("->getStamina()J") }.getJSONObject("patch").getString("replacement"))
+            assertEquals("0010601ec0035fd6", getters.single { it.getString("evidence").endsWith("->getMoveSpeed()D") }.getJSONObject("patch").getString("replacement"))
             val unsupported = File(context.cacheDir, "jni-unsupported-module.apk")
             try {
                 java.util.zip.ZipFile(apk).use { input -> java.util.zip.ZipOutputStream(unsupported.outputStream()).use { output ->

@@ -22,8 +22,10 @@ object GameAnalysisPlanner {
         val termHits = rules.mapValues { mutableSetOf<String>() }
         val evidence = rules.mapValues { mutableSetOf<String>() }
         for (symbol in declaredSymbols) {
-            val tokens = symbol.replace(Regex("([a-z])([A-Z])"), "$1 $2")
-                .lowercase().split(Regex("[^a-z0-9]+")).toSet()
+            val words = symbol.replace(Regex("([A-Z]+)([A-Z][a-z])"), "$1 $2")
+                .replace(Regex("([a-z0-9])([A-Z])"), "$1 $2")
+                .lowercase().split(Regex("[^a-z0-9]+")).filter { it.isNotEmpty() }
+            val tokens = (words + words.zipWithNext { first, second -> first + second }).toSet()
             for ((genre, terms) in rules) {
                 val hits = tokens.intersect(terms)
                 if (hits.isNotEmpty()) {
@@ -34,7 +36,8 @@ object GameAnalysisPlanner {
         }
         val matches = rules.mapValues { (genre, _) -> termHits.getValue(genre).size to evidence.getValue(genre).toList() }
         val best = matches.maxByOrNull { it.value.first }
-        val unambiguous = best != null && best.value.first >= 2 && matches.count { it.value.first == best.value.first } == 1
+        val unambiguous = best != null && best.value.first >= 2 && best.value.second.size >= 2 &&
+            matches.count { it.value.first == best.value.first } == 1
         val hint = when {
             selectedGenre != null -> GenreHint(selectedGenre, listOf("Жанр выбран пользователем"))
             unambiguous -> GenreHint(best!!.key, best.value.second)

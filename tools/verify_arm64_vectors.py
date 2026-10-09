@@ -21,8 +21,8 @@ def execute(code, kind, seed):
     machine.mem_map(0x10000, 0x10000)
     machine.mem_map(0x30000, 0x1000)
     machine.mem_write(0x10000, bytes.fromhex(code))
-    assert kind in ('i', 'f', 'd'), kind
-    value = struct.pack('<' + dict(i='i', f='f', d='d')[kind], int(seed) if kind == 'i' else float(seed))
+    assert kind in ('i', 'j', 'f', 'd'), kind
+    value = struct.pack('<' + dict(i='i', j='q', f='f', d='d')[kind], int(seed) if kind in ('i', 'j') else float(seed))
     machine.mem_write(0x30000 + (24 if kind == 'i' else 16), value)
     before = bytes(machine.mem_read(0x30000, 0x1000))
     machine.reg_write(UC_ARM64_REG_X0, 0x30000)
@@ -46,7 +46,8 @@ for line in (line for path in sys.argv[1:] for line in Path(path).read_text().sp
     assert before == float(expected_before), (name, before, expected_before)
     assert after == float(expected_after), (name, after, expected_after)
     results.append(dict(name=name, before=before, after=after, state_unchanged=True))
-assert len(results) == (5 if len(sys.argv) == 3 else 3)
+expected_counts = {'native-verification.tsv': 3, 'native-catalog-verification.tsv': 2, 'native-jni-verification.tsv': 2}
+assert len(results) == sum(expected_counts[Path(path).name] for path in sys.argv[1:])
 output = json.dumps({'engine': 'Unicorn 2.1.4 ARM64', 'results': results}, indent=2)
 vectors.with_suffix('.json').write_text(output + '\n')
 print(output)
