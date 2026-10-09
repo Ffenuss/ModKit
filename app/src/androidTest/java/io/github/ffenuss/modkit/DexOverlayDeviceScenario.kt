@@ -42,8 +42,8 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             val recipes = DexRecipeCatalog.create(scan)
             val health = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getHealth" } }
             val sprint = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "canSprint" } }
-            val ammo = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getAmmo" && m.signature == "()J" } }
-            val speed = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getRunSpeed" && m.signature == "()D" } }
+            val ammo = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getAmmo" && m.signature == "(J)J" } }
+            val speed = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getRunSpeed" && m.signature == "(JDJ)D" } }
             assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, ammo.dex.single().bodyKind)
             assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, speed.dex.single().bodyKind)
             assertEquals(2, health.dex.size)

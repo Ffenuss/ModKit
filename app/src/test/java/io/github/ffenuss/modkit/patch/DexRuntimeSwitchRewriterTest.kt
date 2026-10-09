@@ -156,6 +156,87 @@ class DexRuntimeSwitchRewriterTest {
         }
     }
 
+    private fun parameterMethod(name: String, type: String, parameters: List<String>, registers: Int,
+                                static: Boolean = false, vararg code: Instruction): Method = ImmutableMethod(
+        owner, name, parameters.map { ImmutableMethodParameter(it, emptySet(), null) }, type,
+        AccessFlags.PUBLIC.value or if (static) AccessFlags.STATIC.value else 0, emptySet(), emptySet(),
+        ImmutableMethodImplementation(registers, code.toList(), emptyList(), emptyList()))
+
+    @Test fun parameterOverloadsAreResolvedByTheirFullPrototype() {
+        val intGetter = parameterMethod("getAmmo", "I", listOf("I"), 3, code = arrayOf<Instruction>(
+            ImmutableInstruction22b(Opcode.ADD_INT_LIT8, 0, 2, 10), ImmutableInstruction11x(Opcode.RETURN, 0)))
+        val longGetter = parameterMethod("getAmmo", "J", listOf("J"), 5, code = arrayOf<Instruction>(
+            ImmutableInstruction21s(Opcode.CONST_WIDE_16, 0, 11),
+            ImmutableInstruction12x(Opcode.ADD_LONG_2ADDR, 0, 3), ImmutableInstruction11x(Opcode.RETURN_WIDE, 0)))
+        val bytes = dex(listOf(intGetter, longGetter))
+        val selected = scan(bytes)
+        assertEquals(setOf("(I)I", "(J)J"), selected.map { it.signature }.toSet())
+        assertTrue(selected.all { it.selectable && it.bodyKind == DexMethodBodyKind.READ_ONLY_COMPUTATION })
+        val recipes = DexRecipeCatalog.create(DexLocalPatchEngine.scanDex(bytes, 0, "classes.dex", false, signal))
+        assertEquals(2, recipes.size)
+        assertEquals(2, recipes.map { it.title }.distinct().size)
+        assertTrue(recipes.any { it.title.endsWith("getAmmo(int)") })
+        assertTrue(recipes.any { it.title.endsWith("getAmmo(long)") })
+        val result = rewrite(bytes, selected.map { DexRuntimeSelection(it, DexRuntimeSwitchRewriter.switchId(it.id)) })
+        val methods = result.classes.single().methods.toList()
+        for (candidate in selected) {
+            val method = methods.single { it.name == "getAmmo" && DexMethodParameters.signature(it) == candidate.signature }
+            val code = method.implementation!!.instructions.toList()
+            val call = code[6] as FiveRegisterInstruction
+            assertEquals(if (candidate.signature == "(I)I") 2 else 3, call.registerCount)
+            assertEquals(if (candidate.signature == "(I)I") 1 else 2, call.registerC)
+            assertEquals(method.parameterTypes.map { it.toString() }, ((code[6] as ReferenceInstruction).reference as MethodReference).parameterTypes.map { it.toString() })
+            val backup = methods.single { it.name == DexRuntimeSwitchRewriter.backupName(candidate.id) }
+            assertEquals(candidate.signature, DexMethodParameters.signature(backup))
+        }
+        val output = File.createTempFile("parameter-direct", ".dex")
+        try {
+            DexLocalPatchEngine.rewriteDex(bytes, 0, "classes.dex", selected, output, false, signal)
+            assertEquals(setOf("(I)I", "(J)J"), DexBackedDexFile(null, output.readBytes()).classes.single().methods.map { DexMethodParameters.signature(it) }.toSet())
+        } finally { output.delete() }
+    }
+
+    @Test fun largeMixedPrimitiveFramesUseRangeCallsWithoutDroppingThisOrWideWords() {
+        val types = listOf("Z", "B", "C", "S", "I", "J", "F", "D")
+        assertEquals(10, DexMethodParameters.words(types))
+        for (static in listOf(false, true)) {
+            val inputs = if (static) 10 else 11
+            val original = parameterMethod("getRunSpeed", "D", types, inputs, static,
+                ImmutableInstruction10x(Opcode.NOP), ImmutableInstruction11x(Opcode.RETURN_WIDE, inputs - 2))
+            val bytes = dex(listOf(original)); val candidate = scan(bytes).single()
+            assertTrue(candidate.selectable)
+            val result = rewrite(bytes, listOf(DexRuntimeSelection(candidate, DexRuntimeSwitchRewriter.switchId(candidate.id))))
+            val method = result.classes.single().methods.single { it.name == "getRunSpeed" }
+            assertEquals(inputs + 2, method.implementation!!.registerCount)
+            val call = method.implementation!!.instructions.toList()[6]
+            assertEquals(if (static) Opcode.INVOKE_STATIC_RANGE else Opcode.INVOKE_DIRECT_RANGE, call.opcode)
+            assertEquals(2, (call as RegisterRangeInstruction).startRegister)
+            assertEquals(inputs, call.registerCount)
+            assertEquals(types, ((call as ReferenceInstruction).reference as MethodReference).parameterTypes.map { it.toString() })
+        }
+    }
+
+    @Test fun primitiveInputProofRejectsReferencesBrokenFramesAndMistakenThisRegisters() {
+        for (types in listOf(listOf("[I"), listOf("Ljava/lang/String;"), List(9) { "I" })) {
+            val method = parameterMethod("getAmmo", "I", types, 12, code = arrayOf<Instruction>(
+                ImmutableInstruction11n(Opcode.CONST_4, 0, 1), ImmutableInstruction11x(Opcode.RETURN, 0)))
+            assertFalse(DexMethodBodyInspector.inspect(method).supportsScalarReplacement)
+            assertTrue(scan(dex(listOf(method))).isEmpty())
+        }
+        val broken = parameterMethod("getAmmo", "J", listOf("J"), 1, true,
+            ImmutableInstruction10x(Opcode.NOP), ImmutableInstruction11x(Opcode.RETURN_WIDE, 0))
+        assertFalse(DexMethodBodyInspector.inspect(broken).supportsScalarReplacement)
+        val own = parameterMethod("getHealth", "I", listOf("I", "J"), 4, code = arrayOf<Instruction>(
+            ImmutableInstruction22c(Opcode.IGET, 1, 0, field("health")), ImmutableInstruction11x(Opcode.RETURN, 1)))
+        assertEquals(DexMethodBodyKind.INSTANCE_FIELD_GETTER, DexMethodBodyInspector.inspect(own).kind)
+        val other = parameterMethod("getHealth", "I", listOf("I", "J"), 4, code = arrayOf<Instruction>(
+            ImmutableInstruction22c(Opcode.IGET, 1, 3, field("health")), ImmutableInstruction11x(Opcode.RETURN, 1)))
+        assertFalse(DexMethodBodyInspector.inspect(other).supportsScalarReplacement)
+        val damagedPair = parameterMethod("getAmmo", "J", listOf("J"), 2, true,
+            ImmutableInstruction11n(Opcode.CONST_4, 1, 1), ImmutableInstruction11x(Opcode.RETURN_WIDE, 0))
+        assertFalse(DexMethodBodyInspector.inspect(damagedPair).supportsScalarReplacement)
+    }
+
     @Test fun staleDigestAndDuplicateSelectionsAreRejected() {
         val bytes = dex(listOf(getter("getHealth")))
         val original = scan(bytes).single()

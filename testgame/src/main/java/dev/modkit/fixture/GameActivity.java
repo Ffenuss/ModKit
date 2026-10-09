@@ -46,6 +46,6 @@ public final class GameActivity extends Activity {
     private void showState() {
         state.setText((player.isDead() ? "GAME OVER" : "ALIVE") + " | Health: " + player.getHealth());
         distance.setText("Distance: " + player.distance());
-        wideStats.setText("Ammo: " + player.getAmmo() + " | Speed: " + PlayerStats.getRunSpeed());
+        wideStats.setText("Ammo: " + player.getAmmo(4294967298L) + " | Speed: " + PlayerStats.getRunSpeed(4294967299L, 2.0, 4294967298L));
     }
 }

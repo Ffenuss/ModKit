@@ -284,11 +284,11 @@ object DexLocalPatchEngine {
                             ")" + method.returnType
                     }
                 }
-                if (semantic && (!noArgs || method.returnType !in
+                if (semantic && (!DexMethodParameters.supported(method.parameterTypes) || method.returnType !in
                         DexScalarReplacement.supportedTypes
                     )
                 ) rejectedReturnTypes++
-                if (!noArgs || impl == null || impl.registerCount < 1) continue
+                if (!DexMethodParameters.supported(method.parameterTypes) || impl == null || impl.registerCount < 1) continue
                 if (sensitiveMethodName(normalizeName(method.name))) continue
                 val body = DexMethodBodyInspector.inspect(method)
                 val nameMatch = classify(method.name, method.returnType, method.definingClass)
@@ -303,7 +303,7 @@ object DexLocalPatchEngine {
                     dexEntry = dexEntry,
                     className = method.definingClass,
                     methodName = method.name,
-                    signature = "()" + method.returnType,
+                    signature = DexMethodParameters.signature(method),
                     originalDexSha256 = sha,
                     category = match.first,
                     action = match.second,

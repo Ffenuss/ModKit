@@ -82,8 +82,8 @@ object DexRuntimeSwitchRewriter {
             for ((id, original) in originals) {
                 checkCancelled(cancellation)
                 val actual = requireNotNull(byClass[original.definingClass]).methods.toList()
-                val live = actual.single { it.name == original.name && it.parameterTypes.isEmpty() && it.returnType == original.returnType }
-                val backup = actual.single { it.name == backupName(id) && it.parameterTypes.isEmpty() && it.returnType == original.returnType }
+                val live = actual.single { it.name == original.name && it.parameterTypes.map { t -> t.toString() } == original.parameterTypes.map { t -> t.toString() } && it.returnType == original.returnType }
+                val backup = actual.single { it.name == backupName(id) && it.parameterTypes.map { t -> t.toString() } == original.parameterTypes.map { t -> t.toString() } && it.returnType == original.returnType }
                 require(live.accessFlags == original.accessFlags && backup.accessFlags == backups.getValue(id).accessFlags)
                 require(canonicalBody(live, source.opcodes).contentEquals(canonicalBody(wrappers.getValue(id), source.opcodes))) {
                     "Runtime DEX wrapper verification failed: $id"
@@ -104,12 +104,20 @@ object DexRuntimeSwitchRewriter {
     }
 
     private fun wrapper(original: Method, selection: DexRuntimeSelection, backup: String): Method {
-        require(original.parameterTypes.isEmpty() && original.returnType in DexScalarReplacement.supportedTypes)
+        require(DexMethodParameters.supported(original.parameterTypes) && original.returnType in DexScalarReplacement.supportedTypes)
         val static = AccessFlags.STATIC.isSet(original.accessFlags)
         val wide = DexScalarReplacement.isWide(original.returnType)
         val constant = DexScalarReplacement.instruction(original.returnType, selection.method.action)
         val returnOp = DexScalarReplacement.returnOpcode(original.returnType)
-        val thisRegister = if (wide) 2 else 1
+        val locals = if (wide) 2 else 1
+        val inputs = DexMethodParameters.inputWords(original)
+        val reference = ImmutableMethodReference(original.definingClass, backup, original.parameterTypes, original.returnType)
+        val invocation = if (inputs <= 5) {
+            val registers = (0 until inputs).map { locals + it } + List(5 - inputs) { 0 }
+            ImmutableInstruction35c(if (static) Opcode.INVOKE_STATIC else Opcode.INVOKE_DIRECT,
+                inputs, registers[0], registers[1], registers[2], registers[3], registers[4], reference)
+        } else ImmutableInstruction3rc(if (static) Opcode.INVOKE_STATIC_RANGE else Opcode.INVOKE_DIRECT_RANGE,
+            locals, inputs, reference)
         val code = listOf(
             ImmutableInstruction31c(Opcode.CONST_STRING_JUMBO, 0, ImmutableStringReference(selection.switchId)),
             ImmutableInstruction35c(Opcode.INVOKE_STATIC, 1, 0, 0, 0, 0, 0,
@@ -118,20 +126,18 @@ object DexRuntimeSwitchRewriter {
             ImmutableInstruction21t(Opcode.IF_EQZ, 0, 2 + constant.codeUnits + 1),
             constant,
             ImmutableInstruction11x(returnOp, 0),
-            ImmutableInstruction35c(if (static) Opcode.INVOKE_STATIC else Opcode.INVOKE_DIRECT,
-                if (static) 0 else 1, if (static) 0 else thisRegister, 0, 0, 0, 0,
-                ImmutableMethodReference(original.definingClass, backup, emptyList(), original.returnType)),
+            invocation,
             ImmutableInstruction11x(if (wide) Opcode.MOVE_RESULT_WIDE else Opcode.MOVE_RESULT, 0),
             ImmutableInstruction11x(returnOp, 0),
         )
         return ImmutableMethod(original.definingClass, original.name, original.parameters,
             original.returnType, original.accessFlags, original.annotations, original.hiddenApiRestrictions,
-            ImmutableMethodImplementation(thisRegister + if (static) 0 else 1, code, emptyList(), emptyList()))
+            ImmutableMethodImplementation(locals + inputs, code, emptyList(), emptyList()))
     }
 
     private fun canonicalBody(method: Method, opcodes: Opcodes): ByteArray {
         val flags = AccessFlags.PUBLIC.value or (method.accessFlags and AccessFlags.STATIC.value)
-        val normalized = ImmutableMethod("Lmodkit/Body;", "body", emptyList(), method.returnType,
+        val normalized = ImmutableMethod("Lmodkit/Body;", "body", method.parameters, method.returnType,
             flags, emptySet(), emptySet(), method.implementation)
         val clazz = ImmutableClassDef("Lmodkit/Body;", AccessFlags.PUBLIC.value, "Ljava/lang/Object;",
             emptyList(), null, emptySet(), emptyList(), emptyList(),

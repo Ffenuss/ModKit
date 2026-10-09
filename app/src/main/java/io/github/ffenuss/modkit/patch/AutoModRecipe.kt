@@ -40,7 +40,8 @@ object DexRecipeCatalog {
         .filter { it.category !in setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI) }
         // Only getters reading the SAME proven field with the SAME action form a bundle.
         // Unrelated methods in a category must never become one silent multi-method patch.
-        .groupBy { "${it.apkIndex}:${it.dexEntry}:${it.fieldIdentity ?: it.id}:${it.action}" }
+        .groupBy { "${it.apkIndex}:${it.dexEntry}:${it.fieldIdentity ?: it.id}:${it.action}" +
+            if (it.fieldIdentity != null && !it.signature.startsWith("()")) ":${it.signature}" else "" }
         .map { (key, methods) ->
             val first = methods.first()
             AutoModRecipe(
@@ -51,7 +52,7 @@ object DexRecipeCatalog {
                     DexLocalAction.FLOAT_2 -> "значение 2.0"
                     DexLocalAction.TRUE -> "включить"
                     DexLocalAction.FALSE -> "выключить"
-                },
+                } + DexMethodParameters.label(first),
                 description = if (methods.size > 1)
                     "Согласованное изменение ${methods.size} чтений одного поля. Эффект требует проверки в приложении."
                 else "Изменение возвращаемого значения. Эффект требует проверки в приложении.",

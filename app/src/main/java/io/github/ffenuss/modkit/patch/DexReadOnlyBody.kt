@@ -13,8 +13,8 @@ object DexReadOnlyBody {
     fun inspect(method: Method): DexMethodBodyEvidence {
         fun blocked(reason: String) = DexMethodBodyEvidence(DexMethodBodyKind.UNSUPPORTED, reason)
         val body = method.implementation ?: return blocked("Нет тела DEX-метода.")
-        if (method.parameterTypes.isNotEmpty() || method.returnType !in DexScalarReplacement.supportedTypes ||
-            body.registerCount < 1 || body.tryBlocks.isNotEmpty()) return blocked("Неподдерживаемая сигнатура, регистры или обработчики исключений.")
+        if (!DexMethodParameters.supported(method.parameterTypes) || method.returnType !in DexScalarReplacement.supportedTypes ||
+            body.registerCount < maxOf(1, DexMethodParameters.inputWords(method)) || body.tryBlocks.isNotEmpty()) return blocked("Неподдерживаемая сигнатура, регистры или обработчики исключений.")
         val code = body.instructions.take(257)
         if (code.size > 256) return blocked("Тело больше 256 инструкций: требуется расширенный анализ потока данных.")
         val addresses = IntArray(code.size)
@@ -61,7 +61,7 @@ object DexReadOnlyBody {
                 op in reads -> {
                     val field = (instruction as ReferenceInstruction).reference as? FieldReference ?: return false
                     if (field.definingClass != method.definingClass || field.type !in fieldTypes.getValue(op) ||
-                        op in instanceReads && (AccessFlags.STATIC.isSet(method.accessFlags) || b != body.registerCount - 1)) {
+                        op in instanceReads && (AccessFlags.STATIC.isSet(method.accessFlags) || b != DexMethodParameters.thisRegister(method, body.registerCount))) {
                         reason = "Чтение не привязано к полю правильного типа своего класса/this."; return false
                     }
                     next = listOf(index + 1)
@@ -79,7 +79,12 @@ object DexReadOnlyBody {
         // kept together: overwriting either half invalidates the old pair.
         val incoming = arrayOfNulls<IntArray>(code.size)
         incoming[0] = IntArray(body.registerCount).apply {
-            if (!AccessFlags.STATIC.isSet(method.accessFlags)) this[lastIndex] = THIS
+            var register = body.registerCount - DexMethodParameters.inputWords(method)
+            if (!AccessFlags.STATIC.isSet(method.accessFlags)) this[register++] = THIS
+            for (type in method.parameterTypes) {
+                if (DexScalarReplacement.isWide(type.toString())) { this[register++] = LOW; this[register++] = HIGH }
+                else this[register++] = SCALAR
+            }
         }
         for (index in postorder.asReversed()) {
             val values = requireNotNull(incoming[index]).clone()
