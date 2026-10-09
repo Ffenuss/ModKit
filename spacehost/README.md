@@ -201,3 +201,7 @@ The existing signed Space 0.0.37 runtime accepts these schema-2 recipes.
 ## ARM32 recipes and closed guest sessions (2026-10-09)
 
 The bounded ARM-state JNI route, ABI-specific discovery, readable unavailable reasons and guest-session ownership fences are documented in [SPACE_RUNTIME_VALIDATION_20261009.md](../docs/SPACE_RUNTIME_VALIDATION_20261009.md). ModKit passed 450 unit tests, lint, 22 independent ARM CPU vectors and full API29/API35 owned-fixture scenarios. Space passed 13 executor and 3 guest/panel Android35 tests. These do not establish physical-phone or third-party compatibility. Updating the guest overlay requires a newly built and signed Space host; no new APK pair has been issued, and previous 0.0.46 artifacts belong to their earlier tested checkpoint.
+
+## Bounded x86_64 JNI discovery
+
+The companion scanner now emits ABI-separated x86_64 recipes for all eight primitive JNI results within a strict read-only leaf subset. It preserves ENDBR64 and native_v1 alignment/length constraints. The owned guest verifies new boolean/float switches and restoration alongside existing scalar recipes. [X86_64_JNI_VALIDATION_20261009.md](../docs/X86_64_JNI_VALIDATION_20261009.md) records 452 unit tests, 32 CPU vectors, API29/API35 and Space results, including initial accessibility failures and successful unchanged-code retries. Short/unaligned stubs, arbitrary native bodies, IA-32/x87 and dynamic RegisterNatives bindings remain unsupported. No signed APK pair or universal engine coverage is claimed.
