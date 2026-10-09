@@ -55,6 +55,26 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
                         .implementation!!.instructions.any { it.opcode == opcode })
                 }
             }
+            stage = "fixture-pure-math-calls"
+            ZipFile(source).use { archive ->
+                val methods = archive.entries().asSequence().filter { it.name.matches(Regex("classes(?:[0-9]+)?\\.dex")) }
+                    .flatMap { entry -> org.jf.dexlib2.dexbacked.DexBackedDexFile(null,
+                        archive.getInputStream(entry).use { it.readBytes() }).classes.asSequence() }
+                    .single { it.type == "Ldev/modkit/fixture/PlayerStats;" }.methods.toList()
+                val expected = mapOf("getEnergy" to "min(II)I", "getMaxHealth" to "max(II)I",
+                    "getMagazineSize" to "min(II)I", "getAmmo" to "max(JJ)J",
+                    "getRunSpeed" to "abs(D)D", "canSprint" to "min(FF)F")
+                expected.forEach { (name, prototype) ->
+                    val calls = methods.single { it.name == name }.implementation!!.instructions.mapNotNull { instruction ->
+                        ((instruction as? org.jf.dexlib2.iface.instruction.ReferenceInstruction)?.reference
+                            as? org.jf.dexlib2.iface.reference.MethodReference)?.takeIf { it.definingClass == "Ljava/lang/Math;" }
+                    }
+                    assertTrue("Owned fixture must execute Math.$prototype", calls.any {
+                        it.name + "(" + it.parameterTypes.joinToString("") + ")" + it.returnType == prototype
+                    })
+                }
+                events.put(JSONObject().put("event", "pure-math-fixture-verified").put("observed", expected.size))
+            }
             val analysis = FastArtifactIndexer.index(listOf(source), signal, progress)
             val scan = DexLocalPatchEngine.scanApks(listOf(source), false, signal)
             val recipes = DexRecipeCatalog.create(scan)
@@ -294,7 +314,7 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             evidence("dex-overlay-final.png") { device.takeScreenshot(it) }
             evidence("dex-overlay-hierarchy.xml") { device.dumpWindowHierarchy(it) }
             evidence("dex-overlay-metrics.json") { it.writeText(JSONObject().put("stage", stage).put("api", Build.VERSION.SDK_INT)
-                .put("events", events).put("scope", "owned DEX fixture; seven automatically discovered recipes, eight instrumented methods").toString(2)) }
+                .put("events", events).put("scope", "owned DEX fixture; seven automatically discovered recipes, eight instrumented methods; exact Math int/long/float/double calls").toString(2)) }
             context.stopService(Intent(context, ModKitRuntimeOverlayService::class.java))
             device.executeShellCommand("pm uninstall $fixture")
         }

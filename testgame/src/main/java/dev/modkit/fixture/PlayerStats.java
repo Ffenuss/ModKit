@@ -8,21 +8,22 @@ public final class PlayerStats {
     private byte energy = -7;
     private short maxHealth = -300;
     private static char magazineSize = 50000;
-    public byte getEnergy() { return energy; }
-    public short getMaxHealth() { return maxHealth; }
-    public static char getMagazineSize() { return magazineSize; }
+    public byte getEnergy() { return (byte) Math.min(energy, 0); }
+    public short getMaxHealth() { return (short) Math.max(maxHealth, Short.MIN_VALUE); }
+    public static char getMagazineSize() { return (char) Math.min(magazineSize, 65535); }
     private long ammo = 0L;
     private static double runSpeed = 0.125;
     public long getAmmo(long amount, int mode) {
+        long value = Math.max(ammo + amount, 0L);
         switch (mode) {
-            case 0: return ammo + amount;
-            case 1: return ammo + amount + 1L;
-            case 2: return ammo + amount + 2L;
-            default: return ammo + amount + 3L;
+            case 0: return value;
+            case 1: return value + 1L;
+            case 2: return value + 2L;
+            default: return value + 3L;
         }
     }
     public static double getRunSpeed(long first, double scale, long second, int mode) {
-        double value = runSpeed * scale + (first - second);
+        double value = Math.abs(runSpeed * scale + (first - second));
         switch (mode) {
             case 0: return value;
             case 100: return value + 1.0;
@@ -36,7 +37,7 @@ public final class PlayerStats {
     public int getInventoryCapacity() { return 8; }
     public void hit() { health = Math.max(0, getHealth() - 7); }
     public boolean isDead() { return a() <= 0; }
-    public boolean canSprint() { return stamina > 0; }
+    public boolean canSprint() { return Math.min((float) stamina, 10.0f) > 0.0f; }
     public void sprint() { if (canSprint()) { distance++; stamina = Math.max(0, stamina - 5); } }
     public int distance() { return distance; }
 }

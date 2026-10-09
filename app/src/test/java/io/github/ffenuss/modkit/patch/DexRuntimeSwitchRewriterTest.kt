@@ -14,6 +14,7 @@ import org.jf.dexlib2.iface.reference.StringReference
 import org.jf.dexlib2.immutable.*
 import org.jf.dexlib2.immutable.instruction.*
 import org.jf.dexlib2.immutable.reference.ImmutableFieldReference
+import org.jf.dexlib2.immutable.reference.ImmutableMethodReference
 import org.jf.dexlib2.writer.io.MemoryDataStore
 import org.jf.dexlib2.writer.pool.DexPool
 import org.junit.Assert.*
@@ -82,6 +83,41 @@ class DexRuntimeSwitchRewriterTest {
                 assertEquals(replacement, (instructions[0] as NarrowLiteralInstruction).narrowLiteral)
                 assertEquals(Opcode.RETURN, instructions[1].opcode)
             } finally { output.delete() }
+        }
+    }
+
+    @Test fun mathCallsRemainInExactBackupsAndDisappearOnlyFromEnabledWrappers() {
+        for (type in listOf("I", "J", "F", "D")) {
+            val wide = type == "J" || type == "D"
+            val name = if (type == "I" || type == "J") "getAmmo" else "getRunSpeed"
+            val ref = ImmutableMethodReference("Ljava/lang/Math;", "abs", listOf(type), type)
+            val constant: Instruction = if (wide) ImmutableInstruction51l(Opcode.CONST_WIDE, 0,
+                if (type == "J") Long.MIN_VALUE else (-1.25).toBits())
+                else ImmutableInstruction31i(Opcode.CONST, 0, if (type == "I") Int.MIN_VALUE else (-1.25f).toBits())
+            val bytes = dex(listOf(method(name, type, AccessFlags.PUBLIC.value or AccessFlags.STATIC.value,
+                if (wide) 2 else 1, constant,
+                ImmutableInstruction35c(Opcode.INVOKE_STATIC, if (wide) 2 else 1, 0, 1, 0, 0, 0, ref),
+                ImmutableInstruction11x(if (wide) Opcode.MOVE_RESULT_WIDE else Opcode.MOVE_RESULT, 0),
+                ImmutableInstruction11x(if (wide) Opcode.RETURN_WIDE else Opcode.RETURN, 0))))
+            val selected = scan(bytes).single()
+            assertTrue(selected.reason, selected.selectable)
+            assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, selected.bodyKind)
+            val result = rewrite(bytes, listOf(DexRuntimeSelection(selected, DexRuntimeSwitchRewriter.switchId(selected.id))))
+            val methods = result.classes.single().methods.toList()
+            val backup = methods.single { it.name == DexRuntimeSwitchRewriter.backupName(selected.id) }
+            assertEquals(type, backup.returnType)
+            val backupCode = backup.implementation!!.instructions.toList()
+            assertEquals(4, backupCode.size)
+            val call = (backupCode[1] as ReferenceInstruction).reference as MethodReference
+            assertEquals("Ljava/lang/Math;", call.definingClass)
+            assertEquals("abs", call.name)
+            assertEquals(type, call.returnType)
+            assertEquals(listOf(type), call.parameterTypes.map { it.toString() })
+            assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, DexMethodBodyInspector.inspect(backup).kind)
+            val wrapper = methods.single { it.name == name }.implementation!!.instructions.toList()
+            assertEquals(DexRuntimeSwitchRewriter.backupName(selected.id),
+                ((wrapper[6] as ReferenceInstruction).reference as MethodReference).name)
+            assertEquals(if (wide) Opcode.MOVE_RESULT_WIDE else Opcode.MOVE_RESULT, wrapper[7].opcode)
         }
     }
 

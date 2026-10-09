@@ -31,6 +31,7 @@ object DexReadOnlyBody {
         val successors = Array(code.size) { emptyList<Int>() }
         val postorder = ArrayList<Int>()
         val flows = arrayOfNulls<Flow>(code.size)
+        val mathCalls = arrayOfNulls<DexPureMathCall.Evidence>(code.size)
         var reason = "В методе есть вызов, запись состояния или неподдерживаемая инструкция."
         var returns = 0
         fun visit(index: Int): Boolean {
@@ -39,7 +40,22 @@ object DexReadOnlyBody {
             if (states[index] == 2) return true
             val instruction = code[index]
             val op = instruction.opcode
+            val math = DexPureMathCall.inspect(instruction)
+            mathCalls[index] = math
             val flow = when {
+                math != null -> {
+                    if (code.getOrNull(index + 1)?.opcode != math.resultOpcode) {
+                        reason = "Результат Math должен считываться следующей инструкцией правильной ширины."; return false
+                    }
+                    Flow()
+                }
+                op in mathResults -> {
+                    val producer = code.getOrNull(index - 1)?.let(DexPureMathCall::inspect)
+                    if (producer == null || op != producer.resultOpcode) {
+                        reason = "MOVE_RESULT не связан с разрешённым Math-вызовом."; return false
+                    }
+                    Flow(write = producer.resultWidth)
+                }
                 op == DexScalarReplacement.returnOpcode(method.returnType) -> Flow(a = if (DexScalarReplacement.isWide(method.returnType)) 2 else 1)
                 op in unconditional || op == Opcode.NOP -> Flow()
                 op in jumps -> Flow(a = 1, b = if (instruction is TwoRegisterInstruction) 1 else 0)
@@ -104,6 +120,11 @@ object DexReadOnlyBody {
             return true
         }
         if (!visit(0) || returns == 0) return blocked(reason)
+        // A MOVE_RESULT cannot be reached through a branch that bypasses its invoke.
+        val predecessors = Array(code.size) { mutableSetOf<Int>() }
+        successors.forEachIndexed { source, targets -> targets.forEach { predecessors[it].add(source) } }
+        for (index in code.indices) if (states[index] == 2 && code[index].opcode in mathResults &&
+            predecessors[index] != setOf(index - 1)) return blocked("Переход обходит Math-вызов перед MOVE_RESULT.")
         // Only facts true on EVERY incoming edge survive. Low/high markers are
         // kept together: overwriting either half invalidates the old pair.
         val incoming = arrayOfNulls<IntArray>(code.size)
@@ -129,6 +150,9 @@ object DexReadOnlyBody {
                 2 -> values[register] == LOW && values[register + 1] == HIGH
                 else -> false
             }
+            if (mathCalls[index]?.arguments?.any { (register, width) ->
+                    register < 0 || register > body.registerCount - width || !assigned(register, width)
+                } == true) return blocked("Аргументы Math не определены или wide-пара повреждена.")
             if (!assigned(a, flow.a) || !assigned(b, flow.b) || !assigned(c, flow.c) ||
                 op in instanceReads && values[b] != THIS) return blocked("Возвращаемое значение или полная пара регистров не определены на каждом пути.")
             fun clear(register: Int) {
@@ -149,13 +173,16 @@ object DexReadOnlyBody {
             }
         }
         return DexMethodBodyEvidence(DexMethodBodyKind.READ_ONLY_COMPUTATION,
-            "Проверены все достижимые ветви и скалярные/парные регистры: вычисление без вызовов и записи состояния.")
+            "Проверены все достижимые ветви и скалярные/парные регистры: " +
+                if (mathCalls.any { it != null }) "только чтение, вычисления и точные Math.min/max/abs без записи состояния."
+                else "вычисление без вызовов и записи состояния.")
     }
 
     private const val SCALAR = 1
     private const val THIS = 2
     private const val LOW = 3
     private const val HIGH = 4
+    private val mathResults = setOf(Opcode.MOVE_RESULT, Opcode.MOVE_RESULT_WIDE)
     private val unconditional = setOf(Opcode.GOTO, Opcode.GOTO_16, Opcode.GOTO_32)
     private val switches = setOf(Opcode.PACKED_SWITCH, Opcode.SPARSE_SWITCH)
     private val jumps = unconditional + setOf(Opcode.IF_EQ, Opcode.IF_NE, Opcode.IF_LT, Opcode.IF_GE,
