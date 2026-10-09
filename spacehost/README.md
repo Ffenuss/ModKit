@@ -197,3 +197,7 @@ independent menu switches. The reference-argument getter stays excluded.
 This extends the engine-neutral native getter route; it does not implement
 Flutter Dart AOT, Unreal Blueprint, Mono CIL or universal engine support.
 The existing signed Space 0.0.37 runtime accepts these schema-2 recipes.
+
+## ARM32 recipes and closed guest sessions (2026-10-09)
+
+The bounded ARM-state JNI route, ABI-specific discovery, readable unavailable reasons and guest-session ownership fences are documented in [SPACE_RUNTIME_VALIDATION_20261009.md](../docs/SPACE_RUNTIME_VALIDATION_20261009.md). ModKit passed 450 unit tests, lint, 22 independent ARM CPU vectors and full API29/API35 owned-fixture scenarios. Space passed 13 executor and 3 guest/panel Android35 tests. These do not establish physical-phone or third-party compatibility. Updating the guest overlay requires a newly built and signed Space host; no new APK pair has been issued, and previous 0.0.46 artifacts belong to their earlier tested checkpoint.
