@@ -45,6 +45,8 @@ internal object JniSpaceRecipeScanner {
         "D" -> Il2CppNativeReturnKind.FLOAT64
         else -> null
     }
+    internal fun supportedParameters(parameters: List<String>): Boolean =
+        parameters.size <= 8 && parameters.all { it in setOf("Z", "B", "C", "S", "I", "J", "F", "D") }
     private fun check(signal: CancellationSignal) { if (signal.isCancelled()) throw AnalysisCancelledException() }
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
 
@@ -76,7 +78,7 @@ internal object JniSpaceRecipeScanner {
         } }
         val declarationCounts = declarations.groupingBy { it.key }.eachCount()
         val overloadCounts = declarations.groupingBy { it.owner to it.name }.eachCount()
-        val candidates = declarations.filter { it.parameters.isEmpty() && returnKind(it.result) != null &&
+        val candidates = declarations.filter { supportedParameters(it.parameters) && returnKind(it.result) != null &&
             DexLocalPatchEngine.nativeGameplayKind(it.owner, it.name, it.result) != null && declarationCounts[it.key] == 1 }
         if (candidates.isEmpty()) return Scan(emptyList(), warnings, truncated)
         if (truncated) return Scan(emptyList(), warnings + "JNI: неполный индекс деклараций; привязки не выдаются", true)

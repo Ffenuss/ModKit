@@ -274,7 +274,16 @@ class AutoModDeviceTest {
             assertTrue(patch.getLong("address") > 0)
             assertEquals(64, patch.getString("imageSha256").length)
             assertNotEquals(patch.getString("expected"), patch.getString("replacement"))
-            assertEquals(3, menu.runtimeRecipes)
+            assertEquals(5, menu.runtimeRecipes)
+            assertEquals(5, getters.size)
+            val intAmmo = getters.single { it.getString("evidence").endsWith("->getAmmo(I)I") }
+            val longAmmo = getters.single { it.getString("evidence").endsWith("->getAmmo(J)I") }
+            assertNotEquals(intAmmo.getString("id"), longAmmo.getString("id"))
+            assertNotEquals(intAmmo.getJSONObject("patch").getLong("address"), longAmmo.getJSONObject("patch").getLong("address"))
+            assertEquals("40280011c0035fd6", intAmmo.getJSONObject("patch").getString("expected"))
+            assertEquals("40500011c0035fd6", longAmmo.getJSONObject("patch").getString("expected"))
+            assertFalse("Reference arguments remain outside the primitive getter contract",
+                getters.any { it.getString("evidence").contains("->getBullets(") })
             assertEquals("e0e184d2c0035fd6", getters.single { it.getString("evidence").endsWith("->getStamina()J") }.getJSONObject("patch").getString("replacement"))
             assertEquals("0010601ec0035fd6", getters.single { it.getString("evidence").endsWith("->getMoveSpeed()D") }.getJSONObject("patch").getString("replacement"))
             val beforeItems = getters.associate { it.getString("id") to it.getJSONObject("patch").toString() }

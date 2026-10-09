@@ -83,6 +83,39 @@ Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed:
     ret
 .size Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed, .-Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed
 #endif
+// Exact long JNI names for two overloads; the first primitive argument is x2/rdx.
+#if defined(__aarch64__) || defined(__x86_64__)
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getAmmo__I
+#if defined(__aarch64__)
+.type Java_dev_modkit_nativefixture_GameActivity_getAmmo__I, %function
+Java_dev_modkit_nativefixture_GameActivity_getAmmo__I:
+    add w0, w2, #10
+    ret
+#else
+.type Java_dev_modkit_nativefixture_GameActivity_getAmmo__I, @function
+Java_dev_modkit_nativefixture_GameActivity_getAmmo__I:
+    lea 10(%rdx), %eax
+    ret
+    .fill 4, 1, 0x90
+#endif
+.size Java_dev_modkit_nativefixture_GameActivity_getAmmo__I, .-Java_dev_modkit_nativefixture_GameActivity_getAmmo__I
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getAmmo__J
+#if defined(__aarch64__)
+.type Java_dev_modkit_nativefixture_GameActivity_getAmmo__J, %function
+Java_dev_modkit_nativefixture_GameActivity_getAmmo__J:
+    add w0, w2, #20
+    ret
+#else
+.type Java_dev_modkit_nativefixture_GameActivity_getAmmo__J, @function
+Java_dev_modkit_nativefixture_GameActivity_getAmmo__J:
+    lea 20(%rdx), %eax
+    ret
+    .fill 4, 1, 0x90
+#endif
+.size Java_dev_modkit_nativefixture_GameActivity_getAmmo__J, .-Java_dev_modkit_nativefixture_GameActivity_getAmmo__J
+#endif
 #if defined(__aarch64__) || defined(__arm__)
 .section .note.GNU-stack,"",%progbits
 #else

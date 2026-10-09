@@ -184,3 +184,16 @@ update over the old space. Removing the old space can erase its local guest data
 The package, manifest and kernel remain unchanged. Preserve the new keystore
 and its credentials for subsequent updates; private signing material is never
 committed to this repository.
+
+## Typed primitive JNI getter arguments (0.0.38)
+
+The companion scanner accepts up to eight declared primitive arguments
+(boolean, byte, char, short, int, long, float and double) while retaining the
+existing return-type and read-only body checks. Object and array arguments are
+excluded. Overloads require exact JNI export resolution; ambiguous short names
+are rejected. Recipe identities include the full method signature. Two owned
+getAmmo overloads exercise int/long arguments, distinct ELF addresses and
+independent menu switches. The reference-argument getter stays excluded.
+This extends the engine-neutral native getter route; it does not implement
+Flutter Dart AOT, Unreal Blueprint, Mono CIL or universal engine support.
+The existing signed Space 0.0.37 runtime accepts these schema-2 recipes.

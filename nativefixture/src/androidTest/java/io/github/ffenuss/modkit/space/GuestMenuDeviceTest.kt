@@ -90,6 +90,9 @@ class GuestMenuDeviceTest {
                 "48b80f27000001000000c39090909090" else "e0e184d2c0035fd6")
             addWideGetter("jni-speed", "getMoveSpeed", if (abi == "x86_64")
                 "48b8000000000000044066480f6ec0c3" else "0010601ec0035fd6")
+            val ammoReplacement = if (abi == "x86_64") "b80f270000c39090" else "e0e18452c0035fd6"
+            addWideGetter("jni-ammo-int", "getAmmo__I", ammoReplacement)
+            addWideGetter("jni-ammo-long", "getAmmo__J", ammoReplacement)
         }
         val profile = MenuProfile(json.toString())
         var menu: SpaceGuestMenu? = null
@@ -116,6 +119,9 @@ class GuestMenuDeviceTest {
                 assertEquals(7, GameActivity.getHealth())
                 assertEquals(11L, GameActivity.getStamina())
                 assertEquals(1.0, GameActivity.getMoveSpeed(), 0.0)
+                assertEquals(12, GameActivity.getAmmo(2))
+                assertEquals(22, GameActivity.getAmmo(4_294_967_298L))
+                assertEquals(13, GameActivity.getBullets("slot"))
                 scenario.onActivity { a ->
                     assertEquals(1, count(a.window.decorView, "modkit-guest-menu"))
                     a.window.decorView.findViewWithTag<Switch>("modkit-recipe:fixture-value").performClick()
@@ -137,6 +143,20 @@ class GuestMenuDeviceTest {
                 if (wideReturns) {
                     scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-stamina").performClick() }
                     ready("jni-stamina")
+                    scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-ammo-int").performClick() }
+                    ready("jni-ammo-int")
+                    assertEquals(9999, GameActivity.getAmmo(2))
+                    assertEquals("Int-parameter recipe must not alias the long overload", 22, GameActivity.getAmmo(4_294_967_298L))
+                    scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-ammo-long").performClick() }
+                    ready("jni-ammo-long")
+                    assertEquals(9999, GameActivity.getAmmo(4_294_967_298L))
+                    scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-ammo-int").performClick() }
+                    ready("jni-ammo-int")
+                    assertEquals(12, GameActivity.getAmmo(2))
+                    assertEquals(9999, GameActivity.getAmmo(4_294_967_298L))
+                    // Leave both overloads enabled for the same close-time restore path.
+                    scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-ammo-int").performClick() }
+                    ready("jni-ammo-int")
                     assertEquals("JNI long must preserve its full return width", staminaValue, GameActivity.getStamina())
                     assertEquals("Long recipe must not affect the double getter", 1.0, GameActivity.getMoveSpeed(), 0.0)
                     scenario.onActivity { a -> a.window.decorView.findViewWithTag<Switch>("modkit-recipe:jni-speed").performClick() }
@@ -175,6 +195,9 @@ class GuestMenuDeviceTest {
         assertEquals("Closing must restore the original JNI getter", 7, GameActivity.getHealth())
         assertEquals("Closing must restore the original JNI long", 11L, GameActivity.getStamina())
         assertEquals("Closing must restore the original JNI double", 1.0, GameActivity.getMoveSpeed(), 0.0)
+        assertEquals("Closing must restore the int-argument overload", 12, GameActivity.getAmmo(2))
+        assertEquals("Closing must restore the long-argument overload", 22, GameActivity.getAmmo(4_294_967_298L))
+        assertEquals("Unsupported reference-argument getter must remain untouched", 13, GameActivity.getBullets("slot"))
         assertEquals("The original guest APK must stay unchanged", before, SourceInventory.hash(original, SourceInventory.Cancellation()))
     }
 }

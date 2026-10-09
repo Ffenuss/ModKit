@@ -11,12 +11,12 @@ import sys
 
 from unicorn import Uc, UC_ARCH_ARM64, UC_MODE_ARM
 from unicorn.arm64_const import (
-    UC_ARM64_REG_X0, UC_ARM64_REG_X30, UC_ARM64_REG_S0, UC_ARM64_REG_D0,
+    UC_ARM64_REG_X0, UC_ARM64_REG_X2, UC_ARM64_REG_X30, UC_ARM64_REG_S0, UC_ARM64_REG_D0,
     UC_ARM64_REG_CPACR_EL1,
 )
 
 
-def execute(code, kind, seed):
+def execute(code, kind, seed, primitive_argument=None):
     machine = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
     machine.mem_map(0x10000, 0x10000)
     machine.mem_map(0x30000, 0x1000)
@@ -26,6 +26,8 @@ def execute(code, kind, seed):
     machine.mem_write(0x30000 + (24 if kind == 'i' else 16), value)
     before = bytes(machine.mem_read(0x30000, 0x1000))
     machine.reg_write(UC_ARM64_REG_X0, 0x30000)
+    if primitive_argument is not None:
+        machine.reg_write(UC_ARM64_REG_X2, int(primitive_argument))
     machine.reg_write(UC_ARM64_REG_X30, 0x18000)
     machine.reg_write(UC_ARM64_REG_CPACR_EL1, 0x300000)
     machine.emu_start(0x10000, 0x18000, count=1000)
@@ -40,13 +42,16 @@ def execute(code, kind, seed):
 vectors = Path(sys.argv[1])
 results = []
 for line in (line for path in sys.argv[1:] for line in Path(path).read_text().splitlines()):
-    name, kind, seed, expected_before, expected_after, original, patched = line.split('\t')
-    before = execute(original, kind, seed)
-    after = execute(patched, kind, seed)
+    fields = line.split('\t')
+    assert len(fields) in (7, 8)
+    name, kind, seed, expected_before, expected_after, original, patched = fields[:7]
+    argument = fields[7] if len(fields) == 8 else None
+    before = execute(original, kind, seed, argument)
+    after = execute(patched, kind, seed, argument)
     assert before == float(expected_before), (name, before, expected_before)
     assert after == float(expected_after), (name, after, expected_after)
     results.append(dict(name=name, before=before, after=after, state_unchanged=True))
-expected_counts = {'native-verification.tsv': 3, 'native-catalog-verification.tsv': 2, 'native-jni-verification.tsv': 2}
+expected_counts = {'native-verification.tsv': 3, 'native-catalog-verification.tsv': 2, 'native-jni-verification.tsv': 4}
 assert len(results) == sum(expected_counts[Path(path).name] for path in sys.argv[1:])
 output = json.dumps({'engine': 'Unicorn 2.1.4 ARM64', 'results': results}, indent=2)
 vectors.with_suffix('.json').write_text(output + '\n')

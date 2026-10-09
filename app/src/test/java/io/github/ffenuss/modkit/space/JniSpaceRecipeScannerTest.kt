@@ -14,8 +14,27 @@ class JniSpaceRecipeScannerTest {
                 AArch64ScalarReturnEncoder.encodeHex(JniSpaceRecipeScanner.returnKind("J")!!, "9999").replace(" ", "")),
             listOf("jni-double-speed", "d", "1", "1", "2", "00106e1ec0035fd6",
                 AArch64ScalarReturnEncoder.encodeHex(JniSpaceRecipeScanner.returnKind("D")!!, "2").replace(" ", "")),
+            listOf("jni-parameter-int-ammo", "i", "0", "12", "9999", "40280011c0035fd6",
+                AArch64ScalarReturnEncoder.encodeHex(JniSpaceRecipeScanner.returnKind("I")!!, "9999").replace(" ", ""), "2"),
+            listOf("jni-parameter-long-ammo", "i", "0", "22", "9999", "40500011c0035fd6",
+                AArch64ScalarReturnEncoder.encodeHex(JniSpaceRecipeScanner.returnKind("I")!!, "9999").replace(" ", ""), "4294967298"),
         )
         File("build/native-jni-verification.tsv").apply { parentFile.mkdirs(); writeText(rows.joinToString("\n") { it.joinToString("\t") }) }
+    }
+    @Test fun primitiveGetterArgumentsRemainTypedAndBounded() {
+        assertTrue(JniSpaceRecipeScanner.supportedParameters(emptyList()))
+        assertTrue(JniSpaceRecipeScanner.supportedParameters(listOf("Z", "B", "C", "S", "I", "J", "F", "D")))
+        for (type in listOf("V", "[I", "[D", "Ljava/lang/String;", "Ldev/game/Player;", "", "II"))
+            assertFalse(JniSpaceRecipeScanner.supportedParameters(listOf(type)))
+        assertFalse(JniSpaceRecipeScanner.supportedParameters(List(9) { "I" }))
+        val intAmmo = JniSpaceRecipeScanner.Method("Ldev/game/Player;", "getAmmo", "I", listOf("I"))
+        val longAmmo = intAmmo.copy(parameters = listOf("J"))
+        val declarations = listOf(intAmmo, longAmmo)
+        val exports = setOf(intAmmo.longName, longAmmo.longName)
+        assertEquals(intAmmo.longName, JniSpaceRecipeScanner.exportName(intAmmo, declarations, exports))
+        assertEquals(longAmmo.longName, JniSpaceRecipeScanner.exportName(longAmmo, declarations, exports))
+        assertNotEquals(intAmmo.key, longAmmo.key)
+        assertNull(JniSpaceRecipeScanner.exportName(intAmmo, declarations, exports + intAmmo.shortName))
     }
     @Test fun wideJniGettersUseTheirDeclaredReturnAbi() {
         assertNotNull(DexLocalPatchEngine.nativeGameplayKind("Ldev/game/Player;", "getStamina", "J"))
