@@ -279,6 +279,7 @@ class AutoModDeviceTest {
             val intAmmo = getters.single { it.getString("evidence").endsWith("->getAmmo(I)I") }
             val longAmmo = getters.single { it.getString("evidence").endsWith("->getAmmo(J)I") }
             assertNotEquals(intAmmo.getString("id"), longAmmo.getString("id"))
+            assertNotEquals("Overloads must have distinguishable menu labels", intAmmo.getString("title"), longAmmo.getString("title"))
             assertNotEquals(intAmmo.getJSONObject("patch").getLong("address"), longAmmo.getJSONObject("patch").getLong("address"))
             assertEquals("40280011c0035fd6", intAmmo.getJSONObject("patch").getString("expected"))
             assertEquals("40500011c0035fd6", longAmmo.getJSONObject("patch").getString("expected"))

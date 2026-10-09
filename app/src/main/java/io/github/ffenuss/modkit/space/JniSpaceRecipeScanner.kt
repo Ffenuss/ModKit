@@ -49,8 +49,10 @@ internal object JniSpaceRecipeScanner {
         "D" -> Il2CppNativeReturnKind.FLOAT64
         else -> null
     }
+    private val primitiveNames = mapOf("Z" to "boolean", "B" to "byte", "C" to "char", "S" to "short",
+        "I" to "int", "J" to "long", "F" to "float", "D" to "double")
     internal fun supportedParameters(parameters: List<String>): Boolean =
-        parameters.size <= 8 && parameters.all { it in setOf("Z", "B", "C", "S", "I", "J", "F", "D") }
+        parameters.size <= 8 && parameters.all { it in primitiveNames }
     private fun check(signal: CancellationSignal) { if (signal.isCancelled()) throw AnalysisCancelledException() }
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
 
@@ -142,7 +144,9 @@ internal object JniSpaceRecipeScanner {
                         val replacement = prefix + Il2CppNativeMutationDraftBuilder.parseHex(AArch64ScalarReturnEncoder.encodeHex(returnKind, value))
                         if (replacement.size > symbol.size || replacement.size > 64 || replacement.contentEquals(code.copyOf(replacement.size)) ||
                             symbols.any { it.value > symbol.value && it.value < symbol.value + replacement.size }) return@candidate
-                        found += Triple(method, name, Recipe("jni:" + hex(MessageDigest.getInstance("SHA-256").digest(method.key.toByteArray())), kind.first.label.substringBefore(" /") + " · значение $value",
+                        val argumentLabel = if (method.parameters.isEmpty()) "" else
+                            " · ${method.name}(${method.parameters.joinToString(", ") { requireNotNull(primitiveNames[it]) }})"
+                        found += Triple(method, name, Recipe("jni:" + hex(MessageDigest.getInstance("SHA-256").digest(method.key.toByteArray())), kind.first.label.substringBefore(" /") + " · значение $value" + argumentLabel,
                             kind.first.label.substringBefore(" /"), method.key, img.module, symbol.value,
                             hex(code.copyOf(replacement.size)), hex(replacement), imageHash))
                     }
