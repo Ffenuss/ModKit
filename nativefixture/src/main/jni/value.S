@@ -116,6 +116,57 @@ Java_dev_modkit_nativefixture_GameActivity_getAmmo__J:
 #endif
 .size Java_dev_modkit_nativefixture_GameActivity_getAmmo__J, .-Java_dev_modkit_nativefixture_GameActivity_getAmmo__J
 #endif
+// Narrow JNI results: signed byte/short and unsigned char, each its own body.
+#if defined(__aarch64__) || defined(__x86_64__)
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getEnergy
+#if defined(__aarch64__)
+.type Java_dev_modkit_nativefixture_GameActivity_getEnergy, %function
+Java_dev_modkit_nativefixture_GameActivity_getEnergy:
+    mov w0, #-7
+    ret
+#else
+.type Java_dev_modkit_nativefixture_GameActivity_getEnergy, @function
+Java_dev_modkit_nativefixture_GameActivity_getEnergy:
+    mov $-7, %eax
+    ret
+    nop
+    nop
+#endif
+.size Java_dev_modkit_nativefixture_GameActivity_getEnergy, .-Java_dev_modkit_nativefixture_GameActivity_getEnergy
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getMaxHealth
+#if defined(__aarch64__)
+.type Java_dev_modkit_nativefixture_GameActivity_getMaxHealth, %function
+Java_dev_modkit_nativefixture_GameActivity_getMaxHealth:
+    mov w0, #-300
+    ret
+#else
+.type Java_dev_modkit_nativefixture_GameActivity_getMaxHealth, @function
+Java_dev_modkit_nativefixture_GameActivity_getMaxHealth:
+    mov $-300, %eax
+    ret
+    nop
+    nop
+#endif
+.size Java_dev_modkit_nativefixture_GameActivity_getMaxHealth, .-Java_dev_modkit_nativefixture_GameActivity_getMaxHealth
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getMagazineSize
+#if defined(__aarch64__)
+.type Java_dev_modkit_nativefixture_GameActivity_getMagazineSize, %function
+Java_dev_modkit_nativefixture_GameActivity_getMagazineSize:
+    mov w0, #50000
+    ret
+#else
+.type Java_dev_modkit_nativefixture_GameActivity_getMagazineSize, @function
+Java_dev_modkit_nativefixture_GameActivity_getMagazineSize:
+    mov $50000, %eax
+    ret
+    nop
+    nop
+#endif
+.size Java_dev_modkit_nativefixture_GameActivity_getMagazineSize, .-Java_dev_modkit_nativefixture_GameActivity_getMagazineSize
+#endif
 #if defined(__aarch64__) || defined(__arm__)
 .section .note.GNU-stack,"",%progbits
 #else

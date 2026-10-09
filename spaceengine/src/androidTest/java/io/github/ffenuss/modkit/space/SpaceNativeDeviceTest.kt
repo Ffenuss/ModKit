@@ -218,7 +218,53 @@ class SpaceNativeDeviceTest {
             wrong.getJSONArray("items").getJSONObject(0).getJSONObject("patch").put("imageSha256", "b".repeat(64))
             val rejected = SpaceNativeController(MenuProfile(wrong.toString()), SpaceNativeBackend(listOf(original)))
             rejected.refresh(); assertFalse(rejected.set("fixture-value", true)); assertEquals(7, GameActivity.readNativeValue())
+            if (abi in setOf("arm64-v8a", "x86_64")) {
+                verifyNarrowReturns(original, image, abi, token)
+                assertEquals(before, SourceInventory.hash(original, token))
+            }
         } finally { original.delete() }
+    }
+
+    private fun verifyNarrowReturns(original: File, image: File, abi: String, token: SourceInventory.Cancellation) {
+        val getters = listOf(Triple("getEnergy", -7, 127), Triple("getMaxHealth", -300, 9999),
+            Triple("getMagazineSize", 50000, 9999))
+        fun read() = listOf(GameActivity.getEnergy().toInt(), GameActivity.getMaxHealth().toInt(), GameActivity.getMagazineSize().code)
+        val originals = getters.map { it.second }
+        assertEquals(originals, read())
+        val hash = SourceInventory.hash(image, token)
+        val items = JSONArray()
+        for ((name, _, replacementValue) in getters) {
+            val (address, expected) = ElfImage.open(image, running).use { elf ->
+                val symbol = elf.dynamicSymbols.single { it.name == "Java_dev_modkit_nativefixture_GameActivity_$name" && it.defined }
+                assertEquals(8L, symbol.size)
+                symbol.value to requireNotNull(elf.readFileWindowAtVa(symbol.value, 8))
+            }
+            val replacement = if (abi == "arm64-v8a") {
+                val word = 0xd2800000L or (replacementValue.toLong() shl 5)
+                hex(ByteArray(4) { (word ushr (it * 8)).toByte() }) + "c0035fd6"
+            } else "b8" + hex(ByteArray(4) { (replacementValue ushr (it * 8)).toByte() }) + "c39090"
+            val item = profile(original, patch(abi, address, hex(expected), replacement, hash))
+                .getJSONArray("items").getJSONObject(0).put("id", name).put("title", name)
+            items.put(item)
+        }
+        val json = profile(original, items.getJSONObject(0).getJSONObject("patch")).put("items", items)
+        val controller = SpaceNativeController(MenuProfile(json.toString()), SpaceNativeBackend(listOf(original)))
+        controller.refresh()
+        getters.forEach { assertEquals(SpaceNativeController.State.OFF, controller.state(it.first)) }
+        try {
+            assertTrue(controller.set("getEnergy", true))
+            assertEquals(listOf(127, -300, 50000), read())
+            assertTrue(controller.set("getMaxHealth", true))
+            assertTrue(controller.set("getMagazineSize", true))
+            assertEquals(listOf(127, 9999, 9999), read())
+            assertTrue(controller.set("getEnergy", false))
+            assertEquals(listOf(-7, 9999, 9999), read())
+            assertTrue(controller.set("getMaxHealth", false))
+            assertEquals(listOf(-7, -300, 9999), read())
+            assertTrue(controller.restoreAll())
+            assertEquals(originals, read())
+            getters.forEach { assertEquals(SpaceNativeController.State.OFF, controller.state(it.first)) }
+        } finally { assertTrue(controller.restoreAll()) }
     }
 
     @Test fun uncertainRestorationCannotBecomeAnOffSwitch() {

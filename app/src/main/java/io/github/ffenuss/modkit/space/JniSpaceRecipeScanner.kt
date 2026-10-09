@@ -44,7 +44,7 @@ internal object JniSpaceRecipeScanner {
         return method.longName.takeIf { it in exported && longNameCounts[it] == 1 }
     }
     internal fun returnKind(result: String): Il2CppNativeReturnKind? = when (result) {
-        "Z", "I", "J" -> Il2CppNativeReturnKind.INTEGER
+        "Z", "B", "C", "S", "I", "J" -> Il2CppNativeReturnKind.INTEGER
         "F" -> Il2CppNativeReturnKind.FLOAT32
         "D" -> Il2CppNativeReturnKind.FLOAT64
         else -> null
@@ -53,6 +53,21 @@ internal object JniSpaceRecipeScanner {
         "I" to "int", "J" to "long", "F" to "float", "D" to "double")
     internal fun supportedParameters(parameters: List<String>): Boolean =
         parameters.size <= 8 && parameters.all { it in primitiveNames }
+    internal fun replacementValue(result: String, action: DexLocalAction): String {
+        val permitted = when (result) {
+            "Z" -> setOf(DexLocalAction.TRUE, DexLocalAction.FALSE)
+            "B", "C", "S", "I", "J" -> setOf(DexLocalAction.INT_9999, DexLocalAction.INT_99)
+            "F", "D" -> setOf(DexLocalAction.FLOAT_2)
+            else -> emptySet()
+        }
+        require(action in permitted) { "JNI action does not match the declared result type" }
+        val value = when (action) {
+            DexLocalAction.TRUE -> 1L; DexLocalAction.FALSE -> 0L
+            DexLocalAction.INT_9999 -> 9999L; DexLocalAction.INT_99 -> 99L; DexLocalAction.FLOAT_2 -> 2L
+        }
+        val maximum = when (result) { "B" -> 127L; "S" -> 32767L; "C" -> 65535L; else -> Long.MAX_VALUE }
+        return minOf(value, maximum).toString()
+    }
     private fun check(signal: CancellationSignal) { if (signal.isCancelled()) throw AnalysisCancelledException() }
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
 
@@ -137,14 +152,13 @@ internal object JniSpaceRecipeScanner {
                         val proof = AArch64ReadOnlyBody.inspect(code)
                         if (!proof.supported) return@candidate
                         val kind = requireNotNull(DexLocalPatchEngine.nativeGameplayKind(method.owner, method.name, method.result))
-                        val value = when (kind.second) { DexLocalAction.TRUE -> "1"; DexLocalAction.FALSE -> "0";
-                            DexLocalAction.INT_9999 -> "9999"; DexLocalAction.INT_99 -> "99"; DexLocalAction.FLOAT_2 -> "2" }
+                        val value = replacementValue(method.result, kind.second)
                         val returnKind = requireNotNull(returnKind(method.result))
                         val prefix = proof.entryLandingPad?.let { word -> (0..3).map { (word ushr (it * 8)).toByte() }.toByteArray() } ?: byteArrayOf()
                         val replacement = prefix + Il2CppNativeMutationDraftBuilder.parseHex(AArch64ScalarReturnEncoder.encodeHex(returnKind, value))
                         if (replacement.size > symbol.size || replacement.size > 64 || replacement.contentEquals(code.copyOf(replacement.size)) ||
                             symbols.any { it.value > symbol.value && it.value < symbol.value + replacement.size }) return@candidate
-                        val argumentLabel = if (method.parameters.isEmpty()) "" else
+                        val argumentLabel = if (method.parameters.isEmpty() && method.result !in setOf("B", "S", "C")) "" else
                             " · ${method.name}(${method.parameters.joinToString(", ") { requireNotNull(primitiveNames[it]) }})"
                         found += Triple(method, name, Recipe("jni:" + hex(MessageDigest.getInstance("SHA-256").digest(method.key.toByteArray())), kind.first.label.substringBefore(" /") + " · значение $value" + argumentLabel,
                             kind.first.label.substringBefore(" /"), method.key, img.module, symbol.value,

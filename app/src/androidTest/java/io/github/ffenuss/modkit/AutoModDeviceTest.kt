@@ -274,8 +274,18 @@ class AutoModDeviceTest {
             assertTrue(patch.getLong("address") > 0)
             assertEquals(64, patch.getString("imageSha256").length)
             assertNotEquals(patch.getString("expected"), patch.getString("replacement"))
-            assertEquals(5, menu.runtimeRecipes)
-            assertEquals(5, getters.size)
+            assertEquals(8, menu.runtimeRecipes)
+            assertEquals(8, getters.size)
+            for ((signature, expected, replacement) in listOf(
+                    Triple("getEnergy()B", "c0008012c0035fd6", "e00f80d2c0035fd6"),
+                    Triple("getMaxHealth()S", "60258012c0035fd6", "e0e184d2c0035fd6"),
+                    Triple("getMagazineSize()C", "006a9852c0035fd6", "e0e184d2c0035fd6"))) {
+                val narrow = getters.single { it.getString("evidence").endsWith("->$signature") }
+                assertEquals(expected, narrow.getJSONObject("patch").getString("expected"))
+                assertEquals(replacement, narrow.getJSONObject("patch").getString("replacement"))
+                assertTrue(narrow.getString("title").contains(signature.substringBefore('(')))
+                if (signature.endsWith("B")) assertTrue(narrow.getString("title").contains("значение 127"))
+            }
             val intAmmo = getters.single { it.getString("evidence").endsWith("->getAmmo(I)I") }
             val longAmmo = getters.single { it.getString("evidence").endsWith("->getAmmo(J)I") }
             assertNotEquals(intAmmo.getString("id"), longAmmo.getString("id"))

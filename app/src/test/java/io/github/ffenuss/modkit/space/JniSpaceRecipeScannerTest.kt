@@ -1,6 +1,7 @@
 package io.github.ffenuss.modkit.space
 
 import io.github.ffenuss.modkit.patch.DexLocalPatchEngine
+import io.github.ffenuss.modkit.patch.DexLocalAction
 import io.github.ffenuss.modkit.analysis.Il2CppNativeReturnKind
 import io.github.ffenuss.modkit.patch.AArch64ScalarReturnEncoder
 import java.io.File
@@ -18,6 +19,15 @@ class JniSpaceRecipeScannerTest {
                 AArch64ScalarReturnEncoder.encodeHex(JniSpaceRecipeScanner.returnKind("I")!!, "9999").replace(" ", ""), "2"),
             listOf("jni-parameter-long-ammo", "i", "0", "22", "9999", "40500011c0035fd6",
                 AArch64ScalarReturnEncoder.encodeHex(JniSpaceRecipeScanner.returnKind("I")!!, "9999").replace(" ", ""), "4294967298"),
+            listOf("jni-byte-energy", "b", "-7", "-7", "127", "c0008012c0035fd6",
+                AArch64ScalarReturnEncoder.encodeHex(JniSpaceRecipeScanner.returnKind("B")!!,
+                    JniSpaceRecipeScanner.replacementValue("B", DexLocalAction.INT_9999)).replace(" ", "")),
+            listOf("jni-short-health", "s", "-300", "-300", "9999", "60258012c0035fd6",
+                AArch64ScalarReturnEncoder.encodeHex(JniSpaceRecipeScanner.returnKind("S")!!,
+                    JniSpaceRecipeScanner.replacementValue("S", DexLocalAction.INT_9999)).replace(" ", "")),
+            listOf("jni-char-ammo", "c", "50000", "50000", "9999", "006a9852c0035fd6",
+                AArch64ScalarReturnEncoder.encodeHex(JniSpaceRecipeScanner.returnKind("C")!!,
+                    JniSpaceRecipeScanner.replacementValue("C", DexLocalAction.INT_9999)).replace(" ", "")),
         )
         File("build/native-jni-verification.tsv").apply { parentFile.mkdirs(); writeText(rows.joinToString("\n") { it.joinToString("\t") }) }
     }
@@ -49,8 +59,23 @@ class JniSpaceRecipeScannerTest {
         assertEquals(Il2CppNativeReturnKind.FLOAT32, JniSpaceRecipeScanner.returnKind("F"))
         assertEquals("00 10 60 1E C0 03 5F D6", AArch64ScalarReturnEncoder.encodeHex(JniSpaceRecipeScanner.returnKind("D")!!, "2"))
         assertEquals("E0 E1 84 D2 C0 03 5F D6", AArch64ScalarReturnEncoder.encodeHex(JniSpaceRecipeScanner.returnKind("J")!!, "9999"))
-        for (type in listOf("V", "B", "S", "C", "[J", "Ljava/lang/Double;")) assertNull(JniSpaceRecipeScanner.returnKind(type))
+        for (type in listOf("V", "[J", "Ljava/lang/Double;")) assertNull(JniSpaceRecipeScanner.returnKind(type))
         assertNull(DexLocalPatchEngine.nativeGameplayKind("Ldev/server/Player;", "getMoveSpeed", "D"))
+    }
+    @Test fun narrowJniDefaultsFitTheirDeclaredResultAndRejectMismatchedActions() {
+        for ((type, expected) in listOf("B" to "127", "S" to "9999", "C" to "9999")) {
+            assertEquals(Il2CppNativeReturnKind.INTEGER, JniSpaceRecipeScanner.returnKind(type))
+            assertEquals(expected, JniSpaceRecipeScanner.replacementValue(type, DexLocalAction.INT_9999))
+            assertEquals("99", JniSpaceRecipeScanner.replacementValue(type, DexLocalAction.INT_99))
+            assertNotNull(DexLocalPatchEngine.nativeGameplayKind("Ldev/game/Player;", "getHealth", type))
+            assertNull(DexLocalPatchEngine.nativeGameplayKind("Ldev/server/Player;", "getHealth", type))
+            assertThrows(IllegalArgumentException::class.java) { JniSpaceRecipeScanner.replacementValue(type, DexLocalAction.FLOAT_2) }
+            assertThrows(IllegalArgumentException::class.java) { JniSpaceRecipeScanner.replacementValue(type, DexLocalAction.TRUE) }
+        }
+        assertEquals("1", JniSpaceRecipeScanner.replacementValue("Z", DexLocalAction.TRUE))
+        assertEquals("0", JniSpaceRecipeScanner.replacementValue("Z", DexLocalAction.FALSE))
+        for (type in listOf("Z", "F", "D", "V", "[B", "Ljava/lang/Byte;"))
+            assertThrows(IllegalArgumentException::class.java) { JniSpaceRecipeScanner.replacementValue(type, DexLocalAction.INT_9999) }
     }
     @Test fun jniEncodingAndOverloadResolutionAreExact() {
         assertEquals("a_b_1c_2_3_00424_0d83d_0de00", JniSpaceRecipeScanner.mangle("a/b_c;[\u0424\uD83D\uDE00"))

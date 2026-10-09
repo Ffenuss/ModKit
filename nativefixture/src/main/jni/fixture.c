@@ -10,6 +10,15 @@ JNIEXPORT jint JNICALL Java_dev_modkit_nativefixture_GameActivity_readNativeValu
 }
 
 #if !defined(__aarch64__) && !defined(__x86_64__)
+JNIEXPORT jbyte JNICALL Java_dev_modkit_nativefixture_GameActivity_getEnergy(JNIEnv* env, jclass type) {
+    (void)env; (void)type; return -7;
+}
+JNIEXPORT jshort JNICALL Java_dev_modkit_nativefixture_GameActivity_getMaxHealth(JNIEnv* env, jclass type) {
+    (void)env; (void)type; return -300;
+}
+JNIEXPORT jchar JNICALL Java_dev_modkit_nativefixture_GameActivity_getMagazineSize(JNIEnv* env, jclass type) {
+    (void)env; (void)type; return 50000;
+}
 JNIEXPORT jlong JNICALL Java_dev_modkit_nativefixture_GameActivity_getStamina(JNIEnv* env, jclass type) {
     (void)env; (void)type; return 11;
 }

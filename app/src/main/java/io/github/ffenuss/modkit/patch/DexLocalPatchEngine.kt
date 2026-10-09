@@ -516,7 +516,7 @@ object DexLocalPatchEngine {
     internal fun nativeGameplayKind(className: String, methodName: String, returnType: String): Pair<DexLocalCategory, DexLocalAction>? {
         if (excludedClass(className)) return null
         // Native recipes encode the actual JNI ABI type separately from the semantic action.
-        val semanticType = when (returnType) { "J" -> "I"; "D" -> "F"; else -> returnType }
+        val semanticType = when (returnType) { "B", "C", "S", "J" -> "I"; "D" -> "F"; else -> returnType }
         return classify(methodName, semanticType, className)?.takeUnless {
             it.first in setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI)
         }

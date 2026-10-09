@@ -82,8 +82,8 @@ jobs:
           done
           "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
           "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee apk-signature-verification.txt
-          cp "$APK" ModKit-v0.0.42-debug.apk
-          sha256sum ModKit-v0.0.42-debug.apk > ModKit-v0.0.42-debug.apk.sha256
+          cp "$APK" ModKit-v0.0.43-debug.apk
+          sha256sum ModKit-v0.0.43-debug.apk > ModKit-v0.0.43-debug.apk.sha256
 
       - name: Upload test and lint reports
         if: always()
@@ -100,10 +100,10 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ModKit-v0.0.42-debug
+          name: ModKit-v0.0.43-debug
           path: |
-            ModKit-v0.0.42-debug.apk
-            ModKit-v0.0.42-debug.apk.sha256
+            ModKit-v0.0.43-debug.apk
+            ModKit-v0.0.43-debug.apk.sha256
           if-no-files-found: error
 
   device:

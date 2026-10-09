@@ -21,8 +21,9 @@ def execute(code, kind, seed, primitive_argument=None):
     machine.mem_map(0x10000, 0x10000)
     machine.mem_map(0x30000, 0x1000)
     machine.mem_write(0x10000, bytes.fromhex(code))
-    assert kind in ('i', 'j', 'f', 'd'), kind
-    value = struct.pack('<' + dict(i='i', j='q', f='f', d='d')[kind], int(seed) if kind in ('i', 'j') else float(seed))
+    assert kind in ('b', 's', 'c', 'i', 'j', 'f', 'd'), kind
+    value = struct.pack('<' + dict(b='b', s='h', c='H', i='i', j='q', f='f', d='d')[kind],
+                        int(seed) if kind in ('b', 's', 'c', 'i', 'j') else float(seed))
     machine.mem_write(0x30000 + (24 if kind == 'i' else 16), value)
     before = bytes(machine.mem_read(0x30000, 0x1000))
     machine.reg_write(UC_ARM64_REG_X0, 0x30000)
@@ -36,6 +37,10 @@ def execute(code, kind, seed, primitive_argument=None):
         return struct.unpack('<f', struct.pack('<I', machine.reg_read(UC_ARM64_REG_S0)))[0]
     if kind == 'd':
         return struct.unpack('<d', struct.pack('<Q', machine.reg_read(UC_ARM64_REG_D0)))[0]
+    if kind in ('b', 's', 'c'):
+        width = 1 if kind == 'b' else 2
+        bits = machine.reg_read(UC_ARM64_REG_X0) & ((1 << (width * 8)) - 1)
+        return struct.unpack('<' + dict(b='b', s='h', c='H')[kind], bits.to_bytes(width, 'little'))[0]
     return machine.reg_read(UC_ARM64_REG_X0)
 
 
@@ -51,7 +56,7 @@ for line in (line for path in sys.argv[1:] for line in Path(path).read_text().sp
     assert before == float(expected_before), (name, before, expected_before)
     assert after == float(expected_after), (name, after, expected_after)
     results.append(dict(name=name, before=before, after=after, state_unchanged=True))
-expected_counts = {'native-verification.tsv': 3, 'native-catalog-verification.tsv': 2, 'native-jni-verification.tsv': 4}
+expected_counts = {'native-verification.tsv': 3, 'native-catalog-verification.tsv': 2, 'native-jni-verification.tsv': 7}
 assert len(results) == sum(expected_counts[Path(path).name] for path in sys.argv[1:])
 output = json.dumps({'engine': 'Unicorn 2.1.4 ARM64', 'results': results}, indent=2)
 vectors.with_suffix('.json').write_text(output + '\n')

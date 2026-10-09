@@ -17,6 +17,9 @@ public final class GameActivity extends Activity {
     public static native int getAmmo(int slot);
     public static native int getAmmo(long slot);
     public static native int getBullets(String slot);
+    public static native byte getEnergy();
+    public static native short getMaxHealth();
+    public static native char getMagazineSize();
     private TextView value;
 
     @Override public void onCreate(Bundle saved) {
