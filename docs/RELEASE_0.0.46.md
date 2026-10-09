@@ -1,5 +1,7 @@
 # ModKit 0.0.46 — implementation and validation
 
+This is the earlier Math-only checkpoint. The current signed build with ARM32/x86_64 support and final validation is recorded in [SIGNED_RELEASE_0.0.46.md](SIGNED_RELEASE_0.0.46.md). Its signing status supersedes the historical blocker below.
+
 Code tested: `89cb4a8fc3e644d1c270cf9922345168191d1aac`.
 PR: https://github.com/Ffenuss/ModKit/pull/31
 Android CI: https://github.com/Ffenuss/ModKit/actions/runs/37984662887
