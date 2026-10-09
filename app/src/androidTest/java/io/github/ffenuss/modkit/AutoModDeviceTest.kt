@@ -334,6 +334,30 @@ class AutoModDeviceTest {
                 assertEquals("An unsupported module identity cannot invalidate a guest profile", 0, rejected.runtimeRecipes)
                 assertTrue(rejected.warnings.any { it.contains("неподдерживаемое имя библиотеки") })
             } finally { unsupported.delete() }
+            for (flag in listOf(0x400, 0)) {
+                val badAbi = File(context.cacheDir, "jni-bad-arm-flags-$flag.apk")
+                try {
+                    java.util.zip.ZipFile(apk).use { input -> java.util.zip.ZipOutputStream(badAbi.outputStream()).use { output ->
+                        input.entries().asSequence().forEach { entry ->
+                            output.putNextEntry(java.util.zip.ZipEntry(entry.name))
+                            if (!entry.isDirectory) {
+                                val bytes = input.getInputStream(entry).use { it.readBytes() }
+                                if (entry.name == "lib/armeabi-v7a/libmodkit_fixture.so") {
+                                    // Explicit hard-float, then missing convention: neither proves Android softfp.
+                                    val flags = (5 shl 24) or flag
+                                    for (i in 0..3) bytes[36 + i] = (flags ushr (i * 8)).toByte()
+                                }
+                                output.write(bytes)
+                            }
+                            output.closeEntry()
+                        }
+                    } }
+                    val badScan = io.github.ffenuss.modkit.space.JniSpaceRecipeScanner.scan(listOf(badAbi), context.cacheDir, signal)
+                    assertTrue("An uncertain library index must not produce executable recipes", badScan.recipes.isEmpty())
+                    assertTrue(badScan.truncated)
+                    assertTrue(badScan.warnings.any { it.contains("Unsupported ARM calling convention") })
+                } finally { badAbi.delete() }
+            }
             assertEquals(before, java.security.MessageDigest.getInstance("SHA-256").digest(apk.readBytes()).toList())
         } finally { profile?.delete(); apk.delete() }
     }
