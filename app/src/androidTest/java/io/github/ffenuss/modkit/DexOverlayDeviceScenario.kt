@@ -44,6 +44,8 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             val sprint = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "canSprint" } }
             val ammo = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getAmmo" && m.signature == "()J" } }
             val speed = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getRunSpeed" && m.signature == "()D" } }
+            assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, ammo.dex.single().bodyKind)
+            assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, speed.dex.single().bodyKind)
             assertEquals(2, health.dex.size)
             val prepared = AutoModRuntimeTestMenuCoordinator.build(context,
                 AnalysisTargetDescriptor.FileUri(Uri.fromFile(source).toString(), "Owned DEX fixture"), analysis,

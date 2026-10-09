@@ -32,8 +32,7 @@ object DexMethodBodyInspector {
         val code = body.instructions.take(3)
         val wide = DexScalarReplacement.isWide(method.returnType)
         if (code.size != 2 || code[1].opcode != DexScalarReplacement.returnOpcode(method.returnType)) {
-            return if (wide) unsupported("Для вычисляемого wide-результата ещё нет доказанного потока данных.")
-                else DexReadOnlyBody.inspect(method)
+            return DexReadOnlyBody.inspect(method)
         }
         val source = code[0] as? OneRegisterInstruction ?: return unsupported("Источник результата не доказан.")
         val result = code[1] as? OneRegisterInstruction ?: return unsupported("Регистр результата не доказан.")
