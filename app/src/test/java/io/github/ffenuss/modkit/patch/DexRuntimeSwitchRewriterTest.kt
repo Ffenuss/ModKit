@@ -87,16 +87,21 @@ class DexRuntimeSwitchRewriterTest {
     }
 
     @Test fun mathCallsRemainInExactBackupsAndDisappearOnlyFromEnabledWrappers() {
-        for (type in listOf("I", "J", "F", "D")) {
+        for ((mathName, input, type) in listOf(
+            Triple("abs", "I", "I"), Triple("abs", "J", "J"), Triple("abs", "F", "F"), Triple("abs", "D", "D"),
+            Triple("round", "F", "I"), Triple("round", "D", "J"), Triple("floor", "D", "D"),
+            Triple("ceil", "D", "D"), Triple("sqrt", "D", "D"))) for (range in listOf(false, true)) {
+            val inputWide = input == "J" || input == "D"
             val wide = type == "J" || type == "D"
             val name = if (type == "I" || type == "J") "getAmmo" else "getRunSpeed"
-            val ref = ImmutableMethodReference("Ljava/lang/Math;", "abs", listOf(type), type)
-            val constant: Instruction = if (wide) ImmutableInstruction51l(Opcode.CONST_WIDE, 0,
-                if (type == "J") Long.MIN_VALUE else (-1.25).toBits())
-                else ImmutableInstruction31i(Opcode.CONST, 0, if (type == "I") Int.MIN_VALUE else (-1.25f).toBits())
+            val ref = ImmutableMethodReference("Ljava/lang/Math;", mathName, listOf(input), type)
+            val constant: Instruction = if (inputWide) ImmutableInstruction51l(Opcode.CONST_WIDE, 0,
+                if (input == "J") Long.MIN_VALUE else (-1.25).toBits())
+                else ImmutableInstruction31i(Opcode.CONST, 0, if (input == "I") Int.MIN_VALUE else (-1.25f).toBits())
             val bytes = dex(listOf(method(name, type, AccessFlags.PUBLIC.value or AccessFlags.STATIC.value,
-                if (wide) 2 else 1, constant,
-                ImmutableInstruction35c(Opcode.INVOKE_STATIC, if (wide) 2 else 1, 0, 1, 0, 0, 0, ref),
+                if (inputWide || wide) 2 else 1, constant,
+                if (range) ImmutableInstruction3rc(Opcode.INVOKE_STATIC_RANGE, 0, if (inputWide) 2 else 1, ref)
+                else ImmutableInstruction35c(Opcode.INVOKE_STATIC, if (inputWide) 2 else 1, 0, 1, 0, 0, 0, ref),
                 ImmutableInstruction11x(if (wide) Opcode.MOVE_RESULT_WIDE else Opcode.MOVE_RESULT, 0),
                 ImmutableInstruction11x(if (wide) Opcode.RETURN_WIDE else Opcode.RETURN, 0))))
             val selected = scan(bytes).single()
@@ -108,11 +113,20 @@ class DexRuntimeSwitchRewriterTest {
             assertEquals(type, backup.returnType)
             val backupCode = backup.implementation!!.instructions.toList()
             assertEquals(4, backupCode.size)
+            assertEquals(if (inputWide || wide) 2 else 1, backup.implementation!!.registerCount)
+            assertEquals(constant.opcode, backupCode[0].opcode)
+            if (inputWide) assertEquals((constant as WideLiteralInstruction).wideLiteral,
+                (backupCode[0] as WideLiteralInstruction).wideLiteral)
+            else assertEquals((constant as NarrowLiteralInstruction).narrowLiteral,
+                (backupCode[0] as NarrowLiteralInstruction).narrowLiteral)
+            assertEquals(if (wide) Opcode.RETURN_WIDE else Opcode.RETURN, backupCode[3].opcode)
+            assertEquals(if (range) Opcode.INVOKE_STATIC_RANGE else Opcode.INVOKE_STATIC, backupCode[1].opcode)
+            assertEquals(if (wide) Opcode.MOVE_RESULT_WIDE else Opcode.MOVE_RESULT, backupCode[2].opcode)
             val call = (backupCode[1] as ReferenceInstruction).reference as MethodReference
             assertEquals("Ljava/lang/Math;", call.definingClass)
-            assertEquals("abs", call.name)
+            assertEquals(mathName, call.name)
             assertEquals(type, call.returnType)
-            assertEquals(listOf(type), call.parameterTypes.map { it.toString() })
+            assertEquals(listOf(input), call.parameterTypes.map { it.toString() })
             assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, DexMethodBodyInspector.inspect(backup).kind)
             val wrapper = methods.single { it.name == name }.implementation!!.instructions.toList()
             assertEquals(DexRuntimeSwitchRewriter.backupName(selected.id),

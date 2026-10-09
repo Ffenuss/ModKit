@@ -174,7 +174,7 @@ object DexReadOnlyBody {
         }
         return DexMethodBodyEvidence(DexMethodBodyKind.READ_ONLY_COMPUTATION,
             "Проверены все достижимые ветви и скалярные/парные регистры: " +
-                if (mathCalls.any { it != null }) "только чтение, вычисления и точные Math.min/max/abs без записи состояния."
+                if (mathCalls.any { it != null }) "только чтение, вычисления и точные Math.min/max/abs/round/floor/ceil/sqrt без записи состояния."
                 else "вычисление без вызовов и записи состояния.")
     }
 

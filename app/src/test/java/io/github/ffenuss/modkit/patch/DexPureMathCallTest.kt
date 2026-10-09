@@ -42,6 +42,62 @@ class DexPureMathCallTest {
         }
     }
 
+    private val extraPrototypes = listOf(
+        Triple("round", "F", "I"), Triple("round", "D", "J"),
+        Triple("floor", "D", "D"), Triple("ceil", "D", "D"), Triple("sqrt", "D", "D"))
+
+    @Test fun acceptsNewExactPrototypesWithIndependentArgumentAndResultWidths() {
+        for ((name, input, output) in extraPrototypes) for (range in listOf(false, true)) {
+            val inputWidth = if (input == "D") 2 else 1
+            val outputWidth = if (output in listOf("J", "D")) 2 else 1
+            val ref = reference(name, output, parameters = listOf(input))
+            val invoke = call(ref, (2 until 2 + inputWidth).toList(), range)
+            val evidence = requireNotNull(DexPureMathCall.inspect(invoke))
+            assertEquals(listOf(2 to inputWidth), evidence.arguments)
+            assertEquals(outputWidth, evidence.resultWidth)
+            val move = if (outputWidth == 2) Opcode.MOVE_RESULT_WIDE else Opcode.MOVE_RESULT
+            val ret = if (outputWidth == 2) Opcode.RETURN_WIDE else Opcode.RETURN
+            val result = proof(output, listOf(input), 2 + inputWidth, invoke,
+                ImmutableInstruction11x(move, 0), ImmutableInstruction11x(ret, 0))
+            assertTrue("$name($input)$output range=$range: ${result.detail}", result.supportsScalarReplacement)
+            assertFalse(proof(output, listOf(input), 2 + inputWidth, invoke,
+                ImmutableInstruction11x(if (outputWidth == 2) Opcode.MOVE_RESULT else Opcode.MOVE_RESULT_WIDE, 0),
+                ImmutableInstruction11x(ret, 0)).supportsScalarReplacement)
+            assertFalse(proof(output, listOf(input), 2 + inputWidth,
+                ImmutableInstruction10t(Opcode.GOTO, 4), invoke,
+                ImmutableInstruction11x(move, 0), ImmutableInstruction11x(ret, 0)).supportsScalarReplacement)
+            assertFalse(proof(output, listOf(input), 2 + inputWidth,
+                ImmutableInstruction11n(Opcode.CONST_4, 0, 1),
+                ImmutableInstruction21t(Opcode.IF_EQZ, 0, 5), invoke,
+                ImmutableInstruction11x(move, 0), ImmutableInstruction11x(ret, 0)).supportsScalarReplacement)
+            if (inputWidth == 2) {
+                assertFalse(proof(output, listOf(input), 4,
+                    ImmutableInstruction11n(Opcode.CONST_4, 3, 1), invoke,
+                    ImmutableInstruction11x(move, 0), ImmutableInstruction11x(ret, 0)).supportsScalarReplacement)
+                assertFalse(proof(output, listOf(input), 4, call(ref, listOf(1, 2), range),
+                    ImmutableInstruction11x(move, 0), ImmutableInstruction11x(ret, 0)).supportsScalarReplacement)
+                assertNull(DexPureMathCall.inspect(call(ref, listOf(0, 2))))
+            }
+        }
+    }
+
+    @Test fun rejectsInventedRoundAndDoubleOnlyPrototypes() {
+        for (name in listOf("round", "floor", "ceil", "sqrt"))
+            for (input in listOf("I", "J", "F", "D")) for (output in listOf("I", "J", "F", "D")) {
+                if (Triple(name, input, output) in extraPrototypes) continue
+                val ref = reference(name, output, parameters = listOf(input))
+                assertNull("$name($input)$output", DexPureMathCall.inspect(call(ref,
+                    if (input in listOf("J", "D")) listOf(0, 1) else listOf(0))))
+            }
+        for ((name, input, output) in extraPrototypes) {
+            val words = if (input == "D") listOf(0, 1) else listOf(0)
+            assertNull(DexPureMathCall.inspect(call(reference(name, output, "Ldev/game/Math;", listOf(input)), words)))
+            assertNull(DexPureMathCall.inspect(call(reference(name, output, parameters = listOf(input, input)), words)))
+            assertNull(DexPureMathCall.inspect(call(reference(name, output, parameters = listOf(input)), words,
+                opcode = Opcode.INVOKE_VIRTUAL)))
+        }
+    }
+
     @Test fun rejectsOtherOwnersThrowingMethodsAndInventedOverloads() {
         val refs = listOf(reference("abs", "I", "Ldev/game/Math;"), reference("absExact", "I"),
             reference("random", "D", parameters = emptyList()), reference("min", "I", parameters = listOf("I", "J")),

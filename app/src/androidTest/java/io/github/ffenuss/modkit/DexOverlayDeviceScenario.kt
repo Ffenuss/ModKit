@@ -61,9 +61,11 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
                     .flatMap { entry -> org.jf.dexlib2.dexbacked.DexBackedDexFile(null,
                         archive.getInputStream(entry).use { it.readBytes() }).classes.asSequence() }
                     .single { it.type == "Ldev/modkit/fixture/PlayerStats;" }.methods.toList()
-                val expected = mapOf("getEnergy" to "min(II)I", "getMaxHealth" to "max(II)I",
+                val expected = listOf("getEnergy" to "min(II)I", "getMaxHealth" to "max(II)I",
                     "getMagazineSize" to "min(II)I", "getAmmo" to "max(JJ)J",
-                    "getRunSpeed" to "abs(D)D", "canSprint" to "min(FF)F")
+                    "getRunSpeed" to "abs(D)D", "canSprint" to "min(FF)F",
+                    "getEnergy" to "round(F)I", "getAmmo" to "round(D)J", "getRunSpeed" to "sqrt(D)D",
+                    "getRunSpeed" to "floor(D)D", "getRunSpeed" to "ceil(D)D")
                 expected.forEach { (name, prototype) ->
                     val calls = methods.single { it.name == name }.implementation!!.instructions.mapNotNull { instruction ->
                         ((instruction as? org.jf.dexlib2.iface.instruction.ReferenceInstruction)?.reference
