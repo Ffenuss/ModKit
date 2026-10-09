@@ -192,8 +192,9 @@ class DexReadOnlyBodyTest {
             ImmutableInstruction11x(Opcode.RETURN_WIDE, 0), // 11
             ImmutablePackedSwitchPayload(listOf(ImmutableSwitchElement(0, 4), ImmutableSwitchElement(1, 6))))
         assertFalse(DexReadOnlyBody.inspect(switchMethod(join)).supportsScalarReplacement)
-        val validJoin = join.toMutableList().apply { this[6] = ImmutableInstruction10x(Opcode.NOP) }
-        assertTrue(DexReadOnlyBody.inspect(switchMethod(validJoin)).supportsScalarReplacement)
+        val validJoin = join.toMutableList().apply { this[5] = ImmutableInstruction10x(Opcode.NOP) }
+        val proof = DexReadOnlyBody.inspect(switchMethod(validJoin))
+        assertTrue(proof.detail, proof.supportsScalarReplacement)
     }
 
     @Test fun rejectsSwitchLoopsInvalidTargetsAndExecutablePayloads() {
@@ -201,7 +202,7 @@ class DexReadOnlyBodyTest {
             val table = ImmutablePackedSwitchPayload(listOf(ImmutableSwitchElement(0, offset)))
             assertFalse("offset=$offset", DexReadOnlyBody.inspect(switchMethod(switchCode(Opcode.PACKED_SWITCH, table))).supportsScalarReplacement)
         }
-        val table = ImmutablePackedSwitchPayload(listOf(ImmutableSwitchElement(0, 6)))
+        val table = ImmutablePackedSwitchPayload(listOf(ImmutableSwitchElement(0, 6), ImmutableSwitchElement(1, 9)))
         val fallthrough = switchCode(Opcode.PACKED_SWITCH, table).toMutableList().apply {
             this[7] = ImmutableInstruction10t(Opcode.GOTO, 2) // 12 -> payload at 14
         }
