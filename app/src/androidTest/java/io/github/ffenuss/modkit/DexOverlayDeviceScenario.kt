@@ -38,26 +38,41 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             val root = File(context.filesDir, "dex-overlay-validation").apply { mkdirs() }
             val source = File(root, "fixture.apk")
             instrumentation.context.assets.open("fixture.apk").use { input -> source.outputStream().use { input.copyTo(it) } }
+            evidence("dex-owned-fixture.apk") { source.copyTo(it, overwrite = true) }
+            stage = "fixture-switch-opcodes"
             ZipFile(source).use { archive ->
-                val dex = org.jf.dexlib2.dexbacked.DexBackedDexFile(null,
-                    archive.getInputStream(requireNotNull(archive.getEntry("classes.dex"))).use { it.readBytes() })
-                val methods = dex.classes.single { it.type == "Ldev/modkit/fixture/PlayerStats;" }.methods.toList()
+                val classes = archive.entries().asSequence().filter { it.name.matches(Regex("classes(?:[0-9]+)?\\.dex")) }
+                    .flatMap { entry -> org.jf.dexlib2.dexbacked.DexBackedDexFile(null,
+                        archive.getInputStream(entry).use { it.readBytes() }).classes.asSequence() }.toList()
+                val methods = requireNotNull(classes.singleOrNull { it.type == "Ldev/modkit/fixture/PlayerStats;" }) {
+                    "PlayerStats missing: ${classes.map { it.type }}"
+                }.methods.toList()
                 for ((name, opcode) in listOf("getAmmo" to org.jf.dexlib2.Opcode.PACKED_SWITCH,
                         "getRunSpeed" to org.jf.dexlib2.Opcode.SPARSE_SWITCH)) {
-                    assertTrue("Owned fixture must execute $opcode", methods.single { it.name == name }
+                    assertTrue("Owned fixture must execute $opcode", requireNotNull(methods.singleOrNull { it.name == name }) {
+                        "Missing $name: ${methods.map { it.name }}"
+                    }
                         .implementation!!.instructions.any { it.opcode == opcode })
                 }
             }
             val analysis = FastArtifactIndexer.index(listOf(source), signal, progress)
             val scan = DexLocalPatchEngine.scanApks(listOf(source), false, signal)
             val recipes = DexRecipeCatalog.create(scan)
+            events.put(JSONObject().put("event", "discovered-recipes").put("observed",
+                recipes.joinToString("; ") { "${it.dex.map { m -> m.methodName + m.signature }}: ${it.blocker ?: "ready"}" })
+                .put("warnings", scan.warnings.joinToString("; ")))
+            stage = "discover-health"
             val health = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getHealth" } }
+            stage = "discover-sprint"
             val sprint = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "canSprint" } }
+            stage = "discover-ammo"
             val ammo = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getAmmo" && m.signature == "(JI)J" } }
+            stage = "discover-speed"
             val speed = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getRunSpeed" && m.signature == "(JDJI)D" } }
             assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, ammo.dex.single().bodyKind)
             assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, speed.dex.single().bodyKind)
             assertEquals(2, health.dex.size)
+            stage = "build"
             val prepared = AutoModRuntimeTestMenuCoordinator.build(context,
                 AnalysisTargetDescriptor.FileUri(Uri.fromFile(source).toString(), "Owned DEX fixture"), analysis,
                 PatchPreparationPlan(analysis.index.artifactSha256, false, System.currentTimeMillis(), emptyList(), emptyList()),
