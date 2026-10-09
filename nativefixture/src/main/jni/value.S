@@ -175,6 +175,7 @@ Java_dev_modkit_nativefixture_GameActivity_getMagazineSize:
 
 #if defined(__arm__)
 // ARM-state, base AAPCS/softfp fixtures. No padding is counted as function code.
+.text
 .macro ARM_GETTER name, low, high=-1
 .p2align 2
 .global Java_dev_modkit_nativefixture_GameActivity_\name

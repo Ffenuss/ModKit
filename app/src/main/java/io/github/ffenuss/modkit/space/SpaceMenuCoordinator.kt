@@ -112,7 +112,8 @@ object SpaceMenuCoordinator {
                         .put("state", if (recipe.selectable && recipe.verification.recipePrepared) "static_recipe" else "candidate")
                         .put("patch", nativePatches[recipe.id] ?: JSONObject.NULL)
                         .put("detail", (recipe.blocker ?: if (recipe.id !in nativePatches)
-                            "Для этого рецепта нет исполнителя внутри оригинального Space. DEX-изменения доступны через экспертное перепаковывание."
+                            if (recipe.native != null) "Для этого native-кандидата не подтверждены адрес, исходные байты или допустимый диапазон записи."
+                            else "Для этого DEX-рецепта нет исполнителя внутри оригинального Space. Доступно экспертное перепаковывание."
                             else recipe.description).take(400)) }))
                 if (cancellation.isCancelled()) throw AnalysisCancelledException()
                 // Rehash after scanners; no profile may bind stale or changing source bytes.
