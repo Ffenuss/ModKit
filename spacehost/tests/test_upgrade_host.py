@@ -6,10 +6,21 @@ import zipfile
 from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from upgrade_host import verify_predecessor, verify_preservation, verify_signature, HOST_CERTIFICATE
+from upgrade_host import verify_predecessor, verify_preservation, verify_signature, HOST_CERTIFICATE, NEW_HOST_CERTIFICATE
 
 
 class UpgradeTests(unittest.TestCase):
+    def test_replacement_signer_is_explicit_and_does_not_change_predecessor_trust(self):
+        replacement = 'Signer #1 certificate SHA-256 digest: ' + NEW_HOST_CERTIFICATE + '\n'
+        with patch('upgrade_host.signer', return_value=replacement):
+            with self.assertRaises(ValueError):
+                verify_signature('old.apk')
+            verify_signature('new.apk', NEW_HOST_CERTIFICATE)
+        original = 'Signer #1 certificate SHA-256 digest: ' + HOST_CERTIFICATE + '\n'
+        with patch('upgrade_host.signer', return_value=original):
+            with self.assertRaises(ValueError):
+                verify_signature('new.apk', NEW_HOST_CERTIFICATE)
+
     def test_signer_mismatch_or_multiple_signers_rejected(self):
         reports = ('Signer #1 certificate SHA-256 digest: incorrect\n', '',
                    'Signer #1 certificate SHA-256 digest: ' + HOST_CERTIFICATE + '\n' +

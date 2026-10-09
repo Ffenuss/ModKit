@@ -18,6 +18,7 @@ from patch_host import (old_signature, verify_overlay_payload,
 
 PREDECESSOR_SHA256 = '6f9cd491a2bc344538a515408d3f9b7682f494eab9caabab7f7dda372d4d79a6'
 HOST_CERTIFICATE = '03498720af5c326fc3a399d7c96aed5fdea2f378ec1799580bb119e1bcbc4b5f'
+NEW_HOST_CERTIFICATE = 'b44a6c2b53689c16cb08da3ca22e4aba20d9d0d1ecbc26df13e15c04b6665073'
 REPLACEABLE = {'classes4.dex', ENGINE_ASSET, ENGINE_HASH}
 
 
@@ -85,11 +86,11 @@ def signer(*arguments):
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
 
 
-def verify_signature(path):
+def verify_signature(path, certificate=HOST_CERTIFICATE):
     report = signer('verify', '--print-certs', path)
     certificates = re.findall(r'^Signer #\d+ certificate SHA-256 digest: (\w+)$',
                               report, re.MULTILINE)
-    if certificates != [HOST_CERTIFICATE]:
+    if certificates != [certificate]:
         raise ValueError('Space signer differs from authenticated host certificate')
 
 
@@ -120,7 +121,8 @@ def prepare(source, overlay, engine, output):
     return report
 
 
-def sign(source, unsigned, output):
+def sign(source, unsigned, output, new_key=False):
+    certificate = NEW_HOST_CERTIFICATE if new_key else HOST_CERTIFICATE
     output = Path(output)
     if output.resolve() in {Path(source).resolve(), Path(unsigned).resolve(),
                              Path(os.environ['MODKIT_SPACE_KEYSTORE']).resolve()}:
@@ -141,12 +143,13 @@ def sign(source, unsigned, output):
         if os.environ.get('MODKIT_SPACE_KEY_PASSWORD'):
             args += ['--key-pass', 'env:MODKIT_SPACE_KEY_PASSWORD']
         signer(*args, '--out', candidate, unsigned)
-        verify_signature(candidate)
+        verify_signature(candidate, certificate)
         subprocess.run([str(sdk_tools() / 'zipalign'), '-c', '-p', '4',
                         str(candidate)], check=True)
         report = verify_output(source, candidate)
         report['signed'] = True
-        report['certificate_sha256'] = HOST_CERTIFICATE
+        report['certificate_sha256'] = certificate
+        report['same_signer_update'] = not new_key
         candidate.replace(output)
     return report
 
@@ -158,11 +161,12 @@ if __name__ == '__main__':
     for argument in ('source', 'overlay', 'engine', 'output'):
         command.add_argument(argument)
     command = actions.add_parser('sign')
+    command.add_argument('--new-key', action='store_true', help='Fresh install with the explicitly pinned replacement key; cannot update the old signer')
     for argument in ('source', 'unsigned', 'output'):
         command.add_argument(argument)
     args = parser.parse_args()
     if args.action == 'prepare':
         result = prepare(args.source, args.overlay, args.engine, args.output)
     else:
-        result = sign(args.source, args.unsigned, args.output)
+        result = sign(args.source, args.unsigned, args.output, args.new_key)
     print(json.dumps(result, indent=2))

@@ -173,3 +173,14 @@ Local Java 8-target compilation and an isolated JVM harness against the producti
 The host picker now exposes one MK entry whose panel belongs to its Activity decor. It requests no system overlay grant, has no second floating bubble, and detaches on pause/destroy or guest launch. Target dialogs use the live Activity rather than an application-context system window. Guest menus retain their in-process lifecycle.
 
 Clicking the existing genre label opens correction without adding another toolbar control. A selected genre is retained on later analysis of the same package. Reordering preserves all source identities and exact native patch payloads and prioritizes executable items. Profile writes notify the read-only bridge; the host refreshes through authenticated/hash-checked sync while preserving its selected application. API35 host compilation and local Python tests passed; new host panel and genre-preservation Android tests are pending CI for this change.
+
+## Authorized replacement signing key (0.0.37)
+
+The companion ModKit trusts only the existing QA certificate and the explicitly
+pinned replacement certificate. `upgrade_host.py sign --new-key` verifies the
+old predecessor signature, then requires the new pinned certificate on output.
+This is a fresh installation, not a same-signer update; Android will reject an
+update over the old space. Removing the old space can erase its local guest data.
+The package, manifest and kernel remain unchanged. Preserve the new keystore
+and its credentials for subsequent updates; private signing material is never
+committed to this repository.
