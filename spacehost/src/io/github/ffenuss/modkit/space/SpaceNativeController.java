@@ -14,6 +14,7 @@ final class SpaceNativeController {
     private final Backend backend;
     private final Map<String, NativePatch> patches = new HashMap<>();
     private final Map<String, State> states = new HashMap<>();
+    private boolean closed;
     SpaceNativeController(MenuProfile profile, Backend backend) {
         this.backend = backend;
         for (MenuProfile.Item item : profile.items) if (item.patch != null) {
@@ -40,6 +41,10 @@ final class SpaceNativeController {
         }
     }
     synchronized boolean set(String id, boolean enabled) {
+        if (closed) return false;
+        return changeState(id, enabled);
+    }
+    private boolean changeState(String id, boolean enabled) {
         NativePatch patch = patches.get(id); State before = state(id);
         if (patch == null || before == State.ERROR || before == State.UNAVAILABLE) return false;
         try {
@@ -62,9 +67,14 @@ final class SpaceNativeController {
         refresh();
         boolean restored = true;
         for (String id : patches.keySet()) {
-            if (state(id) == State.ON) restored &= set(id, false);
+            if (state(id) == State.ON) restored &= changeState(id, false);
             if (state(id) == State.ERROR) restored = false;
         }
         return restored;
+    }
+    /** Fence queued/in-flight writes and restore under the same lock as set(). */
+    synchronized boolean close() {
+        closed = true;
+        return restoreAll();
     }
 }

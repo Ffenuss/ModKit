@@ -141,6 +141,11 @@ An observed guest is accepted only when its package and Application match the vi
 
 The guest menu attaches to resumed Activity decor without requiring root or the system overlay grant. Only explicit schema-2 patches have switches. Library identity, original bytes, executable segment bounds and a unique loaded module are checked before writing. Disabling restores the recorded original bytes; an uncertain write or permission restoration is reported as an error rather than an OFF state. Selecting another app first restores enabled recipes.
 
+Closing the guest menu fences commands inside the native controller's lock:
+an in-flight write finishes before restoration, and queued commands cannot
+re-enable a recipe after closure. Closure still reports uncertain restoration as
+an error, and repeated closure can retry a previously rejected safe restoration.
+
 The runtime payload is obtained from the authenticated installed ModKit provider, verified by SHA-256 and ELF ABI, and staged read-only in host private code cache. An updated ModKit installation is required as well as the updated space host. The main exporter emits ARM64 IL2CPP and typed exported JNI patches; DEX candidates and other engines do not become executable merely because they were detected. Native loader support for four ABIs is infrastructure, not universal engine/version compatibility. Root devices can use the same guest-process route, but this change adds no root-only external-process executor.
 
 A new owned-fixture Android test loads a real ELF, applies a recipe, observes 7 → 999 → 7, checks restore-all, rejects a wrong library hash and verifies unchanged source APK and library bytes. All nine space device tests passed in workflow run 37818451654. Java/API35 compilation and the exact-reference Python checks passed locally. Proprietary host startup, Google login and third-party game effects still require device verification.

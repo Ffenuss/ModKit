@@ -84,7 +84,7 @@ final class SpaceGuestMenu {
     }
     boolean close() {
         closed = true; UI.removeCallbacks(capabilityTick);
-        boolean restored = controller == null || controller.restoreAll();
+        boolean restored = controller == null || controller.close();
         session.application.unregisterActivityLifecycleCallbacks(callbacks); detach();
         synchronized (SpaceGuestMenu.class) { if (installed == this) installed = null; }
         return restored;

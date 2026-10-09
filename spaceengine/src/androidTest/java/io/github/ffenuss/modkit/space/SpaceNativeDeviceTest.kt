@@ -21,6 +21,8 @@ class SpaceNativeDeviceTest {
         var available = true
         var fail = false
         var writes = 0
+        var rejectWrites = false
+        var beforeWrite: (() -> Unit)? = null
         override fun imageMatches(patch: NativePatch): Boolean {
             if (fail) throw IllegalStateException("Image lookup failed")
             return available
@@ -28,10 +30,70 @@ class SpaceNativeDeviceTest {
         override fun bytesMatch(patch: NativePatch, bytes: ByteArray) = memory.contentEquals(bytes)
         override fun write(patch: NativePatch, expected: ByteArray, replacement: ByteArray): Int {
             writes++
+            beforeWrite?.invoke()
+            if (rejectWrites) return 0
             if (!memory.contentEquals(expected)) return 0
             memory = replacement.copyOf()
             return 1
         }
+    }
+
+    @Test fun closingFencesQueuedCommandsAndRestoresInFlightWrites() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val original = File(context.cacheDir, "close-fence-fixture").apply { writeText("owned") }
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val menu = MenuProfile(profile(original, patch("arm64-v8a", 16,
+                "e0008052c0035fd6", "e07c8052c0035fd6", "a".repeat(64))).toString())
+            val nativePatch = menu.items.single().patch!!
+            val backend = MutableBackend(nativePatch)
+            val controller = SpaceNativeController(menu, backend)
+            controller.refresh()
+            val writing = java.util.concurrent.CountDownLatch(1)
+            val releaseWrite = java.util.concurrent.CountDownLatch(1)
+            val closing = java.util.concurrent.CountDownLatch(1)
+            backend.beforeWrite = {
+                if (backend.writes == 1) {
+                    writing.countDown()
+                    assertTrue(releaseWrite.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                }
+            }
+            val enabling = executor.submit(java.util.concurrent.Callable { controller.set("fixture-value", true) })
+            assertTrue(writing.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            val ending = executor.submit(java.util.concurrent.Callable {
+                closing.countDown(); controller.close()
+            })
+            assertTrue(closing.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            releaseWrite.countDown()
+            assertTrue(enabling.get(5, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(ending.get(5, java.util.concurrent.TimeUnit.SECONDS))
+            assertArrayEquals(nativePatch.expected, backend.memory)
+            assertEquals(SpaceNativeController.State.OFF, controller.state("fixture-value"))
+            val writes = backend.writes
+            assertFalse("Commands queued before closure must not re-enable code", controller.set("fixture-value", true))
+            assertFalse(controller.set("fixture-value", false))
+            assertTrue(controller.close())
+            assertEquals("Repeated closure and queued commands must not write", writes, backend.writes)
+
+            val uncertainBackend = MutableBackend(nativePatch)
+            val uncertain = SpaceNativeController(menu, uncertainBackend)
+            uncertain.refresh(); assertTrue(uncertain.set("fixture-value", true))
+            uncertainBackend.memory = ByteArray(nativePatch.expected.size) { 0x55.toByte() }
+            assertFalse("Closure must report failed restoration", uncertain.close())
+            assertEquals(SpaceNativeController.State.ERROR, uncertain.state("fixture-value"))
+            assertFalse(uncertain.set("fixture-value", true))
+
+            val retryBackend = MutableBackend(nativePatch)
+            val retry = SpaceNativeController(menu, retryBackend)
+            retry.refresh(); assertTrue(retry.set("fixture-value", true))
+            retryBackend.rejectWrites = true
+            assertFalse(retry.close())
+            assertEquals(SpaceNativeController.State.ON, retry.state("fixture-value"))
+            assertFalse(retry.set("fixture-value", true))
+            retryBackend.rejectWrites = false
+            assertTrue("A closed session may retry a safe rejected restoration", retry.close())
+            assertArrayEquals(nativePatch.expected, retryBackend.memory)
+        } finally { executor.shutdownNow(); original.delete() }
     }
 
     @Test fun liveStateDriftRejectsRefreshRepeatedRequestsAndCleanRestore() {
