@@ -37,6 +37,33 @@ Requires Python 3.10+, Java 17, apktool 2.12.1+, Android API35 SDK and build-too
 
 Run `bash spacehost/build.sh /path/to/Launcher.apk /path/to/ModKit-Space.apk`.
 
+### Upgrade an existing native-recipes test host
+
+`upgrade_host.py` provides a separate route for the previously signed
+`ModKit-Space-native-recipes-test.apk` (SHA256
+`6f9cd491a2bc344538a515408d3f9b7682f494eab9caabab7f7dda372d4d79a6`).
+It validates this exact predecessor and its single authenticated signer, then
+replaces only `classes4.dex` and the two engine assets. Every other decompressed
+entry must remain identical, including the bootstrap DEX, binary manifest,
+resources and virtual engine. Original-host validation is unchanged.
+
+Build the current host DEX and engine carrier as in the source CI, then run:
+
+```sh
+python3 spacehost/upgrade_host.py prepare OLD_SPACE.apk HOST_CLASSES.dex ENGINE.apk SPACE_UNSIGNED.apk
+python3 spacehost/upgrade_host.py sign OLD_SPACE.apk SPACE_UNSIGNED.apk SPACE_UPDATED.apk
+```
+
+Both commands use `MODKIT_SPACE_BUILD_TOOLS` or `ANDROID_SDK_ROOT`. An optional
+`MODKIT_SPACE_JAVA` selects the Java executable. The sign command uses the same
+keystore, alias and password environment variables as `build.sh`; an independent
+key password can be supplied as `MODKIT_SPACE_KEY_PASSWORD`. Secrets are never
+command-line arguments. Preparing an unsigned APK does not require a password;
+it is an intermediate file and cannot be installed as an update. Signing stages
+the result and publishes it only after signer, alignment and preservation checks.
+The manifest version is retained; Android permits same-version updates signed
+with the existing key. This packaging check does not prove phone compatibility.
+
 The reference SHA256 must be `251acbe2e3199b4a7b6454a495dcdeac0a479dfa00b14066f4615fed37bc6719`. Any different or already modified APK is rejected. No guest APK is a build input.
 
 ## Verification
