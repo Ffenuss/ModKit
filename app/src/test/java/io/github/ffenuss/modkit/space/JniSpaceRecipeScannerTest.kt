@@ -35,6 +35,11 @@ class JniSpaceRecipeScannerTest {
         assertEquals(longAmmo.longName, JniSpaceRecipeScanner.exportName(longAmmo, declarations, exports))
         assertNotEquals(intAmmo.key, longAmmo.key)
         assertNull(JniSpaceRecipeScanner.exportName(intAmmo, declarations, exports + intAmmo.shortName))
+        val ambiguousReturn = intAmmo.copy(result = "J")
+        assertEquals(intAmmo.longName, ambiguousReturn.longName)
+        assertNull(JniSpaceRecipeScanner.exportName(intAmmo, listOf(intAmmo, ambiguousReturn), exports))
+        assertNull(JniSpaceRecipeScanner.exportName(ambiguousReturn, listOf(intAmmo, ambiguousReturn), exports))
+        assertNull(JniSpaceRecipeScanner.exportName(intAmmo, listOf(intAmmo, intAmmo), exports))
     }
     @Test fun wideJniGettersUseTheirDeclaredReturnAbi() {
         assertNotNull(DexLocalPatchEngine.nativeGameplayKind("Ldev/game/Player;", "getStamina", "J"))

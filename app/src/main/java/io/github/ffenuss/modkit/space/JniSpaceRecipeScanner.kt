@@ -31,13 +31,17 @@ internal object JniSpaceRecipeScanner {
         })
     }
     fun exportName(method: Method, declarations: List<Method>, exported: Set<String>): String? {
-        return exportName(method, declarations.groupingBy { it.owner to it.name }.eachCount(), exported)
+        return exportName(method, declarations.groupingBy { it.owner to it.name }.eachCount(),
+            declarations.groupingBy { it.longName }.eachCount(), exported)
     }
-    private fun exportName(method: Method, overloadCounts: Map<Pair<String, String>, Int>, exported: Set<String>): String? {
+    private fun exportName(method: Method, overloadCounts: Map<Pair<String, String>, Int>,
+        longNameCounts: Map<String, Int>, exported: Set<String>): String? {
         if (method.shortName in exported) return method.shortName.takeIf {
             overloadCounts[method.owner to method.name] == 1
         }
-        return method.longName.takeIf { it in exported }
+        // JNI's long name does not encode the return type. DEX declarations that
+        // share owner/name/arguments cannot prove which return ABI the export uses.
+        return method.longName.takeIf { it in exported && longNameCounts[it] == 1 }
     }
     internal fun returnKind(result: String): Il2CppNativeReturnKind? = when (result) {
         "Z", "I", "J" -> Il2CppNativeReturnKind.INTEGER
@@ -78,6 +82,7 @@ internal object JniSpaceRecipeScanner {
         } }
         val declarationCounts = declarations.groupingBy { it.key }.eachCount()
         val overloadCounts = declarations.groupingBy { it.owner to it.name }.eachCount()
+        val longNameCounts = declarations.groupingBy { it.longName }.eachCount()
         val candidates = declarations.filter { supportedParameters(it.parameters) && returnKind(it.result) != null &&
             DexLocalPatchEngine.nativeGameplayKind(it.owner, it.name, it.result) != null && declarationCounts[it.key] == 1 }
         if (candidates.isEmpty()) return Scan(emptyList(), warnings, truncated)
@@ -121,7 +126,7 @@ internal object JniSpaceRecipeScanner {
                         warnings += "JNI: неподдерживаемое имя библиотеки: ${img.module}"; return@use
                     }
                     candidates.forEach candidate@ { method ->
-                        val name = exportName(method, overloadCounts, exported) ?: return@candidate
+                        val name = exportName(method, overloadCounts, longNameCounts, exported) ?: return@candidate
                         val symbol = symbols.singleOrNull { it.name == name } ?: return@candidate
                         if (symbols.count { it.value == symbol.value } != 1 || symbol.value <= 0 || symbol.value > Long.MAX_VALUE - 64 || symbol.value % 4L != 0L ||
                             symbol.size !in 8..1024 || symbol.size % 4L != 0L || !elf.isExecutableVa(symbol.value) ||
@@ -151,7 +156,7 @@ internal object JniSpaceRecipeScanner {
         // The VM may search several loaded libraries. Never select an arbitrary matching export.
         if (incomplete) return Scan(emptyList(), warnings + "JNI: индекс библиотек не подтверждён", true)
         val recipes = found.groupBy { it.first.key }.values.filter { it.size == 1 }.map { it.single() }
-            .filter { (method, name, _) -> name == exportName(method, overloadCounts, owners.keys) && owners[name] == 1 }.map { it.third }
+            .filter { (method, name, _) -> name == exportName(method, overloadCounts, longNameCounts, owners.keys) && owners[name] == 1 }.map { it.third }
         return Scan(recipes.take(128), warnings.distinct().take(32), recipes.size > 128)
     }
 }
