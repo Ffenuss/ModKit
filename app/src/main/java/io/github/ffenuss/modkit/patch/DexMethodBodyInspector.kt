@@ -50,8 +50,16 @@ object DexMethodBodyInspector {
         if (field.definingClass != method.definingClass || field.type != method.returnType) {
             return unsupported("Тип или владелец прочитанного поля не совпадает с методом.")
         }
-        val instanceOpcode = if (wide) Opcode.IGET_WIDE else if (field.type == "Z") Opcode.IGET_BOOLEAN else Opcode.IGET
-        val staticOpcode = if (wide) Opcode.SGET_WIDE else if (field.type == "Z") Opcode.SGET_BOOLEAN else Opcode.SGET
+        val instanceOpcode = when (field.type) {
+            "J", "D" -> Opcode.IGET_WIDE; "Z" -> Opcode.IGET_BOOLEAN
+            "B" -> Opcode.IGET_BYTE; "S" -> Opcode.IGET_SHORT; "C" -> Opcode.IGET_CHAR
+            else -> Opcode.IGET
+        }
+        val staticOpcode = when (field.type) {
+            "J", "D" -> Opcode.SGET_WIDE; "Z" -> Opcode.SGET_BOOLEAN
+            "B" -> Opcode.SGET_BYTE; "S" -> Opcode.SGET_SHORT; "C" -> Opcode.SGET_CHAR
+            else -> Opcode.SGET
+        }
         if (code[0].opcode == instanceOpcode) {
             val read = code[0] as? TwoRegisterInstruction ?: return unsupported("Нет регистра объекта.")
             if (AccessFlags.STATIC.isSet(method.accessFlags) || read.registerB != DexMethodParameters.thisRegister(method, body.registerCount)) {

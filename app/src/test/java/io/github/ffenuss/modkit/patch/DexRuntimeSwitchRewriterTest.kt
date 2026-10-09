@@ -49,6 +49,42 @@ class DexRuntimeSwitchRewriterTest {
         } finally { root.deleteRecursively() }
     }
 
+    @Test fun narrowResultsKeepTheirExactPrototypeAndOriginalBits() {
+        for ((type, originalValue) in listOf("B" to -7, "S" to -300, "C" to 50000)) for (static in listOf(false, true)) {
+            val name = when (type) { "B" -> "getEnergy"; "S" -> "getMaxHealth"; else -> "getMagazineSize" }
+            val bytes = dex(listOf(method(name, type,
+                AccessFlags.PUBLIC.value or if (static) AccessFlags.STATIC.value else 0, if (static) 1 else 2,
+                ImmutableInstruction31i(Opcode.CONST, 0, originalValue), ImmutableInstruction11x(Opcode.RETURN, 0))))
+            val selected = scan(bytes).single()
+            assertTrue(selected.selectable)
+            assertEquals("()$type", selected.signature)
+            val recipe = DexRecipeCatalog.create(DexLocalPatchEngine.scanDex(bytes, 0, "classes.dex", false, signal)).single()
+            val replacement = if (type == "B") 127 else 9999
+            assertTrue(recipe.title.contains("значение $replacement"))
+            assertTrue(recipe.title.contains("$name()"))
+            assertEquals("Возвращать $replacement", selected.actionLabel)
+            val actual = rewrite(bytes, listOf(DexRuntimeSelection(selected, DexRuntimeSwitchRewriter.switchId(recipe.id))))
+                .classes.single().methods.toList()
+            val live = actual.single { it.name == name }
+            val backup = actual.single { it.name == DexRuntimeSwitchRewriter.backupName(selected.id) }
+            assertEquals(type, live.returnType)
+            assertEquals(type, backup.returnType)
+            assertEquals(originalValue, (backup.implementation!!.instructions.first() as NarrowLiteralInstruction).narrowLiteral)
+            val code = live.implementation!!.instructions.toList()
+            assertEquals(replacement, (code[4] as NarrowLiteralInstruction).narrowLiteral)
+            assertEquals(Opcode.RETURN, code[5].opcode)
+            assertEquals(type, ((code[6] as ReferenceInstruction).reference as MethodReference).returnType)
+            assertEquals(Opcode.MOVE_RESULT, code[7].opcode)
+            val output = File.createTempFile("narrow-direct", ".dex")
+            try {
+                DexLocalPatchEngine.rewriteDex(bytes, 0, "classes.dex", listOf(selected), output, false, signal)
+                val instructions = DexBackedDexFile(null, output.readBytes()).classes.single().methods.single().implementation!!.instructions.toList()
+                assertEquals(replacement, (instructions[0] as NarrowLiteralInstruction).narrowLiteral)
+                assertEquals(Opcode.RETURN, instructions[1].opcode)
+            } finally { output.delete() }
+        }
+    }
+
     @Test fun groupedGettersKeepBothBodiesAndShareOneSwitch() {
         val bytes = dex(listOf(getter("getHealth"), getter("a")))
         val recipe = DexRecipeCatalog.create(DexLocalPatchEngine.scanDex(bytes, 0, "classes.dex", false, signal)).single()

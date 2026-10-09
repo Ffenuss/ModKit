@@ -65,6 +65,9 @@ data class DexLocalOpportunity(
     val matchedByField: Boolean = false,
     val runtimeBlocker: String? = null,
 ) {
+    val actionLabel: String
+        get() = if (signature.substringAfter(')') == "B" && action == DexLocalAction.INT_9999)
+            "Возвращать 127" else action.label
     val displayName: String
         get() = className.removePrefix("L").removeSuffix(";")
             .replace('/', '.') + "." + methodName + signature
@@ -595,7 +598,7 @@ object DexLocalPatchEngine {
             }
         }
 
-        if (returnType == "I" || returnType == "J") {
+        if (returnType in setOf("B", "S", "C", "I", "J")) {
             return when (key) {
                 "gethealth", "gethp", "getmaxhp", "getcurrenthp",
                 "getmaxhealth", "getcurrenthealth",

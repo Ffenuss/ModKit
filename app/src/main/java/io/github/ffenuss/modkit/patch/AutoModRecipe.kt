@@ -47,7 +47,7 @@ object DexRecipeCatalog {
             AutoModRecipe(
                 id = "dex:$key", category = first.category.label.substringBefore(" /"),
                 title = first.category.label.substringBefore(" /") + " · " + when (first.action) {
-                    DexLocalAction.INT_9999 -> "значение 9999"
+                    DexLocalAction.INT_9999 -> "значение " + if (first.signature.substringAfter(')') == "B") "127" else "9999"
                     DexLocalAction.INT_99 -> "значение 99"
                     DexLocalAction.FLOAT_2 -> "значение 2.0"
                     DexLocalAction.TRUE -> "включить"

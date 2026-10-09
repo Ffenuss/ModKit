@@ -14,7 +14,7 @@ internal object DexMethodParameters {
     fun signature(method: Method) = "(" + method.parameterTypes.joinToString("") + ")" + method.returnType
     fun label(method: DexLocalOpportunity): String {
         val parameters = method.signature.substringAfter('(').substringBefore(')')
-        return if (parameters.isEmpty()) "" else " · ${method.methodName}(" +
+        return if (parameters.isEmpty() && method.signature.substringAfter(')') !in setOf("B", "S", "C")) "" else " · ${method.methodName}(" +
             parameters.map { names[it.toString()] ?: it.toString() }.joinToString(", ") + ")"
     }
 }

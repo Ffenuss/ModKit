@@ -5,6 +5,12 @@ public final class PlayerStats {
     private int health = 20;
     private int stamina = 10;
     private int distance;
+    private byte energy = -7;
+    private short maxHealth = -300;
+    private static char magazineSize = 50000;
+    public byte getEnergy() { return energy; }
+    public short getMaxHealth() { return maxHealth; }
+    public static char getMagazineSize() { return magazineSize; }
     private long ammo = 0L;
     private static double runSpeed = 0.125;
     public long getAmmo(long amount, int mode) {

@@ -72,13 +72,24 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, ammo.dex.single().bodyKind)
             assertEquals(DexMethodBodyKind.READ_ONLY_COMPUTATION, speed.dex.single().bodyKind)
             assertEquals(2, health.dex.size)
+            stage = "discover-narrow-results"
+            val energy = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getEnergy" && m.signature == "()B" } }
+            val maxHealth = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getMaxHealth" && m.signature == "()S" } }
+            val magazine = recipes.single { it.selectable && it.dex.any { m -> m.methodName == "getMagazineSize" && m.signature == "()C" } }
+            assertTrue(energy.title.contains("значение 127"))
+            val baseRecipes = listOf(health, sprint, ammo, speed)
+            val narrowRecipes = listOf(energy, maxHealth, magazine)
             stage = "build"
             val prepared = AutoModRuntimeTestMenuCoordinator.build(context,
                 AnalysisTargetDescriptor.FileUri(Uri.fromFile(source).toString(), "Owned DEX fixture"), analysis,
                 PatchPreparationPlan(analysis.index.artifactSha256, false, System.currentTimeMillis(), emptyList(), emptyList()),
-                signal, progress, listOf(health, sprint, ammo, speed))
+                signal, progress, baseRecipes + narrowRecipes)
             assertTrue(prepared.menu.items.all { it.mode == RepackedRuntimeTestMenuItemMode.DEX })
-            assertEquals(4, prepared.menu.patchItemCount)
+            assertEquals(7, prepared.menu.patchItemCount)
+            val baseItems = prepared.menu.items.filter { item -> baseRecipes.any { DexRuntimeSwitchRewriter.switchId(it.id) == item.id } }
+            val narrowItems = prepared.menu.items.filter { item -> narrowRecipes.any { DexRuntimeSwitchRewriter.switchId(it.id) == item.id } }
+            assertEquals(4, baseItems.size)
+            assertEquals(3, narrowItems.size)
             val plan = RepackedRuntimeInstallPlanner.plan(prepared.build, signal)
             // A later attempt with different selections must not replace the first APK.
             val second = AutoModRuntimeTestMenuCoordinator.build(context,
@@ -97,12 +108,12 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             device.executeShellCommand("pm uninstall $fixture")
             install(plan)
             RepackedRuntimeProbeIdentityVerifier.verify(prepared.build, requireNotNull(transport.inspectInstalled(fixture, authority)))
-            val configured = transport.configureTestMenu(authority, prepared.menu.items, embeddedMenu = false)
+            val configured = transport.configureTestMenu(authority, baseItems, embeddedMenu = false)
             assertEquals(4, configured.patchItemCount)
             assertFalse(configured.embeddedMenu)
             AutoModBuildRecord(plan, System.currentTimeMillis(), listOf(health.title, sprint.title, ammo.title, speed.title), prepared.build.reportPath,
-                runtimeMenuItems = prepared.menu.items).save(context)
-            assertEquals(prepared.menu.items, requireNotNull(AutoModBuildRecord.load(context, plan.artifactSha256)).runtimeMenuItems)
+                runtimeMenuItems = baseItems).save(context)
+            assertEquals(baseItems, requireNotNull(AutoModBuildRecord.load(context, plan.artifactSha256)).runtimeMenuItems)
             device.executeShellCommand("appops set ${context.packageName} SYSTEM_ALERT_WINDOW allow")
             context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             device.waitForIdle()
@@ -167,7 +178,7 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             expect("ALIVE | Health: 9999", "health-independent")
 
             stage = "reject-unknown"
-            val unknown = prepared.menu.items.first().copy(id = "dex:" + "0".repeat(32))
+            val unknown = baseItems.first().copy(id = "dex:" + "0".repeat(32))
             assertFalse(transport.setTestMenuSwitch(authority, unknown.id, true))
             assertTrue(runCatching { transport.configureTestMenu(authority, listOf(unknown)) }.isFailure)
             assertTrue(transport.testMenuSwitchSnapshot(authority).enabledById.getValue(DexRuntimeSwitchRewriter.switchId(health.id)))
@@ -202,7 +213,7 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
 
             stage = "reconfigure"
             toggle(health.title, true)
-            transport.configureTestMenu(authority, prepared.menu.items, embeddedMenu = false)
+            transport.configureTestMenu(authority, baseItems, embeddedMenu = false)
             openPanel(); assertSwitch(health.title, false); closePanel()
             action("Reset")
             expect("ALIVE | Health: 20", "reconfigured-original")
@@ -217,7 +228,7 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             stage = "embedded-menu-compatibility"
             context.stopService(Intent(context, ModKitRuntimeOverlayService::class.java))
             assertTrue(device.wait(Until.gone(bubble), 10_000))
-            assertTrue(transport.configureTestMenu(authority, prepared.menu.items).embeddedMenu)
+            assertTrue(transport.configureTestMenu(authority, baseItems).embeddedMenu)
             assertTrue(device.wait(Until.hasObject(embeddedBubble), 10_000))
             assertEquals(1, device.findObjects(By.text("MK")).size)
             device.executeShellCommand("am force-stop $fixture")
@@ -228,7 +239,7 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             evidence("dex-embedded-menu.png") { device.takeScreenshot(it) }
 
             stage = "return-to-external-menu"
-            assertFalse(transport.configureTestMenu(authority, prepared.menu.items, embeddedMenu = false).embeddedMenu)
+            assertFalse(transport.configureTestMenu(authority, baseItems, embeddedMenu = false).embeddedMenu)
             assertTrue(device.wait(Until.gone(embeddedBubble), 10_000))
             context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             device.waitForIdle()
@@ -240,12 +251,50 @@ class DexOverlayDeviceScenario(private val instrumentation: Instrumentation, pri
             action("Take damage")
             expect("ALIVE | Health: 9999", "external-menu-after-mode-change")
             toggle(health.title, false)
+            stage = "narrow-results"
+            context.stopService(Intent(context, ModKitRuntimeOverlayService::class.java))
+            assertTrue(device.wait(Until.gone(bubble), 10_000))
+            assertEquals(3, transport.configureTestMenu(authority, narrowItems, embeddedMenu = false).patchItemCount)
+            AutoModBuildRecord(plan, System.currentTimeMillis(), narrowRecipes.map { it.title }, prepared.build.reportPath,
+                runtimeMenuItems = narrowItems).save(context)
+            ModKitRuntimeOverlayService.start(context, plan.artifactSha256)
+            requireNotNull(device.wait(Until.findObject(bubble), 15_000))
+            launch()
+            action("Reset")
+            expect("Energy: -7 | Max health: -300 | Magazine: 50000", "narrow-original-signed-and-unsigned")
+            toggle(energy.title, true)
+            action("Reset")
+            expect("Energy: 127 | Max health: -300 | Magazine: 50000", "byte-on-bounded-independent")
+            toggle(maxHealth.title, true)
+            action("Reset")
+            expect("Energy: 127 | Max health: 9999 | Magazine: 50000", "short-on-independent")
+            toggle(magazine.title, true)
+            action("Reset")
+            expect("Energy: 127 | Max health: 9999 | Magazine: 9999", "char-on-independent")
+            toggle(energy.title, false)
+            action("Reset")
+            expect("Energy: -7 | Max health: 9999 | Magazine: 9999", "byte-off-restores-sign")
+            toggle(maxHealth.title, false)
+            action("Reset")
+            expect("Energy: -7 | Max health: -300 | Magazine: 9999", "short-off-restores-sign")
+            toggle(magazine.title, false)
+            action("Reset")
+            expect("Energy: -7 | Max health: -300 | Magazine: 50000", "char-off-restores-unsigned")
+            toggle(energy.title, true)
+            toggle(maxHealth.title, true)
+            toggle(magazine.title, true)
+            device.executeShellCommand("am force-stop $fixture")
+            launch()
+            expect("Energy: -7 | Max health: -300 | Magazine: 50000", "narrow-process-restart-default-off")
+            openPanel()
+            narrowRecipes.forEach { assertSwitch(it.title, false) }
+            closePanel()
             stage = "complete"
         } finally {
             evidence("dex-overlay-final.png") { device.takeScreenshot(it) }
             evidence("dex-overlay-hierarchy.xml") { device.dumpWindowHierarchy(it) }
             evidence("dex-overlay-metrics.json") { it.writeText(JSONObject().put("stage", stage).put("api", Build.VERSION.SDK_INT)
-                .put("events", events).put("scope", "owned DEX fixture; four automatically discovered recipes, five instrumented methods").toString(2)) }
+                .put("events", events).put("scope", "owned DEX fixture; seven automatically discovered recipes, eight instrumented methods").toString(2)) }
             context.stopService(Intent(context, ModKitRuntimeOverlayService::class.java))
             device.executeShellCommand("pm uninstall $fixture")
         }
