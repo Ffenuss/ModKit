@@ -45,7 +45,8 @@ object SpaceMenuCoordinator {
                 val symbols = (result.il2cppFastDump?.metadata?.methods.orEmpty().asSequence().map { it.name } +
                     result.il2cppFastDump?.metadata?.fields.orEmpty().asSequence().map { it.name } +
                     dex.opportunities.asSequence().map { it.methodName }).asIterable()
-                val plan = GameAnalysisPlanner.plan(result.index, symbols)
+                val chosenGenre = SavedSpaceMenus.selectedGenre(context, pkg)
+                val plan = GameAnalysisPlanner.plan(result.index, symbols, chosenGenre)
                 val ordered = recipes.sortedWith(compareBy<AutoModRecipe> { recipe ->
                     plan.searchPriorities.indexOfFirst { priority -> recipe.category.contains(priority.substringBefore(" /"), true) }
                         .let { if (it < 0) Int.MAX_VALUE else it }
@@ -88,7 +89,8 @@ object SpaceMenuCoordinator {
                 val included = SpaceMenuSelection.select(ordered, 128 - jniIncluded.size) { it.id in nativePatches }
                 val profile = JSONObject().put("schema", 2).put("packageName", pkg).put("label", target.label.take(180))
                     .put("artifactSha256", result.index.artifactSha256).put("backend", "native_v1")
-                    .put("genre", plan.genre.genre.title).put("genreEvidence", JSONArray(plan.genre.evidence.map { it.take(256) }))
+                    .put("genre", plan.genre.genre.title).put("genreKey", plan.genre.genre.name)
+                    .put("genreSelectedByUser", chosenGenre != null).put("genreEvidence", JSONArray(plan.genre.evidence.map { it.take(256) }))
                     .put("engines", JSONArray(plan.engines.map { "${it.title} · ${it.status}" }))
                     .put("priorities", JSONArray(plan.searchPriorities))
                     .put("coverage", JSONObject().put("apkCount", files.size).put("indexedEntries", fresh.entries.size)
@@ -121,6 +123,7 @@ object SpaceMenuCoordinator {
                 val stream = atomic.startWrite()
                 try { stream.write(bytes); atomic.finishWrite(stream) }
                 catch (failure: Throwable) { atomic.failWrite(stream); throw failure }
+                SavedSpaceMenus.notifyMenus(context)
                 SpaceMenuSummary(pkg, target.label, file.absolutePath, plan, recipes.size + jni.recipes.size,
                     recipes.count { it.selectable && it.verification.recipePrepared } + jni.recipes.size, profile.getBoolean("truncated"), warnings, nativePatches.size + jniIncluded.size)
         }

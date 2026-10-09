@@ -43,7 +43,14 @@ object GameAnalysisPlanner {
             unambiguous -> GenreHint(best!!.key, best.value.second)
             else -> GenreHint(GameGenre.UNKNOWN, emptyList())
         }
-        val priorities = when (hint.genre) {
+        return GameAnalysisPlan(index.runtimeProfiles, hint, priorities(hint.genre), buildList {
+            if (index.truncated) add("Индекс файлов неполный")
+            addAll(index.warnings)
+            add("Жанр — гипотеза для поиска. Игровой эффект требует отдельного доказательства.")
+        })
+    }
+
+    fun priorities(genre: GameGenre): List<String> = when (genre) {
             GameGenre.RPG -> listOf("Здоровье", "Опыт / навыки", "Инвентарь", "Выносливость", "Кулдауны")
             GameGenre.SHOOTER -> listOf("Боезапас", "Перезарядка", "Отдача", "Здоровье", "Камера")
             GameGenre.RACING -> listOf("Скорость", "Управление", "Круги / таймеры", "Камера")
@@ -52,11 +59,5 @@ object GameAnalysisPlanner {
             GameGenre.SIMULATION -> listOf("Выносливость", "Локальные ресурсы", "Скорость", "Время")
             GameGenre.APPLICATION -> listOf("Локальные настройки", "Интерфейс", "Локальные таймеры")
             GameGenre.UNKNOWN -> listOf("Локальное состояние", "Числовые параметры", "Камера / время")
-        }
-        return GameAnalysisPlan(index.runtimeProfiles, hint, priorities, buildList {
-            if (index.truncated) add("Индекс файлов неполный")
-            addAll(index.warnings)
-            add("Жанр — гипотеза для поиска. Игровой эффект требует отдельного доказательства.")
-        })
     }
 }

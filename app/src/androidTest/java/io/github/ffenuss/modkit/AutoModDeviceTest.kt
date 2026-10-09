@@ -221,6 +221,13 @@ class AutoModDeviceTest {
                 assertNotNull("Stored menu must be accessible without restarting analysis", saved)
                 saved.click()
                 assertTrue(device.wait(Until.hasObject(By.text(fixturePackage)), 15_000))
+                val genre = device.wait(Until.findObject(By.desc("Изменить жанр приложения")), 10_000)
+                assertNotNull("The existing genre label must allow correction", genre)
+                genre.click()
+                requireNotNull(device.wait(Until.findObject(By.text("Гонки")), 5_000)).click()
+                assertTrue(device.wait(Until.hasObject(By.text("Жанр: Гонки")), 10_000))
+                assertEquals(io.github.ffenuss.modkit.analysis.GameGenre.RACING,
+                    io.github.ffenuss.modkit.space.SavedSpaceMenus.selectedGenre(context, fixturePackage))
                 device.findObject(By.text("Назад")).click()
             }
             val after = installed.apkFiles.map { java.security.MessageDigest.getInstance("SHA-256").digest(it.readBytes()).toList() }
@@ -252,6 +259,17 @@ class AutoModDeviceTest {
             assertEquals(3, menu.runtimeRecipes)
             assertEquals("e0e184d2c0035fd6", getters.single { it.getString("evidence").endsWith("->getStamina()J") }.getJSONObject("patch").getString("replacement"))
             assertEquals("0010601ec0035fd6", getters.single { it.getString("evidence").endsWith("->getMoveSpeed()D") }.getJSONObject("patch").getString("replacement"))
+            val beforeItems = getters.associate { it.getString("id") to it.getJSONObject("patch").toString() }
+            val beforeSources = JSONObject(profile!!.readText()).getJSONArray("sources").toString()
+            io.github.ffenuss.modkit.space.SavedSpaceMenus.updateGenre(context, profile!!, io.github.ffenuss.modkit.analysis.GameGenre.RACING)
+            val refreshed = io.github.ffenuss.modkit.space.SpaceMenuCoordinator.prepare(context,
+                AnalysisTargetDescriptor.InstalledPackage("dev.modkit.nativefixture", "Owned JNI fixture"), result, signal, progress, workspace)
+            assertEquals(io.github.ffenuss.modkit.analysis.GameGenre.RACING, refreshed.plan.genre.genre)
+            val revised = JSONObject(profile!!.readText())
+            assertEquals(beforeSources, revised.getJSONArray("sources").toString())
+            val revisedItems = revised.getJSONArray("items")
+            assertEquals(beforeItems, (0 until revisedItems.length()).map { revisedItems.getJSONObject(it) }
+                .filter { it.getString("id").startsWith("jni:") }.associate { it.getString("id") to it.getJSONObject("patch").toString() })
             val unsupported = File(context.cacheDir, "jni-unsupported-module.apk")
             try {
                 java.util.zip.ZipFile(apk).use { input -> java.util.zip.ZipOutputStream(unsupported.outputStream()).use { output ->

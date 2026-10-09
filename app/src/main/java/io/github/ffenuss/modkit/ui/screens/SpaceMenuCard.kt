@@ -17,6 +17,7 @@ fun SpaceMenuCard(result: FastAnalysisResult) {
     val context = LocalContext.current
     var message by remember(result.index.artifactSha256) { mutableStateOf<String?>(null) }
     val menu = result.spaceMenu
+    var genre by remember(menu?.profilePath) { mutableStateOf(menu?.plan?.genre?.genre?.title.orEmpty()) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Меню для пространства", style = MaterialTheme.typography.titleMedium)
@@ -26,7 +27,7 @@ fun SpaceMenuCard(result: FastAnalysisResult) {
             } else {
                 Text(menu.packageName)
                 Text("Движок: " + menu.plan.engines.joinToString { it.title })
-                Text("Жанр: ${menu.plan.genre.genre.title}" + if (menu.plan.genre.evidence.isNotEmpty()) " · предварительная оценка" else "")
+                SpaceGenreField(File(menu.profilePath), genre) { genre = it.title }
                 Text("Кандидатов: ${menu.candidates}. Статических рецептов: ${menu.staticRecipes}.")
                 Text("Для включения в пространстве: ${menu.runtimeRecipes}")
                 if (menu.truncated) Text("Результат неполный: проверьте ограничения анализа.")
