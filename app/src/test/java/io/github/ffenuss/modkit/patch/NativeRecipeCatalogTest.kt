@@ -13,7 +13,7 @@ class NativeRecipeCatalogTest {
             withFixture(listOf(0xB9401000, 0xD65F03C0), member = member,
                 owner = "Game.PuzzleRound", kind = Il2CppNativeReturnKind.INTEGER) { recipe, _, _ ->
                 assertTrue(recipe.blocker, recipe.selectable)
-                assertEquals(GameplayModificationCategory.PUZZLE.title, recipe.category)
+                assertEquals(GameplayModificationCategory.PUZZLE, recipe.native!!.category)
                 assertEquals("999", recipe.scalarValue)
                 assertTrue(recipe.verification.recipePrepared)
             }
