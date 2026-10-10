@@ -35,11 +35,28 @@ jobs:
           gradle-version: '9.5.0'
       - name: Test portable modification core without Android packaging
         run: gradle --no-daemon :analysiscore:test
+      - name: Install SDK for source compilation only
+        shell: bash
+        run: |
+          MODKIT_SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
+          yes | "$MODKIT_SDKMANAGER" --licenses >/dev/null || true
+          "$MODKIT_SDKMANAGER" 'platforms;android-37.0' 'build-tools;36.0.0'
+      - name: Verify recipe bridge without packaging APKs
+        shell: bash
+        run: |
+          MODKIT_SOURCE_TASKS=( :app:testDebugUnitTest -x :app:generateRuntimeProbeDexAsset --tests '*ExistingModificationRequestsTest' --tests '*NativeRecipeCatalogTest' --tests '*DexRuntimeSwitchRewriterTest' )
+          gradle --no-daemon "${MODKIT_SOURCE_TASKS[@]}" --dry-run > code-only-task-plan.txt
+          python3 tools/check_code_only_task_plan.py code-only-task-plan.txt
+          gradle --no-daemon "${MODKIT_SOURCE_TASKS[@]}"
+          test -z "$(find app runtimeprobe testgame nativefixture spaceengine -path '*/build/outputs/apk/*' -name '*.apk' -print)"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: validation-code-only-core
-          path: analysiscore/build/reports/tests/
+          path: |
+            analysiscore/build/reports/tests/
+            app/build/reports/tests/
+            code-only-task-plan.txt
 
   build:
     if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[code only]')
