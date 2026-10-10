@@ -74,3 +74,46 @@ saved menus when its main screen resumes. No host manifest changes are needed.
 A cross-UID owned-fixture test reproduces the private-Activity rejection and
 requires the public launch to display real game state. Phone verification of
 this corrected path and gameplay ON/OFF remains pending.
+
+## Packaging CI confirmation
+
+Packaging source checks and owned-device checks completed successfully in
+https://github.com/Ffenuss/ModKit/actions/runs/38052700769. Downloaded artifact
+11670581110 matches published SHA256
+a7d1025e9d24e3b5bcb0dd62d816b8aa8ddab305d033d8564664044a2e27fdf8.
+The actual XML reports contain 13 executor tests and 3 guest-menu tests, all
+without failures, errors or skipped tests. These run on owned x86_64 fixtures.
+The corrected ModKit handoff passed independent validation at commit
+55cbec48dfd43aa94b89fc506bd3409622c8f7a8 in
+https://github.com/Ffenuss/ModKit/actions/runs/38053180214:
+452 JVM tests with zero failures/errors/skips, lint with zero errors, 32 CPU
+vectors and 9 device tests each on Android 29 and 35. Both downloaded Android
+XML reports explicitly contain the successful cross-UID launcher regression.
+Production compilation and preserved-key signing follow validation.
+
+Binary manifest inspection of the exact supplied predecessor confirms its public
+SplashActivity has exported=true, while MainActivity has no exported attribute
+or public intent filter. The fix preserves the resolved launcher component,
+MAIN action and LAUNCHER category instead of replacing them with an internal
+component or custom action.
+
+## Signed corrected companion
+
+ModKit-v0.0.47.apk: versionCode 47, main production package
+io.github.ffenuss.modkit, release with no debuggable flag. SHA256:
+f066b14333c334331e66fb807105fae8c09babff4df6743a298f36fcbb4013a1.
+Certificate SHA256 matches the supplied Space and preserved key:
+b44a6c2b53689c16cb08da3ca22e4aba20d9d0d1ecbc26df13e15c04b6665073.
+APK v2/v3 signatures verified; ZIP payloads are identical to validated unsigned
+release before signing; 16 KiB page alignment passes.
+Unsigned release artifact 11670187953 matches published ZIP SHA256
+7d74eb5c3b629c599b88b743227f8529061e1c711f13a59eef124046ccf85cdc.
+
+The current installable pair is this ModKit 0.0.47 plus the Space runtime
+refresh described above. Install updates, open ModKit's saved menu, use its
+public-launcher button, then select the original application inside Space.
+The in-app GitHub download button still requires a published modkit-space.apk
+release asset; no such public distribution has been claimed by this work.
+Owned fixture execution is confirmed, while real-phone corrected handoff and
+third-party game effects remain unverified. An available recipe describing a
+UI display is not evidence of changing the corresponding gameplay state.
