@@ -74,6 +74,12 @@ data class GameplayModificationOpportunity(
  * not to invent gameplay meaning for generic methods such as ctor/Invoke.
  */
 object GameplayModificationFinder {
+    /** Discovery only: share the complete catalog vocabulary with disk-index expansion.
+     * This does not promote a method to an executable recipe.
+     */
+    fun hasGameplayNameSignal(memberName: String): Boolean =
+        classify(semanticMethodTokens(memberName)) != null
+
     fun find(
         result: FastAnalysisResult,
         preparation: PatchPreparationPlan,

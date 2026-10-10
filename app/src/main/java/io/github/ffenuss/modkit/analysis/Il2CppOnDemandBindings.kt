@@ -111,14 +111,8 @@ object Il2CppOnDemandBindings {
         return found
     }
 
-    private val gameplayNames = Regex(
-        "(?i)(health|damage|stamina|energy|mana|speed|move|jump|inventory|" +
-            "capacity|experience|level|cooldown|regen|camera|attack|player|" +
-            "character|enemy|loot|drop|resource|currency)",
-    )
-
     private fun gameplayNameSignal(method: Il2CppMethodDefinition): Boolean =
-        gameplayNames.containsMatchIn(method.name) &&
+        io.github.ffenuss.modkit.patch.GameplayModificationFinder.hasGameplayNameSignal(method.name) &&
             !Regex("(?i)(billing|receipt|purchase|entitlement|integrity|signature)")
                 .containsMatchIn(method.declaringType + "." + method.name)
 

@@ -96,6 +96,30 @@ class Il2CppDiskBindingIndexTest {
             assertEquals(Il2CppNativeReturnKind.FLOAT32, late.single().returnKind)
             assertEquals(0x200L, late.single().functionFileOffset)
 
+            // These categories were absent from the separate late-method regex.
+            // Each must retain the actual slot, address and return type from disk.
+            for (name in listOf("get_Coins", "get_Gems", "get_Money", "get_Ammo",
+                "get_Probability", "get_Pity", "get_XP", "get_FireRate", "get_Fov",
+                "get_RewardMultiplier", "get_IsInvincible", "get_IsStunned")) {
+                val expanded = Il2CppOnDemandBindings.lateGameplayBindings(
+                    meta.copy(methods = listOf(meta.methods.first(), meta.methods.last().copy(name = name))),
+                    evidence,
+                )
+                assertEquals(name, 1, expanded.size)
+                assertEquals(name, 40_000, expanded.single().methodIndex)
+                assertEquals(name, 0x2000L, expanded.single().functionVirtualAddress)
+                assertEquals(name, Il2CppNativeReturnKind.FLOAT32, expanded.single().returnKind)
+            }
+            for ((owner, name) in listOf("Game.Player" to "UIGradient",
+                "Game.Player" to "get_GoldenRatio", "Game.Player" to "get_Coincidence",
+                "Game.Purchase" to "get_Coins", "Game.Player" to "get_PurchaseCoins")) {
+                val excluded = Il2CppOnDemandBindings.lateGameplayBindings(
+                    meta.copy(methods = listOf(meta.methods.first(),
+                        meta.methods.last().copy(name = name, declaringType = owner))), evidence,
+                )
+                assertTrue("$owner.$name", excluded.isEmpty())
+            }
+
             val result = FastAnalysisResult(
                 index = ArtifactIndex("sha", emptyList(), emptyList()),
                 routingPlan = EngineRoutingPlan(emptyList(), emptyList()),
