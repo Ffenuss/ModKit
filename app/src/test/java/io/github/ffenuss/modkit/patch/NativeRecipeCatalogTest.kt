@@ -8,6 +8,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NativeRecipeCatalogTest {
+    @Test fun puzzleGettersOfferTypedValuesOnlyForProvenReadOnlyBodies() {
+        for (member in listOf("get_RemainingMoves", "get_HintCount", "get_RemainingTime")) {
+            withFixture(listOf(0xB9401000, 0xD65F03C0), member = member,
+                owner = "Game.PuzzleRound", kind = Il2CppNativeReturnKind.INTEGER) { recipe, _, _ ->
+                assertTrue(recipe.blocker, recipe.selectable)
+                assertEquals(GameplayModificationCategory.PUZZLE.title, recipe.category)
+                assertEquals("999", recipe.scalarValue)
+                assertTrue(recipe.verification.recipePrepared)
+            }
+        }
+        withFixture(listOf(0x94000400, 0xB9401000, 0xD65F03C0), member = "get_RemainingTime",
+            owner = "Game.PuzzleRound", kind = Il2CppNativeReturnKind.INTEGER) { recipe, _, _ ->
+            assertFalse(recipe.selectable)
+            assertTrue(recipe.blocker.orEmpty().contains("вызов"))
+        }
+    }
     private val active = object : CancellationSignal { override fun isCancelled() = false }
     private val sha = "a".repeat(64)
     private val artifact = "base.apk:lib/arm64-v8a/libil2cpp.so"

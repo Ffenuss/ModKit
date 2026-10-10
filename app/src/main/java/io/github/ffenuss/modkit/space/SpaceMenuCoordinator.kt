@@ -46,7 +46,7 @@ object SpaceMenuCoordinator {
                     result.il2cppFastDump?.metadata?.fields.orEmpty().asSequence().map { it.name } +
                     dex.opportunities.asSequence().map { it.methodName }).asIterable()
                 val chosenGenre = SavedSpaceMenus.selectedGenre(context, pkg)
-                val plan = GameAnalysisPlanner.plan(result.index, symbols, chosenGenre)
+                val plan = GameAnalysisPlanner.plan(result.index, symbols, chosenGenre, pkg)
                 val ordered = recipes.sortedWith(compareBy<AutoModRecipe> { recipe ->
                     plan.searchPriorities.indexOfFirst { priority -> recipe.category.contains(priority.substringBefore(" /"), true) }
                         .let { if (it < 0) Int.MAX_VALUE else it }

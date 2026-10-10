@@ -103,7 +103,7 @@ object NativeRecipeCatalog {
                                 member.contains("Cost") || member.startsWith("GetNeeded") -> "0"
                                 else -> when (candidate.category) {
                                 GameplayModificationCategory.SURVIVABILITY, GameplayModificationCategory.STAMINA,
-                                GameplayModificationCategory.ECONOMY -> "999"
+                                GameplayModificationCategory.ECONOMY, GameplayModificationCategory.PUZZLE -> "999"
                                 GameplayModificationCategory.COOLDOWN -> "0"
                                 GameplayModificationCategory.INVENTORY, GameplayModificationCategory.PROGRESSION -> "99"
                                 else -> "2"
@@ -174,6 +174,9 @@ object NativeRecipeCatalog {
         "Level" -> "Уровень"
         "CanLevelUp" -> "Возможность повышения уровня"
         "ReachedMaxLevel" -> "Проверка максимального уровня"
+        "RemainingMoves", "MovesLeft", "MoveCount" -> "Оставшиеся ходы"
+        "HintCount", "RemainingHints", "HintsLeft" -> "Количество подсказок"
+        "RemainingTime", "TimeLeft", "RoundTime", "LevelTime" -> "Время раунда"
         "Zoom" -> "Масштаб камеры"
         else -> member.replace(Regex("([a-z0-9])([A-Z])"), "$1 $2").replace('_', ' ').trim()
     }

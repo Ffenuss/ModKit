@@ -10,7 +10,8 @@ data class GameAnalysisPlan(val engines: List<RuntimeProfile>, val genre: GenreH
 
 /** Genre directs discovery; it never supplies offsets, executable recipes or capability proofs. */
 object GameAnalysisPlanner {
-    fun plan(index: ArtifactIndex, declaredSymbols: Iterable<String>, selectedGenre: GameGenre? = null): GameAnalysisPlan {
+    fun plan(index: ArtifactIndex, declaredSymbols: Iterable<String>, selectedGenre: GameGenre? = null,
+        packageName: String? = null): GameAnalysisPlan {
         val rules = linkedMapOf(
             GameGenre.RPG to setOf("quest", "experience", "inventory", "skilltree"),
             GameGenre.SHOOTER to setOf("ammo", "reload", "recoil", "crosshair"),
@@ -41,13 +42,26 @@ object GameAnalysisPlanner {
         val hint = when {
             selectedGenre != null -> GenreHint(selectedGenre, listOf("Жанр выбран пользователем"))
             unambiguous -> GenreHint(best!!.key, best.value.second)
-            else -> GenreHint(GameGenre.UNKNOWN, emptyList())
+            else -> publishedGenreHint(packageName) ?: GenreHint(GameGenre.UNKNOWN, emptyList())
         }
         return GameAnalysisPlan(index.runtimeProfiles, hint, priorities(hint.genre), buildList {
             if (index.truncated) add("Индекс файлов неполный")
             addAll(index.warnings)
             add("Жанр — гипотеза для поиска. Игровой эффект требует отдельного доказательства.")
         })
+    }
+
+    /** Publisher context only, never an engine, version, address or patch proof.
+     * User selection and unambiguous local symbol evidence take precedence.
+     */
+    private fun publishedGenreHint(packageName: String?): GenreHint? {
+        val genre = when (packageName) {
+            "com.x.aniimos" -> GameGenre.RPG
+            "com.cat.hole.puzzle.aos" -> GameGenre.PUZZLE
+            else -> return null
+        }
+        return GenreHint(genre, listOf("Жанр из описания издателя; ориентир поиска, не доказательство совместимости",
+            "https://play.google.com/store/apps/details?id=$packageName"))
     }
 
     fun priorities(genre: GameGenre): List<String> = when (genre) {

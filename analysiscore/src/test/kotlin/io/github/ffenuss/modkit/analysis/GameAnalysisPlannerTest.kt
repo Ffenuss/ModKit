@@ -4,6 +4,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GameAnalysisPlannerTest {
+    @Test fun publisherContextGuidesSearchWithoutInventingRuntimeSupport() {
+        val puzzle = GameAnalysisPlanner.plan(index, emptyList(), packageName = "com.cat.hole.puzzle.aos")
+        assertEquals(GameGenre.PUZZLE, puzzle.genre.genre)
+        assertTrue(puzzle.engines.isEmpty())
+        assertTrue(puzzle.genre.evidence.any { it.startsWith("https://play.google.com/") })
+        assertEquals(GameGenre.RPG, GameAnalysisPlanner.plan(index, emptyList(),
+            packageName = "com.x.aniimos").genre.genre)
+        assertEquals(GameGenre.UNKNOWN, GameAnalysisPlanner.plan(index, emptyList(),
+            packageName = "com.x.aniimos.clone").genre.genre)
+        assertEquals(GameGenre.APPLICATION, GameAnalysisPlanner.plan(index, emptyList(),
+            GameGenre.APPLICATION, "com.x.aniimos").genre.genre)
+        assertEquals(GameGenre.SHOOTER, GameAnalysisPlanner.plan(index, listOf("GetAmmo", "ReloadWeapon"),
+            packageName = "com.cat.hole.puzzle.aos").genre.genre)
+    }
     private val index = ArtifactIndex("a".repeat(64), emptyList(), emptyList())
     @Test fun genreNeedsIndependentTermsAndPreservesActualEvidence() {
         val plan = GameAnalysisPlanner.plan(index, listOf("GetAmmo", "GetAmmo", "ReloadWeapon"))
