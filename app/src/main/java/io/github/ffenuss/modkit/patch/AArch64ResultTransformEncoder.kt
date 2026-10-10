@@ -23,7 +23,7 @@ object AArch64ResultTransformEncoder {
         }
         val double = returnKind == Il2CppNativeReturnKind.FLOAT64
         val bits = if (double) factor.toRawBits() else factor.toFloat().toRawBits().toLong() and 0xffffffffL
-        require(bits != (if (double) 1.0.toRawBits() else 1f.toRawBits().toLong())) { "Множитель округляется до 1." }
+        require(bits != 0L && bits != (if (double) 1.0.toRawBits() else 1f.toRawBits().toLong())) { "Множитель округляется до 0 или 1." }
         val immediate = requireNotNull(AArch64FloatImmediate.encode(bits, double)) {
             "Множитель не помещается в непосредственное FP-значение."
         }

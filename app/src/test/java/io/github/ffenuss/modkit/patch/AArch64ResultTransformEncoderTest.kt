@@ -46,7 +46,7 @@ class AArch64ResultTransformEncoderTest {
 
     @Test fun rejectsIdentityUnrepresentableAndNonFiniteFactors() {
         val code = bytes(0xBD401000, 0xD65F03C0, 0xD503201F, 0xD503201F)
-        listOf("0", "1", "-2", "17", "NaN", "Infinity", "0.1", "1.000000001").forEach {
+        listOf("0", "1", "-2", "17", "NaN", "Infinity", "0.1", "1.000000001", "1e-300").forEach {
             rejected(code, factor = it)
         }
     }
