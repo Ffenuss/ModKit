@@ -23,8 +23,9 @@ object SpaceMenuHandoff {
         val component = requireNotNull(launcher.component) { "У пространства нет доступного входа" }
         @Suppress("DEPRECATION")
         val info = context.packageManager.getActivityInfo(component, 0)
+        val permission = info.permission
         check(info.exported && info.enabled && info.applicationInfo.enabled &&
-            (info.permission == null || context.checkSelfPermission(info.permission) == android.content.pm.PackageManager.PERMISSION_GRANTED)) {
+            (permission == null || context.checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED)) {
             "Пространство не разрешает запуск. Проверьте установленную версию"
         }
         SavedSpaceMenus.notifyMenus(context)
