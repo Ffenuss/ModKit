@@ -149,9 +149,25 @@ object NativeRecipeCatalog {
                         if (numeric && !presentation && candidate.category in setOf(
                                 GameplayModificationCategory.DAMAGE, GameplayModificationCategory.MOVEMENT,
                                 GameplayModificationCategory.ATTACK_SPEED, GameplayModificationCategory.REGENERATION)) {
-                            val transforms = listOf("0.5", "2", "3", "5", "10", "16").mapNotNull { factor ->
-                                runCatching { ScalarRecipeValue(factor, AArch64ResultTransformEncoder.encodeHex(
-                                    code, binding.returnKind, factor, minOf(patchCapacity, 64))) }.getOrNull()
+                            val scalarKind = when (binding.returnKind) {
+                                Il2CppNativeReturnKind.FLOAT32 -> ScalarKind.FLOAT32
+                                Il2CppNativeReturnKind.FLOAT64 -> ScalarKind.FLOAT64
+                                else -> null
+                            }
+                            val transforms = if (scalarKind == null) emptyList() else {
+                                val targetIdentity = ModificationTarget(CodeFamily.NATIVE, result.index.artifactSha256,
+                                    candidate.targetId, TargetShape.METHOD, scalarKind)
+                                // These facts were checked above: exact binding, unique indexed body,
+                                // source window and read-only paths. Original bytes are retained for OFF.
+                                val adapter = NativeResultModificationAdapter(targetIdentity, code, minOf(patchCapacity, 64),
+                                    BindingEvidence(true, true, true, true, true, true))
+                                listOf("0.5", "2", "3", "5", "10", "16").mapNotNull { factor ->
+                                    val request = ExistingModificationRequests.result(candidate.id + ":multiply-v1",
+                                        candidate.category.name, CodeFamily.NATIVE, result.index.artifactSha256,
+                                        candidate.targetId, scalarKind, factor, ScalarRecipeMode.MULTIPLIER)
+                                    val prepared = adapter.prepare(request) as? AdapterPreparation.Prepared
+                                    prepared?.let { ScalarRecipeValue(factor, adapter.replacementHex(it)) }
+                                }
                             }
                             if (transforms.isNotEmpty()) {
                                 values = transforms

@@ -44,7 +44,7 @@ jobs:
       - name: Verify recipe bridge without packaging APKs
         shell: bash
         run: |
-          MODKIT_SOURCE_TASKS=( -Pmodkit.codeOnly=true :app:testDebugUnitTest -x :app:generateRuntimeProbeDexAsset --tests '*ExistingModificationRequestsTest' --tests '*NativeRecipeCatalogTest' --tests '*DexRuntimeSwitchRewriterTest' )
+          MODKIT_SOURCE_TASKS=( -Pmodkit.codeOnly=true :app:testDebugUnitTest -x :app:generateRuntimeProbeDexAsset --tests '*NativeResultModificationAdapterTest' --tests '*ExistingModificationRequestsTest' --tests '*NativeRecipeCatalogTest' --tests '*DexRuntimeSwitchRewriterTest' )
           gradle --no-daemon "${MODKIT_SOURCE_TASKS[@]}" --dry-run > code-only-task-plan.txt
           python3 tools/check_code_only_task_plan.py code-only-task-plan.txt
           gradle --no-daemon "${MODKIT_SOURCE_TASKS[@]}"
