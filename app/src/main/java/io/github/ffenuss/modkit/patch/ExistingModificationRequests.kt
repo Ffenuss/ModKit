@@ -16,6 +16,20 @@ object ExistingModificationRequests {
         else -> null
     }
 
+    fun dex(method: DexLocalOpportunity): ModificationRequest? {
+        val kind = dexKind(method.signature) ?: return null
+        val literal = when (method.action) {
+            DexLocalAction.TRUE -> "true"
+            DexLocalAction.FALSE -> "false"
+            DexLocalAction.INT_9999 -> if (kind == ScalarKind.INT8) "127" else "9999"
+            DexLocalAction.INT_99 -> "99"
+            DexLocalAction.FLOAT_2 -> "2"
+        }
+        return result(method.id, method.category.label, CodeFamily.DEX, method.originalDexSha256,
+            "${method.apkIndex}:${method.dexEntry}:${method.className}#${method.methodName}${method.signature}",
+            kind, literal, ScalarRecipeMode.VALUE)
+    }
+
     fun result(id: String, purpose: String, family: CodeFamily, artifactSha256: String,
         locator: String, kind: ScalarKind, literal: String, mode: ScalarRecipeMode): ModificationRequest {
         val scalar = ScalarValue.parse(kind, literal)

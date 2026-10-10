@@ -47,6 +47,14 @@ scope. Пустой список блокеров означает, что пр�
 
 ## Связь с существующим кодом
 
+`DexResultModificationAdapter` принимает копию исходного DEX, сканирует её
+существующим проверенным сканером, сопоставляет общий RESULT/REPLACE с точным
+поддержанным действием и создаёт реальные обратимые wrappers через
+`DexRuntimeSwitchRewriter`. Оригинальный метод сохраняется в backup; перед rewrite
+повторно проверяются источник и выбор методов. Другой коэффициент/метод/тип требует
+нового lowering. Backend объявлен только для REPACKAGED_APP: это не новая поддержка
+DEX внутри оригинального Space или root.
+
 DEX/native каталоги записывают `AutoModRecipe.modificationRequests`. DEX mapping
 сохраняет реальные return widths, включая byte/short/char/long/Float/Double.
 Native mapping использует проверенный тип binding. `NativeResultModificationAdapter`

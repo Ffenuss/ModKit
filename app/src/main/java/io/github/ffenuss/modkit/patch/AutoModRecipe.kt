@@ -74,20 +74,7 @@ object DexRecipeCatalog {
                 else "Изменение возвращаемого значения. Эффект требует проверки в приложении.",
                 targetLabel = first.className.substringAfterLast('/').removeSuffix(";"),
                 dex = methods,
-                modificationRequests = methods.mapNotNull { method ->
-                    val kind = ExistingModificationRequests.dexKind(method.signature) ?: return@mapNotNull null
-                    val literal = when (method.action) {
-                        DexLocalAction.TRUE -> "true"
-                        DexLocalAction.FALSE -> "false"
-                        DexLocalAction.INT_9999 -> if (kind == ScalarKind.INT8) "127" else "9999"
-                        DexLocalAction.INT_99 -> "99"
-                        DexLocalAction.FLOAT_2 -> "2"
-                    }
-                    ExistingModificationRequests.result(method.id, method.category.label,
-                        CodeFamily.DEX, method.originalDexSha256,
-                        "${method.apkIndex}:${method.dexEntry}:${method.className}#${method.methodName}${method.signature}",
-                        kind, literal, ScalarRecipeMode.VALUE)
-                },
+                modificationRequests = methods.mapNotNull(ExistingModificationRequests::dex),
                 blocker = methods.firstOrNull { !it.selectable }?.reason ?: methods.firstNotNullOfOrNull { it.runtimeBlocker },
                 verification = ModificationVerification(recipePrepared = methods.all { it.selectable }),
             )
