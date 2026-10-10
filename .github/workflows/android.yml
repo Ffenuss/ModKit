@@ -20,7 +20,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  code_only_core:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[code only]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - name: Test portable modification core without Android packaging
+        run: gradle --no-daemon :analysiscore:test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-code-only-core
+          path: analysiscore/build/reports/tests/
+
   build:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[code only]')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -111,6 +133,7 @@ jobs:
             app/build/native*verification.*
 
   device:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[code only]')
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:

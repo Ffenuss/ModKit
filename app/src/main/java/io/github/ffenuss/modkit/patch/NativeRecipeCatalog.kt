@@ -3,6 +3,7 @@ package io.github.ffenuss.modkit.patch
 import io.github.ffenuss.modkit.analysis.*
 import io.github.ffenuss.modkit.analysis.nativecode.*
 import java.io.File
+import io.github.ffenuss.modkit.modification.*
 
 /** Every enabled recipe has a type, unique address, bounded body and concrete bytes. */
 object NativeRecipeCatalog {
@@ -178,7 +179,19 @@ object NativeRecipeCatalog {
                 AutoModRecipe(effective.id, if (presentation) "Визуальные изменения" else candidate.category.title.substringBefore(" /"),
                     title, description, targets[candidate.targetId]?.declaringType?.substringAfterLast('.').orEmpty(),
                     native = effective, blocker = reason, scalarValues = values, scalarValue = selectedValue, scalarMode = scalarMode,
-                    verification = ModificationVerification(recipePrepared = reason == null))
+                    verification = ModificationVerification(recipePrepared = reason == null),
+                    modificationRequests = if (reason == null && selectedValue != null && binding != null) {
+                        val kind = when (binding.returnKind) {
+                            Il2CppNativeReturnKind.BOOLEAN -> ScalarKind.BOOLEAN
+                            Il2CppNativeReturnKind.INTEGER -> ScalarKind.INT32
+                            Il2CppNativeReturnKind.FLOAT32 -> ScalarKind.FLOAT32
+                            Il2CppNativeReturnKind.FLOAT64 -> ScalarKind.FLOAT64
+                            else -> null
+                        }
+                        if (kind == null) emptyList() else listOf(ExistingModificationRequests.result(
+                            effective.id, effective.category.name, CodeFamily.NATIVE, result.index.artifactSha256,
+                            effective.targetId, kind, requireNotNull(selectedValue), scalarMode))
+                    } else emptyList())
             }
     }
 

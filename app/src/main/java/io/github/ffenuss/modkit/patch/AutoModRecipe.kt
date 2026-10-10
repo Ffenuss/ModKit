@@ -1,5 +1,7 @@
 package io.github.ffenuss.modkit.patch
 
+import io.github.ffenuss.modkit.modification.*
+
 /** Independent evidence flags: a successful build must never imply observed gameplay. */
 data class ModificationVerification(
     val candidateFound: Boolean = true,
@@ -30,13 +32,22 @@ data class AutoModRecipe(
     val scalarValues: List<ScalarRecipeValue> = emptyList(),
     val scalarValue: String? = null,
     val scalarMode: ScalarRecipeMode = ScalarRecipeMode.VALUE,
+    val modificationRequests: List<ModificationRequest> = emptyList(),
 ) {
     val selectable: Boolean get() = blocker == null && (dex.isNotEmpty() || native != null)
 
     fun withScalarValue(value: String): AutoModRecipe {
         val choice = scalarValues.singleOrNull { it.value == value } ?: return this
         return copy(scalarValue = value, native = native?.copy(replacementHex = choice.replacementHex),
-            title = title.substringBefore(scalarMode.titleMarker) + scalarMode.titleMarker + value)
+            title = title.substringBefore(scalarMode.titleMarker) + scalarMode.titleMarker + value,
+            modificationRequests = modificationRequests.map { request ->
+                val scalar = ScalarValue.parse(request.target.valueKind, value)
+                request.copy(operation = when (request.operation) {
+                    is ValueOperation.Multiply -> ValueOperation.Multiply(scalar)
+                    is ValueOperation.Replace -> ValueOperation.Replace(scalar)
+                    is ValueOperation.Clamp -> error("A clamp cannot be changed by a single scalar choice")
+                })
+            })
     }
 }
 
@@ -63,6 +74,20 @@ object DexRecipeCatalog {
                 else "Изменение возвращаемого значения. Эффект требует проверки в приложении.",
                 targetLabel = first.className.substringAfterLast('/').removeSuffix(";"),
                 dex = methods,
+                modificationRequests = methods.mapNotNull { method ->
+                    val kind = ExistingModificationRequests.dexKind(method.signature) ?: return@mapNotNull null
+                    val literal = when (method.action) {
+                        DexLocalAction.TRUE -> "true"
+                        DexLocalAction.FALSE -> "false"
+                        DexLocalAction.INT_9999 -> if (kind == ScalarKind.INT8) "127" else "9999"
+                        DexLocalAction.INT_99 -> "99"
+                        DexLocalAction.FLOAT_2 -> "2"
+                    }
+                    ExistingModificationRequests.result(method.id, method.category.label,
+                        CodeFamily.DEX, method.originalDexSha256,
+                        "${method.apkIndex}:${method.dexEntry}:${method.className}#${method.methodName}${method.signature}",
+                        kind, literal, ScalarRecipeMode.VALUE)
+                },
                 blocker = methods.firstOrNull { !it.selectable }?.reason ?: methods.firstNotNullOfOrNull { it.runtimeBlocker },
                 verification = ModificationVerification(recipePrepared = methods.all { it.selectable }),
             )
