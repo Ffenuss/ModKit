@@ -78,8 +78,16 @@ object GameplayModificationFinder {
     /** Discovery only: share the complete catalog vocabulary with disk-index expansion.
      * This does not promote a method to an executable recipe.
      */
-    fun hasGameplayNameSignal(memberName: String): Boolean =
-        classify(semanticMethodTokens(memberName)) != null
+    fun hasGameplayNameSignal(memberName: String): Boolean {
+        val tokens = semanticMethodTokens(memberName)
+        // Discovery must retain general state reads such as getHealth even
+        // when the precision catalog cannot yet assign a prepared action.
+        val generalStateTerms = setOf("health", "damage", "stamina", "energy", "mana",
+            "speed", "move", "jump", "inventory", "capacity", "experience", "level",
+            "cooldown", "regen", "regeneration", "camera", "attack", "player",
+            "character", "enemy", "loot", "drop", "resource", "currency")
+        return classify(tokens) != null || tokens.any { it in generalStateTerms }
+    }
 
     fun find(
         result: FastAnalysisResult,
