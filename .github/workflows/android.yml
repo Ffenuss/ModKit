@@ -44,11 +44,15 @@ jobs:
       - name: Verify recipe bridge without packaging APKs
         shell: bash
         run: |
-          MODKIT_SOURCE_TASKS=( -Pmodkit.codeOnly=true :app:testDebugUnitTest -x :app:generateRuntimeProbeDexAsset --tests '*NativeResultModificationAdapterTest' --tests '*ExistingModificationRequestsTest' --tests '*NativeRecipeCatalogTest' --tests '*DexRuntimeSwitchRewriterTest' )
+          MODKIT_SOURCE_TASKS=( --no-build-cache -Pmodkit.codeOnly=true :app:testDebugUnitTest -x :app:generateRuntimeProbeDexAsset --tests '*NativeResultModificationAdapterTest' --tests '*ExistingModificationRequestsTest' --tests '*NativeRecipeCatalogTest' --tests '*DexRuntimeSwitchRewriterTest' )
           gradle --no-daemon "${MODKIT_SOURCE_TASKS[@]}" --dry-run > code-only-task-plan.txt
           python3 tools/check_code_only_task_plan.py code-only-task-plan.txt
           gradle --no-daemon "${MODKIT_SOURCE_TASKS[@]}"
           test -z "$(find app runtimeprobe testgame nativefixture spaceengine -path '*/build/outputs/apk/*' -name '*.apk' -print)"
+      - name: Execute common native adapter output without APKs
+        run: |
+          python -m pip install unicorn==2.1.4
+          python tools/verify_arm64_vectors.py app/build/native-transform-verification.tsv app/build/native-computed-transform-verification.tsv
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -57,6 +61,9 @@ jobs:
             analysiscore/build/reports/tests/
             app/build/reports/tests/
             code-only-task-plan.txt
+            app/build/native-transform-verification.tsv
+            app/build/native-computed-transform-verification.tsv
+            app/build/native-transform-verification.json
 
   build:
     if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[code only]')
