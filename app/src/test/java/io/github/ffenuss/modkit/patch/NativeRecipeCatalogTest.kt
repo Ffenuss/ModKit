@@ -65,6 +65,46 @@ class NativeRecipeCatalogTest {
         }
     }
 
+    @Test fun computedAndConditionalMultipliersPreserveEveryOriginalPath() {
+        val vectors = mutableListOf<String>()
+        for (kind in listOf(Il2CppNativeReturnKind.FLOAT32, Il2CppNativeReturnKind.FLOAT64)) {
+            val double = kind == Il2CppNativeReturnKind.FLOAT64
+            val tag = if (double) "d" else "f"
+            val fpType = if (double) 0x00400000L else 0L
+            val load = if (double) 0xFD400800L else 0xBD401000L
+            val two = 0x1E201001L or fpType // FMOV S1/D1, #2
+            val add = 0x1E212800L or fpType // FADD S0/D0, S0/D0, S1/D1
+            val multiply = 0x1E210800L or fpType
+            val bodies = listOf(
+                listOf(load, two, 0x34000062, add, 0x14000002, multiply, 0xD65F03C0, 0xD503201F, 0xD503201F),
+                listOf(load, two, 0x340000A2, add, 0xD65F03C0, 0xD503201F, 0xD503201F,
+                    multiply, 0xD65F03C0, 0xD503201F, 0xD503201F),
+            )
+            bodies.forEachIndexed { shape, words ->
+                withFixture(words, kind = kind) { recipe, result, root ->
+                    assertTrue(recipe.blocker, recipe.selectable)
+                    assertEquals(ScalarRecipeMode.MULTIPLIER, recipe.scalarMode)
+                    val draft = Il2CppNativeMutationDraftBuilder.build(result, recipe.native!!.targetId,
+                        recipe.native.replacementHex!!, root, File(root, "computed"))
+                    val source = Il2CppNativeMutationDraftBuilder.parseHex(draft.originalHex)
+                    val patched = Il2CppNativeMutationDraftBuilder.parseHex(draft.replacementHex)
+                    val proof = io.github.ffenuss.modkit.analysis.nativecode.AArch64ReadOnlyBody.inspect(source)
+                    for (offset in proof.reachableOffsets - proof.returnOffsets)
+                        assertEquals("Original instruction at $offset moved or changed", source.drop(offset).take(4),
+                            patched.drop(offset).take(4))
+                    for (seed in listOf(7, -3, 0)) for (argument in listOf(0, 1)) {
+                        val before = if (argument == 0) seed * 2 else seed + 2
+                        vectors += listOf("computed-$shape-$tag-$seed-$argument", tag, seed, before, before * 2,
+                            draft.originalHex, draft.replacementHex, argument).joinToString("\t")
+                    }
+                }
+            }
+        }
+        File("build/native-computed-transform-verification.tsv").apply {
+            parentFile.mkdirs(); writeText(vectors.joinToString("\n"))
+        }
+    }
+
     @Test fun visualAndUnboundedGettersDoNotBecomeMultiplierRecipes() {
         withFixture(listOf(0xBD401000, 0xD65F03C0, 0xD503201F, 0xD503201F),
             owner = "Game.DiskInfoBoxMain") { recipe, _, _ ->

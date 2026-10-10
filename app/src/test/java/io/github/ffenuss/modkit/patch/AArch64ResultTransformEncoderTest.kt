@@ -44,6 +44,24 @@ class AArch64ResultTransformEncoderTest {
         rejected(bytes(0xBD401000, 0x1E202800, 0xD65F03C0, 0xD503201F))
     }
 
+    @Test fun computedTransformNeedsUnreachablePaddingAtEveryReturn() {
+        // Conditional branch enters the NOPs following the first return: they are not free space.
+        rejected(bytes(0xBD401000, 0x1E201001, 0x34000062, 0x1E212800, 0xD65F03C0,
+            0xD503201F, 0xD503201F, 0xD65F03C0, 0xD503201F, 0xD503201F))
+        // One branch has room, the other does not.
+        rejected(bytes(0xBD401000, 0x1E201001, 0x340000A2, 0x1E212800, 0xD65F03C0,
+            0xD503201F, 0xD503201F, 0x1E210800, 0xD65F03C0))
+        // Wrong FP precision, call, state write and cycle after an otherwise valid entry load.
+        for (word in listOf(0x1E612800L, 0x94000000L, 0xBD001000L, 0x14000000L))
+            rejected(bytes(0xBD401000, word, 0xD65F03C0, 0xD503201F, 0xD503201F))
+        val code = bytes(0xBD401000, 0x1E201001, 0x1E212800, 0xD65F03C0, 0xD503201F, 0xD503201F)
+        rejected(code, capacity = 20)
+        val patched = Il2CppNativeMutationDraftBuilder.parseHex(AArch64ResultTransformEncoder.encodeHex(
+            code, Il2CppNativeReturnKind.FLOAT32, "2", code.size))
+        assertEquals(code.take(12), patched.take(12))
+        assertEquals(code.size, patched.size)
+    }
+
     @Test fun rejectsIdentityUnrepresentableAndNonFiniteFactors() {
         val code = bytes(0xBD401000, 0xD65F03C0, 0xD503201F, 0xD503201F)
         listOf("0", "1", "-2", "17", "NaN", "Infinity", "0.1", "1.000000001", "1e-300").forEach {
