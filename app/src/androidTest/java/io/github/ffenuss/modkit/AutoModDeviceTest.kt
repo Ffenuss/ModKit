@@ -180,6 +180,10 @@ class AutoModDeviceTest {
             fail("Android must reject the fixture's unexported activity")
         } catch (expected: SecurityException) { /* Reproduce the reported Permission Denial. */ }
         val launcher = requireNotNull(context.packageManager.getLaunchIntentForPackage(fixturePackage))
+        assertEquals(Intent.ACTION_MAIN, launcher.action)
+        assertTrue(launcher.hasCategory(Intent.CATEGORY_LAUNCHER))
+        assertNull(launcher.data)
+        assertNull(launcher.clipData)
         io.github.ffenuss.modkit.space.SpaceMenuHandoff.launchForMenuSync(context, launcher)
         assertTrue("Public launcher must open the real fixture from another UID",
             device.wait(Until.hasObject(By.textContains("Health:")), 45_000))

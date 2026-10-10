@@ -10,7 +10,7 @@ object SpaceMenuHandoff {
         val launcher = context.packageManager.getLaunchIntentForPackage(TrustedSpace.PACKAGE)
             ?: error("Сначала установите пространство")
         check(TrustedSpace.installed(context)) { "Подпись установленного пространства не соответствует ModKit" }
-        check(SavedSpaceMenus.load(context).any { it.file.canonicalFile == file.canonicalFile }) {
+        check(SavedSpaceMenus.load(context).take(256).any { it.file.canonicalFile == file.canonicalFile }) {
             "Меню уже заменено. Повторите анализ приложения"
         }
         launchForMenuSync(context, launcher)
@@ -20,6 +20,13 @@ object SpaceMenuHandoff {
      * Preserve the public launcher intent: its internal MainActivity is not exported.
      */
     internal fun launchForMenuSync(context: Context, launcher: Intent) {
+        val component = requireNotNull(launcher.component) { "У пространства нет доступного входа" }
+        @Suppress("DEPRECATION")
+        val info = context.packageManager.getActivityInfo(component, 0)
+        check(info.exported && info.enabled && info.applicationInfo.enabled &&
+            (info.permission == null || context.checkSelfPermission(info.permission) == android.content.pm.PackageManager.PERMISSION_GRANTED)) {
+            "Пространство не разрешает запуск. Проверьте установленную версию"
+        }
         SavedSpaceMenus.notifyMenus(context)
         context.startActivity(Intent(launcher).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
