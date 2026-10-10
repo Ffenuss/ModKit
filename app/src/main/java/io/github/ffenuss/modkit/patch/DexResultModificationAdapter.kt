@@ -3,8 +3,9 @@ package io.github.ffenuss.modkit.patch
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.modification.*
 import java.io.File
+import java.security.MessageDigest
 
-/** Common RESULT/REPLACE requests lower to existing reversible DEX wrappers.
+/** Common RESULT/REPLACE and Float/Double MULTIPLY requests lower to existing reversible DEX wrappers.
  * This backend requires a repackaged app. It is not a DEX interceptor in original Space. */
 class DexResultModificationAdapter(bytes: ByteArray, private val apkIndex: Int,
     private val dexEntry: String, cancellation: CancellationSignal) : ModificationAdapter {
@@ -14,7 +15,7 @@ class DexResultModificationAdapter(bytes: ByteArray, private val apkIndex: Int,
     private val methods = inventory.associateBy { it.id }
     private val payloads = mutableMapOf<String, Pair<ModificationRequest, DexLocalOpportunity>>()
     override val capabilities = AdapterCapabilities("dex-reversible-result-v1", CodeFamily.DEX,
-        ExecutionHost.REPACKAGED_APP, setOf(InterceptionPoint.RESULT), setOf(OperationKind.REPLACE),
+        ExecutionHost.REPACKAGED_APP, setOf(InterceptionPoint.RESULT), setOf(OperationKind.REPLACE, OperationKind.MULTIPLY),
         ScalarKind.values().toSet())
 
     val requests: List<ModificationRequest> get() = methods.values.filter {
@@ -25,14 +26,19 @@ class DexResultModificationAdapter(bytes: ByteArray, private val apkIndex: Int,
         val method = methods[request.id]
             ?: return AdapterPreparation.Blocked(capabilities.id, listOf("No bound DEX method"))
         val canonical = ExistingModificationRequests.dex(method)
-        if (canonical != request)
+        val expected = if (request.operation is ValueOperation.Multiply &&
+            request.target.valueKind in setOf(ScalarKind.FLOAT32, ScalarKind.FLOAT64))
+            canonical?.copy(operation = request.operation) else canonical
+        if (expected != request)
             return AdapterPreparation.Blocked(capabilities.id, listOf("Request differs from supported DEX lowering"))
         if (!method.selectable || method.runtimeBlocker != null)
             return AdapterPreparation.Blocked(capabilities.id, listOf(method.runtimeBlocker ?: method.reason))
         val blockers = ModificationPlanner.blockers(request, ExecutionHost.REPACKAGED_APP, capabilities,
             BindingEvidence(true, true, true, true, true, true))
         if (blockers.isNotEmpty()) return AdapterPreparation.Blocked(capabilities.id, blockers)
-        val payloadId = "${method.id}:${method.originalDexSha256}"
+        val operationHash = MessageDigest.getInstance("SHA-256").digest(request.operation.toString().toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        val payloadId = "${method.id}:${method.originalDexSha256}:$operationHash"
         payloads[payloadId] = request to method
         return AdapterPreparation.Prepared(capabilities.id, request, payloadId)
     }
@@ -42,7 +48,8 @@ class DexResultModificationAdapter(bytes: ByteArray, private val apkIndex: Int,
         require(prepared.adapterId == capabilities.id)
         val payload = requireNotNull(payloads[prepared.payloadId]) { "Unknown DEX payload" }
         require(payload.first == prepared.request) { "Prepared DEX request changed" }
-        return DexRuntimeSelection(payload.second, DexRuntimeSwitchRewriter.switchId(recipeId))
+        return DexRuntimeSelection(payload.second, DexRuntimeSwitchRewriter.switchId(recipeId),
+            prepared.request.operation as? ValueOperation.Multiply)
     }
 
     fun rewrite(prepared: List<AdapterPreparation.Prepared>, destination: File,
