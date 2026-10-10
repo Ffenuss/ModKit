@@ -44,7 +44,7 @@ fun SavedSpaceMenusScreen(onBack: () -> Unit) {
                         if (menu.truncated) Text("Анализ содержит ограничения")
                         Text("Для включения в пространстве: ${menu.runtimeRecipes}")
                         Button(onClick = {
-                            try { SpaceMenuHandoff.open(context, menu.file); message = "Меню передано: ${menu.label}" }
+                            try { SpaceMenuHandoff.open(context, menu.file); message = "Пространство открыто. Меню ${menu.label} доступно для автоматической загрузки." }
                             catch (error: Exception) { message = error.message ?: "Не удалось передать меню" }
                         }, modifier = Modifier.fillMaxWidth()) { Text("Передать меню") }
                     }

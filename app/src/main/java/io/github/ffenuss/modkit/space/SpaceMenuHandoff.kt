@@ -1,24 +1,27 @@
 package io.github.ffenuss.modkit.space
 
-import android.content.ClipData
 import android.content.Context
 import android.content.Intent
-import androidx.core.content.FileProvider
 import org.json.JSONObject
 import java.io.File
 
 object SpaceMenuHandoff {
     fun open(context: Context, file: File) {
-        val host = "com.dualspace.multispace.androidx"
-        check(context.packageManager.getLaunchIntentForPackage(host) != null) { "Сначала установите пространство" }
+        val launcher = context.packageManager.getLaunchIntentForPackage(TrustedSpace.PACKAGE)
+            ?: error("Сначала установите пространство")
         check(TrustedSpace.installed(context)) { "Подпись установленного пространства не соответствует ModKit" }
-        val uri = FileProvider.getUriForFile(context, context.packageName + ".files", file)
-        context.startActivity(Intent("io.github.ffenuss.modkit.OPEN_SPACE_MENU")
-            .setClassName(host, "com.dualspace.multispace.MainActivity")
-            .setDataAndType(uri, "application/json").apply {
-                clipData = ClipData.newRawUri("ModKit menu", uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-            })
+        check(SavedSpaceMenus.load(context).any { it.file.canonicalFile == file.canonicalFile }) {
+            "Меню уже заменено. Повторите анализ приложения"
+        }
+        launchForMenuSync(context, launcher)
+    }
+
+    /** Space imports saved profiles through its authenticated provider on MainActivity resume.
+     * Preserve the public launcher intent: its internal MainActivity is not exported.
+     */
+    internal fun launchForMenuSync(context: Context, launcher: Intent) {
+        SavedSpaceMenus.notifyMenus(context)
+        context.startActivity(Intent(launcher).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }
 

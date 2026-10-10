@@ -171,6 +171,20 @@ class AutoModDeviceTest {
         return RepackedRuntimeInstallStatusStore.status.value
     }
 
+    @Test fun a0a_menuHandoffUsesPublicLauncherInsteadOfPrivateActivity() {
+        assertNotEquals(context.applicationInfo.uid,
+            context.packageManager.getApplicationInfo(fixturePackage, 0).uid)
+        try {
+            context.startActivity(Intent().setClassName(fixturePackage,
+                "dev.modkit.fixture.InternalMenuActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            fail("Android must reject the fixture's unexported activity")
+        } catch (expected: SecurityException) { /* Reproduce the reported Permission Denial. */ }
+        val launcher = requireNotNull(context.packageManager.getLaunchIntentForPackage(fixturePackage))
+        io.github.ffenuss.modkit.space.SpaceMenuHandoff.launchForMenuSync(context, launcher)
+        assertTrue("Public launcher must open the real fixture from another UID",
+            device.wait(Until.hasObject(By.textContains("Health:")), 45_000))
+    }
+
     @Test fun a0_originalApkSetProducesVersionBoundSpaceMenuAndReadableHandoff() = runBlocking {
         val installed = io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(fixturePackage)!!
         val before = installed.apkFiles.map { java.security.MessageDigest.getInstance("SHA-256").digest(it.readBytes()).toList() }
