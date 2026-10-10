@@ -55,8 +55,10 @@ for line in (line for path in sys.argv[1:] for line in Path(path).read_text().sp
     after = execute(patched, kind, seed, argument)
     assert before == float(expected_before), (name, before, expected_before)
     assert after == float(expected_after), (name, after, expected_after)
+    restored = execute(original, kind, seed, argument)
+    assert restored == before, (name, restored, before)
     results.append(dict(name=name, before=before, after=after, state_unchanged=True))
-expected_counts = {'native-verification.tsv': 3, 'native-catalog-verification.tsv': 2, 'native-jni-verification.tsv': 7}
+expected_counts = {'native-verification.tsv': 3, 'native-catalog-verification.tsv': 2, 'native-jni-verification.tsv': 7, 'native-transform-verification.tsv': 12}
 assert len(results) == sum(expected_counts[Path(path).name] for path in sys.argv[1:])
 output = json.dumps({'engine': 'Unicorn 2.1.4 ARM64', 'results': results}, indent=2)
 vectors.with_suffix('.json').write_text(output + '\n')

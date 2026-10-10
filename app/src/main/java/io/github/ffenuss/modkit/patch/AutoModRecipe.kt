@@ -11,6 +11,10 @@ data class ModificationVerification(
     val runtimeEvidence: String? = null,
 )
 
+enum class ScalarRecipeMode(val label: String, val titleMarker: String) {
+    VALUE("Значение", " · значение "), MULTIPLIER("Множитель", " · множитель ×")
+}
+
 data class ScalarRecipeValue(val value: String, val replacementHex: String)
 
 data class AutoModRecipe(
@@ -25,13 +29,14 @@ data class AutoModRecipe(
     val verification: ModificationVerification = ModificationVerification(),
     val scalarValues: List<ScalarRecipeValue> = emptyList(),
     val scalarValue: String? = null,
+    val scalarMode: ScalarRecipeMode = ScalarRecipeMode.VALUE,
 ) {
     val selectable: Boolean get() = blocker == null && (dex.isNotEmpty() || native != null)
 
     fun withScalarValue(value: String): AutoModRecipe {
         val choice = scalarValues.singleOrNull { it.value == value } ?: return this
         return copy(scalarValue = value, native = native?.copy(replacementHex = choice.replacementHex),
-            title = title.substringBefore(" · значение ") + " · значение $value")
+            title = title.substringBefore(scalarMode.titleMarker) + scalarMode.titleMarker + value)
     }
 }
 

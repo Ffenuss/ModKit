@@ -20,6 +20,7 @@ object NativeRecipeCatalog {
                 var effective = candidate
                 var reason = candidate.blocker
                 var title = candidate.title
+                var scalarMode = ScalarRecipeMode.VALUE
                 var selectedValue: String? = null
                 var description = "Назначение предполагается по метаданным; игровой эффект ещё не проверен."
                 var values = emptyList<ScalarRecipeValue>()
@@ -144,19 +145,39 @@ object NativeRecipeCatalog {
                             }
                             effective = candidate.copy(replacementHex = replacement)
                         }
+                        if (numeric && !presentation && candidate.category in setOf(
+                                GameplayModificationCategory.DAMAGE, GameplayModificationCategory.MOVEMENT,
+                                GameplayModificationCategory.ATTACK_SPEED, GameplayModificationCategory.REGENERATION)) {
+                            val transforms = listOf("0.5", "2", "3", "5", "10", "16").mapNotNull { factor ->
+                                runCatching { ScalarRecipeValue(factor, AArch64ResultTransformEncoder.encodeHex(
+                                    code, binding.returnKind, factor, minOf(patchCapacity, 64))) }.getOrNull()
+                            }
+                            if (transforms.isNotEmpty()) {
+                                values = transforms
+                                val chosen = transforms.firstOrNull { it.value == "2" } ?: transforms.first()
+                                selectedValue = chosen.value
+                                scalarMode = ScalarRecipeMode.MULTIPLIER
+                                effective = candidate.copy(id = candidate.id + ":multiply-v1", selectable = true, blocker = null,
+                                    action = GameplayMutationAction.FORCE_SCALAR_DEFAULT, replacementHex = chosen.replacementHex)
+                                title = parameterLabel(target.memberName.orEmpty().removePrefix("get_")) +
+                                    scalarMode.titleMarker + chosen.value
+                            }
+                        }
                         reason = null
                         description = if (binding.returnKind == Il2CppNativeReturnKind.VOID)
                             "Отключает единственную запись поля в этом методе. Проверяйте, каких игровых объектов это касается."
                         else "Меняет результат вычисления без удаления вызовов и записи состояния. Проверьте эффект в игре."
+                        if (scalarMode == ScalarRecipeMode.MULTIPLIER)
+                            description = "Читает исходное поле игрового объекта и умножает его текущее значение. Отключение восстанавливает исходный код. Проверьте эффект в игре."
                         if (binding.returnKind == Il2CppNativeReturnKind.BOOLEAN && numeric)
                             description += " 1 — да, 0 — нет."
                         if (presentation) description = "По контексту это элемент отображения. Изменение показателя на экране не доказывает изменение игровой механики."
                     } catch (failure: AnalysisCancelledException) { throw failure }
                     catch (failure: Exception) { reason = failure.message ?: "Тело метода не подтверждено." }
                 } else if (reason == null) reason = "Нет проверенного рецепта для этой цели."
-                AutoModRecipe(candidate.id, if (presentation) "Визуальные изменения" else candidate.category.title.substringBefore(" /"),
+                AutoModRecipe(effective.id, if (presentation) "Визуальные изменения" else candidate.category.title.substringBefore(" /"),
                     title, description, targets[candidate.targetId]?.declaringType?.substringAfterLast('.').orEmpty(),
-                    native = effective, blocker = reason, scalarValues = values, scalarValue = selectedValue,
+                    native = effective, blocker = reason, scalarValues = values, scalarValue = selectedValue, scalarMode = scalarMode,
                     verification = ModificationVerification(recipePrepared = reason == null))
             }
     }
