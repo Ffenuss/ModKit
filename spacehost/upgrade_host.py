@@ -19,6 +19,9 @@ from patch_host import (old_signature, verify_overlay_payload,
 PREDECESSOR_SHA256 = '6f9cd491a2bc344538a515408d3f9b7682f494eab9caabab7f7dda372d4d79a6'
 HOST_CERTIFICATE = '03498720af5c326fc3a399d7c96aed5fdea2f378ec1799580bb119e1bcbc4b5f'
 NEW_HOST_CERTIFICATE = 'b44a6c2b53689c16cb08da3ca22e4aba20d9d0d1ecbc26df13e15c04b6665073'
+NEW_KEY_PREDECESSOR_SHA256 = 'ec3ffc685880b27ad23b3305334a992dad313ce67ff7690420ffc7d0e2f22870'
+TRUSTED_PREDECESSORS = {PREDECESSOR_SHA256: HOST_CERTIFICATE,
+                        NEW_KEY_PREDECESSOR_SHA256: NEW_HOST_CERTIFICATE}
 REPLACEABLE = {'classes4.dex', ENGINE_ASSET, ENGINE_HASH}
 
 
@@ -26,15 +29,22 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def predecessor_certificate(path):
+    certificate = TRUSTED_PREDECESSORS.get(digest(path))
+    if certificate is None:
+        raise ValueError('Unsupported predecessor: exact pinned Space APK required')
+    return certificate
+
+
 def verify_predecessor(path):
-    if digest(path) != PREDECESSOR_SHA256:
-        raise ValueError('Unsupported predecessor: exact native-recipes test host required')
+    certificate = predecessor_certificate(path)
     with zipfile.ZipFile(path) as archive:
         unique_entries(archive)
         verify_overlay_payload(archive.read('classes4.dex'))
         engine = verify_engine_payload(archive.read(ENGINE_ASSET))
         if archive.read(ENGINE_HASH) != engine.encode('ascii'):
             raise ValueError('Predecessor engine hash mismatch')
+    return certificate
 
 
 def unique_entries(archive):
@@ -65,7 +75,7 @@ def verify_output(source, output):
         engine = verify_engine_payload(archive.read(ENGINE_ASSET))
         if archive.read(ENGINE_HASH) != engine.encode('ascii'):
             raise ValueError('Output engine hash mismatch')
-    return dict(predecessor_sha256=PREDECESSOR_SHA256, sha256=digest(output),
+    return dict(predecessor_sha256=digest(source), sha256=digest(output),
                 replaced_entries=sorted(REPLACEABLE), engine_sha256=engine,
                 manifest_and_resources_unchanged=True,
                 bootstrap_and_virtual_kernel_unchanged=True,
@@ -94,12 +104,17 @@ def verify_signature(path, certificate=HOST_CERTIFICATE):
         raise ValueError('Space signer differs from authenticated host certificate')
 
 
+def verify_source(path):
+    certificate = verify_predecessor(path)
+    verify_signature(path, certificate)
+    return certificate
+
+
 def prepare(source, overlay, engine, output):
     output = Path(output)
     if output.resolve() in {Path(p).resolve() for p in (source, overlay, engine)}:
         raise ValueError('Input and output must differ')
-    verify_predecessor(source)
-    verify_signature(source)
+    verify_source(source)
     payload = Path(overlay).read_bytes()
     verify_overlay_payload(payload)
     carrier = Path(engine).read_bytes()
@@ -122,13 +137,12 @@ def prepare(source, overlay, engine, output):
 
 
 def sign(source, unsigned, output, new_key=False):
-    certificate = NEW_HOST_CERTIFICATE if new_key else HOST_CERTIFICATE
+    source_certificate = verify_source(source)
+    certificate = NEW_HOST_CERTIFICATE if new_key else source_certificate
     output = Path(output)
     if output.resolve() in {Path(source).resolve(), Path(unsigned).resolve(),
                              Path(os.environ['MODKIT_SPACE_KEYSTORE']).resolve()}:
         raise ValueError('Input and output must differ')
-    verify_predecessor(source)
-    verify_signature(source)
     verify_output(source, unsigned)
     # Validate required secrets without logging or passing them on the command line.
     for name in ('MODKIT_SPACE_STORE_PASSWORD', 'MODKIT_SPACE_ALIAS'):
@@ -149,7 +163,7 @@ def sign(source, unsigned, output, new_key=False):
         report = verify_output(source, candidate)
         report['signed'] = True
         report['certificate_sha256'] = certificate
-        report['same_signer_update'] = not new_key
+        report['same_signer_update'] = certificate == source_certificate
         candidate.replace(output)
     return report
 

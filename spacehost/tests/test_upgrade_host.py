@@ -1,4 +1,5 @@
 import sys
+import os
 import tempfile
 import unittest
 import warnings
@@ -6,7 +7,7 @@ import zipfile
 from unittest.mock import patch
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from upgrade_host import verify_predecessor, verify_preservation, verify_signature, HOST_CERTIFICATE, NEW_HOST_CERTIFICATE
+from upgrade_host import verify_predecessor, verify_preservation, verify_signature, HOST_CERTIFICATE, NEW_HOST_CERTIFICATE, predecessor_certificate, verify_source, PREDECESSOR_SHA256, NEW_KEY_PREDECESSOR_SHA256, sign
 
 
 class UpgradeTests(unittest.TestCase):
@@ -32,6 +33,52 @@ class UpgradeTests(unittest.TestCase):
         with patch('upgrade_host.signer', return_value=
                    'Signer #1 certificate SHA-256 digest: ' + HOST_CERTIFICATE + '\n'):
             verify_signature('fixture.apk')
+
+    def test_exact_predecessor_hash_selects_its_own_certificate(self):
+        for sha, cert in ((PREDECESSOR_SHA256, HOST_CERTIFICATE),
+                          (NEW_KEY_PREDECESSOR_SHA256, NEW_HOST_CERTIFICATE)):
+            with self.subTest(sha=sha), patch('upgrade_host.digest', return_value=sha):
+                self.assertEqual(cert, predecessor_certificate('space.apk'))
+        with patch('upgrade_host.digest', return_value='0' * 64):
+            with self.assertRaisesRegex(ValueError, 'Unsupported predecessor'):
+                predecessor_certificate('space.apk')
+
+    def test_predecessor_hash_cannot_authorize_a_different_signer(self):
+        for expected, wrong in ((HOST_CERTIFICATE, NEW_HOST_CERTIFICATE),
+                                (NEW_HOST_CERTIFICATE, HOST_CERTIFICATE)):
+            with self.subTest(expected=expected), patch('upgrade_host.verify_predecessor', return_value=expected):
+                with patch('upgrade_host.signer', return_value='Signer #1 certificate SHA-256 digest: ' + wrong + '\n'):
+                    with self.assertRaisesRegex(ValueError, 'signer differs'):
+                        verify_source('space.apk')
+                with patch('upgrade_host.signer', return_value='Signer #1 certificate SHA-256 digest: ' + expected + '\n'):
+                    self.assertEqual(expected, verify_source('space.apk'))
+
+    def test_update_uses_source_signer_and_reports_migration_accurately(self):
+        cases = ((HOST_CERTIFICATE, False, HOST_CERTIFICATE, True),
+                 (HOST_CERTIFICATE, True, NEW_HOST_CERTIFICATE, False),
+                 (NEW_HOST_CERTIFICATE, False, NEW_HOST_CERTIFICATE, True),
+                 (NEW_HOST_CERTIFICATE, True, NEW_HOST_CERTIFICATE, True))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for source_cert, new_key, expected, same_signer in cases:
+                def fake_signer(*args):
+                    if args[0] == 'sign':
+                        Path(args[args.index('--out') + 1]).write_bytes(b'signed candidate')
+                        return ''
+                    return 'Signer #1 certificate SHA-256 digest: ' + expected + '\n'
+                with self.subTest(source=source_cert, new_key=new_key), \
+                        patch.dict(os.environ, {'MODKIT_SPACE_KEYSTORE': str(root / 'key.p12'),
+                                                'MODKIT_SPACE_ALIAS': 'fixture',
+                                                'MODKIT_SPACE_STORE_PASSWORD': 'fixture'}), \
+                        patch('upgrade_host.verify_source', return_value=source_cert), \
+                        patch('upgrade_host.verify_output', return_value={}), \
+                        patch('upgrade_host.sdk_tools', return_value=root), \
+                        patch('upgrade_host.subprocess.run'), \
+                        patch('upgrade_host.signer', side_effect=fake_signer):
+                    report = sign(root / 'source.apk', root / 'unsigned.apk', root / 'output.apk', new_key)
+                    self.assertEqual(expected, report['certificate_sha256'])
+                    self.assertEqual(same_signer, report['same_signer_update'])
+                    self.assertTrue(report['signed'])
 
     def archive(self, path, changes=None):
         entries = {'AndroidManifest.xml': b'manifest', 'classes2.dex': b'bootstrap',

@@ -205,3 +205,18 @@ The bounded ARM-state JNI route, ABI-specific discovery, readable unavailable re
 ## Bounded x86_64 JNI discovery
 
 The companion scanner now emits ABI-separated x86_64 recipes for all eight primitive JNI results within a strict read-only leaf subset. It preserves ENDBR64 and native_v1 alignment/length constraints. The owned guest verifies new boolean/float switches and restoration alongside existing scalar recipes. [X86_64_JNI_VALIDATION_20261009.md](../docs/X86_64_JNI_VALIDATION_20261009.md) records 452 unit tests, 32 CPU vectors, API29/API35 and Space results, including initial accessibility failures and successful unchanged-code retries. Short/unaligned stubs, arbitrary native bodies, IA-32/x87 and dynamic RegisterNatives bindings remain unsupported. No signed APK pair or universal engine coverage is claimed.
+
+## Upgrade of the supplied new-key Space 0.0.37 (2026-10-10)
+
+The existing new-key APK is now a second exact pinned predecessor:
+`ec3ffc685880b27ad23b3305334a992dad313ce67ff7690420ffc7d0e2f22870`.
+Its single signer must be the already authorized replacement certificate.
+The old predecessor/hash/certificate pairing remains required on the old route.
+Unknown APKs and hash/signer cross-pairings remain rejected.
+
+`prepare` and `sign` accept this exact predecessor without `--new-key` and
+retain its signer. This allows a same-package, same-signer update while retaining
+manifest versionCode 99/versionName 9.9.9.99 from the original kernel. The
+human distribution filename identifies the refreshed runtime; it does not change
+that manifest. Only classes4.dex and the two engine assets are replaced.
+See docs/SPACE_SIGNED_UPDATE_20261010.md for APK hashes and validation limits.
