@@ -34,7 +34,7 @@ jobs:
         with:
           gradle-version: '9.5.0'
       - name: Test portable modification core without Android packaging
-        run: gradle --no-daemon :analysiscore:test
+        run: gradle --no-daemon -Pmodkit.codeOnly=true :analysiscore:test
       - name: Install SDK for source compilation only
         shell: bash
         run: |
@@ -44,7 +44,7 @@ jobs:
       - name: Verify recipe bridge without packaging APKs
         shell: bash
         run: |
-          MODKIT_SOURCE_TASKS=( :app:testDebugUnitTest -x :app:generateRuntimeProbeDexAsset --tests '*ExistingModificationRequestsTest' --tests '*NativeRecipeCatalogTest' --tests '*DexRuntimeSwitchRewriterTest' )
+          MODKIT_SOURCE_TASKS=( -Pmodkit.codeOnly=true :app:testDebugUnitTest -x :app:generateRuntimeProbeDexAsset --tests '*ExistingModificationRequestsTest' --tests '*NativeRecipeCatalogTest' --tests '*DexRuntimeSwitchRewriterTest' )
           gradle --no-daemon "${MODKIT_SOURCE_TASKS[@]}" --dry-run > code-only-task-plan.txt
           python3 tools/check_code_only_task_plan.py code-only-task-plan.txt
           gradle --no-daemon "${MODKIT_SOURCE_TASKS[@]}"

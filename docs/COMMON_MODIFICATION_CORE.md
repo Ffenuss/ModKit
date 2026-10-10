@@ -6,7 +6,9 @@
 DEX/native-нормализации в app. Предварительно проверяется dry-run графа задач:
 assemble/package/install APK и native build запрещены. Генератор runtime-probe APK
 исключён из графа, SDK устанавливается только для компиляции исходников. APK/Space
-carrier, NDK bootstrap и device jobs пропускаются. Полная Android-проверка и сборка
+carrier, NDK bootstrap и device jobs пропускаются.
+Флаг `-Pmodkit.codeOnly=true` отключает native-конфигурацию runtimeprobe/nativefixture
+на время JVM-проверок, чтобы Gradle не пытался устанавливать NDK при настройке проекта. Полная Android-проверка и сборка
 остаются отдельным этапом, когда будут готовы исполнители и интеграция.
 
 ## Контракт

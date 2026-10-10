@@ -2,6 +2,8 @@ plugins {
     id("com.android.application")
 }
 
+val modkitCodeOnly = providers.gradleProperty("modkit.codeOnly").orNull == "true"
+
 android {
     namespace = "io.github.ffenuss.modkit.runtimeprobe"
     ndkVersion = "28.2.13676358"
@@ -34,9 +36,9 @@ android {
         }
     }
 
-    externalNativeBuild {
-        ndkBuild {
-            path = file("src/main/jni/Android.mk")
+    if (!modkitCodeOnly) {
+        externalNativeBuild {
+            ndkBuild { path = file("src/main/jni/Android.mk") }
         }
     }
 
