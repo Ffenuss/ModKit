@@ -2,10 +2,15 @@ name: Android CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, "feature/space-**" ]
   pull_request:
     branches: [ main, audit/automod-reliability-20260924, fix/api29-packageinstaller-confirmation-20260925, fix/il2cpp-extraction-progress-20260925, feature/native-runtime-overlay-20260925, fix/il2cpp-validated-metadata-routing-20260925, feat/il2cpp-unbounded-disk-bindings-20260925, feat/unreal-asset-inventory-20260925, feat/flutter-asset-manifest-20260925, fix/elf-progress-watchdog-20260925, release/0.0.31-integrated-analyzers-20260926, feature/engine-run-diagnostics-20260926, feature/native-overlay-e2e-20260926, feature/dex-runtime-overlay-20260927, integration/road-to-1.0-20260929 ]
   workflow_dispatch:
+    inputs:
+      build_release:
+        description: 'Build final production APK only after validation'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -15,7 +20,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  code_only_core:
+    if: github.event_name == 'push' && contains(github.event.head_commit.message, '[code only]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - name: Test portable modification core without Android packaging
+        run: gradle --no-daemon -Pmodkit.codeOnly=true :analysiscore:test
+      - name: Install SDK for source compilation only
+        shell: bash
+        run: |
+          MODKIT_SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
+          yes | "$MODKIT_SDKMANAGER" --licenses >/dev/null || true
+          "$MODKIT_SDKMANAGER" 'platforms;android-37.0' 'build-tools;36.0.0'
+      - name: Verify recipe bridge without packaging APKs
+        shell: bash
+        run: |
+          MODKIT_SOURCE_TASKS=( --no-build-cache -Pmodkit.codeOnly=true :app:testDebugUnitTest -x :app:generateRuntimeProbeDexAsset --tests '*DexResultModificationAdapterTest' --tests '*NativeResultModificationAdapterTest' --tests '*ExistingModificationRequestsTest' --tests '*NativeRecipeCatalogTest' --tests '*DexRuntimeSwitchRewriterTest' )
+          gradle --no-daemon "${MODKIT_SOURCE_TASKS[@]}" --dry-run > code-only-task-plan.txt
+          python3 tools/check_code_only_task_plan.py code-only-task-plan.txt
+          gradle --no-daemon "${MODKIT_SOURCE_TASKS[@]}"
+          test -z "$(find app runtimeprobe testgame nativefixture spaceengine -path '*/build/outputs/apk/*' -name '*.apk' -print)"
+      - name: Execute common native adapter output without APKs
+        run: |
+          python -m pip install unicorn==2.1.4
+          python tools/verify_arm64_vectors.py app/build/native-transform-verification.tsv app/build/native-computed-transform-verification.tsv
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-code-only-core
+          path: |
+            analysiscore/build/reports/tests/
+            app/build/reports/tests/
+            code-only-task-plan.txt
+            app/build/native-transform-verification.tsv
+            app/build/native-computed-transform-verification.tsv
+            app/build/native-transform-verification.json
+
   build:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[code only]')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -47,13 +98,21 @@ jobs:
         with:
           gradle-version: '9.5.0'
 
+      - name: Verify owned Math fixture baseline
+        run: |
+          mkdir -p build/math-fixture
+          javac -d build/math-fixture testgame/src/main/java/dev/modkit/fixture/PlayerStats.java tools/VerifyMathFixture.java
+          java -cp build/math-fixture VerifyMathFixture
+
       - name: Unit tests, lint, assemble
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 
       - name: Execute emitted ARM64 recipes independently
         run: |
           python -m pip install unicorn==2.1.4
-          python tools/verify_arm64_vectors.py app/build/native-verification.tsv app/build/native-catalog-verification.tsv
+          python tools/verify_arm64_vectors.py app/build/native-verification.tsv app/build/native-catalog-verification.tsv app/build/native-jni-verification.tsv app/build/native-transform-verification.tsv app/build/native-computed-transform-verification.tsv
+          python tools/verify_arm32_vectors.py app/build/native-arm32-verification.tsv
+          python tools/verify_x64_vectors.py app/build/native-x64-verification.tsv
 
       - name: Verify APK
         shell: bash
@@ -82,8 +141,8 @@ jobs:
           done
           "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
           "${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" | tee apk-signature-verification.txt
-          cp "$APK" ModKit-v0.0.35-debug.apk
-          sha256sum ModKit-v0.0.35-debug.apk > ModKit-v0.0.35-debug.apk.sha256
+          cp "$APK" ModKit-v0.0.47-debug.apk
+          sha256sum ModKit-v0.0.47-debug.apk > ModKit-v0.0.47-debug.apk.sha256
 
       - name: Upload test and lint reports
         if: always()
@@ -97,16 +156,8 @@ jobs:
             apk-signature-verification.txt
             app/build/native*verification.*
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: ModKit-v0.0.35-debug
-          path: |
-            ModKit-v0.0.35-debug.apk
-            ModKit-v0.0.35-debug.apk.sha256
-          if-no-files-found: error
-
   device:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[code only]')
     runs-on: ubuntu-latest
     timeout-minutes: 35
     strategy:
@@ -163,3 +214,45 @@ jobs:
             app/build/outputs/androidTest-results/
             device-validation/
             device-logcat.txt
+
+  release:
+    # An explicit maintainer release request still waits for all validation jobs.
+    if: (github.event_name == 'workflow_dispatch' && inputs.build_release) || (github.event_name == 'push' && github.ref == 'refs/heads/feature/space-live-state-20261009' && contains(github.event.head_commit.message, '[build release]'))
+    needs: [build, device]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.5.0'
+      - name: Install final build SDK and NDK
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -maxdepth 3 -type f -name sdkmanager | sort | tail -n 1)"
+          "$SDKMANAGER" "platforms;android-37.0" "build-tools;36.0.0" "ndk;28.2.13676358"
+      - name: Assemble final production package
+        run: gradle --no-daemon :app:assembleRelease
+      - name: Verify unsigned release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release-unsigned.apk"
+          test -s "$APK"
+          unzip -t "$APK" >/dev/null
+          "${ANDROID_HOME}/build-tools/36.0.0/zipalign" -c -P 16 -v 4 "$APK" >/dev/null
+          "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "$APK" > release-badging.txt
+          grep -q "^package: name='io.github.ffenuss.modkit' " release-badging.txt
+          cp "$APK" ModKit-v0.0.47-unsigned.apk
+          sha256sum ModKit-v0.0.47-unsigned.apk > ModKit-v0.0.47-unsigned.apk.sha256
+
+      - name: Upload unsigned release for existing maintainer key
+        uses: actions/upload-artifact@v4
+        with:
+          name: ModKit-v0.0.47-unsigned
+          path: |
+            ModKit-v0.0.47-unsigned.apk
+            ModKit-v0.0.47-unsigned.apk.sha256
+          if-no-files-found: error

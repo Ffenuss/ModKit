@@ -2,6 +2,8 @@ package io.github.ffenuss.modkit.patch
 
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
+import io.github.ffenuss.modkit.modification.ScalarValue
+import io.github.ffenuss.modkit.modification.ValueOperation
 import java.io.File
 import java.security.MessageDigest
 import org.jf.dexlib2.AccessFlags
@@ -17,7 +19,8 @@ import org.jf.dexlib2.writer.io.MemoryDataStore
 import org.jf.dexlib2.writer.pool.DexPool
 
 /** A group of proven getter bodies shares one runtime switch. Original code is never discarded. */
-data class DexRuntimeSelection(val method: DexLocalOpportunity, val switchId: String)
+data class DexRuntimeSelection(val method: DexLocalOpportunity, val switchId: String,
+    val resultTransform: ValueOperation.Multiply? = null)
 
 object DexRuntimeSwitchRewriter {
     const val BRIDGE = "Lio/github/ffenuss/modkit/runtimeprobe/RuntimeDexSwitches;"
@@ -82,8 +85,8 @@ object DexRuntimeSwitchRewriter {
             for ((id, original) in originals) {
                 checkCancelled(cancellation)
                 val actual = requireNotNull(byClass[original.definingClass]).methods.toList()
-                val live = actual.single { it.name == original.name && it.parameterTypes.isEmpty() && it.returnType == original.returnType }
-                val backup = actual.single { it.name == backupName(id) && it.parameterTypes.isEmpty() && it.returnType == original.returnType }
+                val live = actual.single { it.name == original.name && it.parameterTypes.map { t -> t.toString() } == original.parameterTypes.map { t -> t.toString() } && it.returnType == original.returnType }
+                val backup = actual.single { it.name == backupName(id) && it.parameterTypes.map { t -> t.toString() } == original.parameterTypes.map { t -> t.toString() } && it.returnType == original.returnType }
                 require(live.accessFlags == original.accessFlags && backup.accessFlags == backups.getValue(id).accessFlags)
                 require(canonicalBody(live, source.opcodes).contentEquals(canonicalBody(wrappers.getValue(id), source.opcodes))) {
                     "Runtime DEX wrapper verification failed: $id"
@@ -104,37 +107,54 @@ object DexRuntimeSwitchRewriter {
     }
 
     private fun wrapper(original: Method, selection: DexRuntimeSelection, backup: String): Method {
-        require(original.parameterTypes.isEmpty() && original.returnType in setOf("Z", "I", "F"))
+        require(DexMethodParameters.supported(original.parameterTypes) && original.returnType in DexScalarReplacement.supportedTypes)
         val static = AccessFlags.STATIC.isSet(original.accessFlags)
-        val value = when (selection.method.action) {
-            DexLocalAction.TRUE -> 1
-            DexLocalAction.FALSE -> 0
-            DexLocalAction.INT_9999 -> 9999
-            DexLocalAction.INT_99 -> 99
-            DexLocalAction.FLOAT_2 -> 2.0f.toBits()
+        val wide = DexScalarReplacement.isWide(original.returnType)
+        val constant = DexScalarReplacement.instruction(original.returnType, selection.method.action)
+        val returnOp = DexScalarReplacement.returnOpcode(original.returnType)
+        val transform = selection.resultTransform
+        if (transform != null) require(when (original.returnType) {
+            "F" -> transform.coefficient is ScalarValue.Single
+            "D" -> transform.coefficient is ScalarValue.DoublePrecision
+            else -> false
+        }) { "DEX result multiplication requires the exact Float/Double width" }
+        val locals = if (transform != null) { if (wide) 4 else 2 } else if (wide) 2 else 1
+        val inputs = DexMethodParameters.inputWords(original)
+        val reference = ImmutableMethodReference(original.definingClass, backup, original.parameterTypes, original.returnType)
+        val invocation = if (inputs <= 5) {
+            val registers = (0 until inputs).map { locals + it } + List(5 - inputs) { 0 }
+            ImmutableInstruction35c(if (static) Opcode.INVOKE_STATIC else Opcode.INVOKE_DIRECT,
+                inputs, registers[0], registers[1], registers[2], registers[3], registers[4], reference)
+        } else ImmutableInstruction3rc(if (static) Opcode.INVOKE_STATIC_RANGE else Opcode.INVOKE_DIRECT_RANGE,
+            locals, inputs, reference)
+        val resultMove = ImmutableInstruction11x(if (wide) Opcode.MOVE_RESULT_WIDE else Opcode.MOVE_RESULT, 0)
+        val resultReturn = ImmutableInstruction11x(returnOp, 0)
+        val enabledCode = if (transform == null) listOf(constant, resultReturn) else {
+            val coefficient = when (val value = transform.coefficient) {
+                is ScalarValue.Single -> ImmutableInstruction31i(Opcode.CONST, 1, value.value.toRawBits())
+                is ScalarValue.DoublePrecision -> ImmutableInstruction51l(Opcode.CONST_WIDE, 2, value.value.toRawBits())
+                else -> error("Unsupported DEX multiplier width")
+            }
+            // Call the preserved original once on either path. Locals do not alias incoming arguments.
+            listOf(invocation, resultMove, coefficient,
+                ImmutableInstruction23x(if (wide) Opcode.MUL_DOUBLE else Opcode.MUL_FLOAT, 0, 0, if (wide) 2 else 1),
+                resultReturn)
         }
         val code = listOf(
             ImmutableInstruction31c(Opcode.CONST_STRING_JUMBO, 0, ImmutableStringReference(selection.switchId)),
             ImmutableInstruction35c(Opcode.INVOKE_STATIC, 1, 0, 0, 0, 0, 0,
                 ImmutableMethodReference(BRIDGE, "isEnabled", listOf("Ljava/lang/String;"), "Z")),
             ImmutableInstruction11x(Opcode.MOVE_RESULT, 0),
-            ImmutableInstruction21t(Opcode.IF_EQZ, 0, 6),
-            ImmutableInstruction31i(Opcode.CONST, 0, value),
-            ImmutableInstruction11x(Opcode.RETURN, 0),
-            ImmutableInstruction35c(if (static) Opcode.INVOKE_STATIC else Opcode.INVOKE_DIRECT,
-                if (static) 0 else 1, if (static) 0 else 1, 0, 0, 0, 0,
-                ImmutableMethodReference(original.definingClass, backup, emptyList(), original.returnType)),
-            ImmutableInstruction11x(Opcode.MOVE_RESULT, 0),
-            ImmutableInstruction11x(Opcode.RETURN, 0),
-        )
+            ImmutableInstruction21t(Opcode.IF_EQZ, 0, 2 + enabledCode.sumOf { it.codeUnits }),
+        ) + enabledCode + listOf(invocation, resultMove, resultReturn)
         return ImmutableMethod(original.definingClass, original.name, original.parameters,
             original.returnType, original.accessFlags, original.annotations, original.hiddenApiRestrictions,
-            ImmutableMethodImplementation(if (static) 1 else 2, code, emptyList(), emptyList()))
+            ImmutableMethodImplementation(locals + inputs, code, emptyList(), emptyList()))
     }
 
     private fun canonicalBody(method: Method, opcodes: Opcodes): ByteArray {
         val flags = AccessFlags.PUBLIC.value or (method.accessFlags and AccessFlags.STATIC.value)
-        val normalized = ImmutableMethod("Lmodkit/Body;", "body", emptyList(), method.returnType,
+        val normalized = ImmutableMethod("Lmodkit/Body;", "body", method.parameters, method.returnType,
             flags, emptySet(), emptySet(), method.implementation)
         val clazz = ImmutableClassDef("Lmodkit/Body;", AccessFlags.PUBLIC.value, "Ljava/lang/Object;",
             emptyList(), null, emptySet(), emptyList(), emptyList(),

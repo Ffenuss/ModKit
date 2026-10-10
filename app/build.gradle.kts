@@ -26,8 +26,8 @@ android {
         applicationId = "io.github.ffenuss.modkit"
         minSdk = 26
         targetSdk = 36
-        versionCode = 35
-        versionName = "0.0.35"
+        versionCode = 47
+        versionName = "0.0.47"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

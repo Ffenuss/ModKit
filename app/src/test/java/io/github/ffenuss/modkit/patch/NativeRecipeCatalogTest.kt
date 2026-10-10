@@ -8,6 +8,114 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NativeRecipeCatalogTest {
+    @Test fun puzzleGettersOfferTypedValuesOnlyForProvenReadOnlyBodies() {
+        for (member in listOf("get_RemainingMoves", "get_HintCount", "get_RemainingTime")) {
+            withFixture(listOf(0xB9401000, 0xD65F03C0), member = member,
+                owner = "Game.PuzzleRound", kind = Il2CppNativeReturnKind.INTEGER) { recipe, _, _ ->
+                assertTrue(recipe.blocker, recipe.selectable)
+                assertEquals(GameplayModificationCategory.PUZZLE, recipe.native!!.category)
+                assertEquals("999", recipe.scalarValue)
+                assertTrue(recipe.verification.recipePrepared)
+            }
+        }
+        withFixture(listOf(0x94000400, 0xB9401000, 0xD65F03C0), member = "get_RemainingTime",
+            owner = "Game.PuzzleRound", kind = Il2CppNativeReturnKind.INTEGER) { recipe, _, _ ->
+            assertFalse(recipe.selectable)
+            assertTrue(recipe.blocker.orEmpty().contains("вызов"))
+        }
+    }
+    @Test fun multiplierRecipesRetainLiveReadsAndBuildExactReversibleDrafts() {
+        val vectors = mutableListOf<String>()
+        listOf(Il2CppNativeReturnKind.FLOAT32 to 0xBD401000L,
+            Il2CppNativeReturnKind.FLOAT64 to 0xFD400800L).forEach { (kind, load) ->
+            val tag = if (kind == Il2CppNativeReturnKind.FLOAT32) "f" else "d"
+            withFixture(listOf(load, 0xD65F03C0, 0xD503201F, 0xD503201F), kind = kind) { recipe, result, root ->
+                assertTrue(recipe.blocker, recipe.selectable)
+                assertEquals(ScalarRecipeMode.MULTIPLIER, recipe.scalarMode)
+                assertTrue(recipe.id.endsWith(":multiply-v1"))
+                assertEquals("2", recipe.scalarValue)
+                assertEquals("Множитель урона · множитель ×2", recipe.title)
+                assertEquals(listOf("0.5", "2", "3", "5", "10", "16"), recipe.scalarValues.map { it.value })
+                assertFalse(recipe.verification.runtimeConfirmed)
+                val draft = Il2CppNativeMutationDraftBuilder.build(result, recipe.native!!.targetId,
+                    recipe.native.replacementHex!!, root, File(root, "staging"))
+                assertEquals(16, Il2CppNativeMutationDraftBuilder.parseHex(draft.replacementHex).size)
+                assertEquals(Il2CppNativeMutationDraftBuilder.parseHex(draft.originalHex).take(4),
+                    Il2CppNativeMutationDraftBuilder.parseHex(draft.replacementHex).take(4))
+                for (seed in listOf(7, 11, -3, 0)) vectors += listOf("scale-$tag-$seed", tag, seed,
+                    seed, seed * 2, draft.originalHex, draft.replacementHex).joinToString("\t")
+                val chosen = recipe.withScalarValue("5")
+                assertEquals("Множитель урона · множитель ×5", chosen.title)
+                assertEquals(ScalarRecipeMode.MULTIPLIER, chosen.scalarMode)
+            }
+            withFixture(listOf(0xD503245F, load, 0xD65F03C0, 0xD503201F, 0xD503201F), kind = kind) { recipe, result, root ->
+                assertEquals(ScalarRecipeMode.MULTIPLIER, recipe.scalarMode)
+                for (factor in listOf("0.5", "5")) {
+                    val chosen = recipe.withScalarValue(factor)
+                    val draft = Il2CppNativeMutationDraftBuilder.build(result, chosen.native!!.targetId,
+                        chosen.native.replacementHex!!, root, File(root, "staging-$factor"))
+                    assertTrue(draft.replacementHex.startsWith("5F 24 03 D5 "))
+                    vectors += listOf("scale-bti-$tag-$factor", tag, 8, 8, 8 * factor.toDouble(),
+                        draft.originalHex, draft.replacementHex).joinToString("\t")
+                }
+            }
+        }
+        File("build/native-transform-verification.tsv").apply {
+            parentFile.mkdirs(); writeText(vectors.joinToString("\n"))
+        }
+    }
+
+    @Test fun computedAndConditionalMultipliersPreserveEveryOriginalPath() {
+        val vectors = mutableListOf<String>()
+        for (kind in listOf(Il2CppNativeReturnKind.FLOAT32, Il2CppNativeReturnKind.FLOAT64)) {
+            val double = kind == Il2CppNativeReturnKind.FLOAT64
+            val tag = if (double) "d" else "f"
+            val fpType = if (double) 0x00400000L else 0L
+            val load = if (double) 0xFD400800L else 0xBD401000L
+            val two = 0x1E201001L or fpType // FMOV S1/D1, #2
+            val add = 0x1E212800L or fpType // FADD S0/D0, S0/D0, S1/D1
+            val multiply = 0x1E210800L or fpType
+            val bodies = listOf(
+                listOf(load, two, 0x34000062, add, 0x14000002, multiply, 0xD65F03C0, 0xD503201F, 0xD503201F),
+                listOf(load, two, 0x340000A2, add, 0xD65F03C0, 0xD503201F, 0xD503201F,
+                    multiply, 0xD65F03C0, 0xD503201F, 0xD503201F),
+            )
+            bodies.forEachIndexed { shape, words ->
+                withFixture(words, kind = kind) { recipe, result, root ->
+                    assertTrue(recipe.blocker, recipe.selectable)
+                    assertEquals(ScalarRecipeMode.MULTIPLIER, recipe.scalarMode)
+                    val draft = Il2CppNativeMutationDraftBuilder.build(result, recipe.native!!.targetId,
+                        recipe.native.replacementHex!!, root, File(root, "computed"))
+                    val source = Il2CppNativeMutationDraftBuilder.parseHex(draft.originalHex)
+                    val patched = Il2CppNativeMutationDraftBuilder.parseHex(draft.replacementHex)
+                    val proof = io.github.ffenuss.modkit.analysis.nativecode.AArch64ReadOnlyBody.inspect(source)
+                    for (offset in proof.reachableOffsets - proof.returnOffsets)
+                        assertEquals("Original instruction at $offset moved or changed", source.drop(offset).take(4),
+                            patched.drop(offset).take(4))
+                    for (seed in listOf(7, -3, 0)) for (argument in listOf(0, 1)) {
+                        val before = if (argument == 0) seed * 2 else seed + 2
+                        vectors += listOf("computed-$shape-$tag-$seed-$argument", tag, seed, before, before * 2,
+                            draft.originalHex, draft.replacementHex, argument).joinToString("\t")
+                    }
+                }
+            }
+        }
+        File("build/native-computed-transform-verification.tsv").apply {
+            parentFile.mkdirs(); writeText(vectors.joinToString("\n"))
+        }
+    }
+
+    @Test fun visualAndUnboundedGettersDoNotBecomeMultiplierRecipes() {
+        withFixture(listOf(0xBD401000, 0xD65F03C0, 0xD503201F, 0xD503201F),
+            owner = "Game.DiskInfoBoxMain") { recipe, _, _ ->
+            assertEquals(ScalarRecipeMode.VALUE, recipe.scalarMode)
+        }
+        withFixture(listOf(0xBD401000, 0xD65F03C0, 0xD503201F, 0xD503201F),
+            nextBoundary = false) { recipe, _, _ -> assertFalse(recipe.selectable) }
+        withFixture(listOf(0xBD401000, 0xD65F03C0, 0xD503201F, 0xD503201F),
+            shared = true) { recipe, _, _ -> assertFalse(recipe.selectable) }
+    }
+
     private val active = object : CancellationSignal { override fun isCancelled() = false }
     private val sha = "a".repeat(64)
     private val artifact = "base.apk:lib/arm64-v8a/libil2cpp.so"

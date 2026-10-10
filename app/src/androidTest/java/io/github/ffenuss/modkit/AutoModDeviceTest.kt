@@ -7,6 +7,8 @@ import android.os.Environment
 import android.provider.MediaStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
@@ -73,6 +75,22 @@ class AutoModDeviceTest {
         val gameReady = device.wait(Until.hasObject(By.textContains("Health:")), 45_000)
         if (!gameReady) evidence("fixture-launch-failure.png") { device.takeScreenshot(it) }
         assertTrue("Fixture must launch", gameReady)
+    }
+
+    /** Runner cleanup may still be destroying the preceding test's Activity. */
+    private fun awaitPreviousMainActivityDestroyed() {
+        val deadline = android.os.SystemClock.uptimeMillis() + 10_000
+        var remaining = true
+        while (remaining && android.os.SystemClock.uptimeMillis() < deadline) {
+            instrumentation.runOnMainSync {
+                val monitor = ActivityLifecycleMonitorRegistry.getInstance()
+                remaining = Stage.values().filter { it != Stage.DESTROYED }.any { stage ->
+                    monitor.getActivitiesInStage(stage).any { it is MainActivity }
+                }
+            }
+            if (remaining) android.os.SystemClock.sleep(50)
+        }
+        assertFalse("Previous test Activity must finish before the retained-build UI is launched", remaining)
     }
 
 
@@ -153,6 +171,24 @@ class AutoModDeviceTest {
         return RepackedRuntimeInstallStatusStore.status.value
     }
 
+    @Test fun a0a_menuHandoffUsesPublicLauncherInsteadOfPrivateActivity() {
+        assertNotEquals(context.applicationInfo.uid,
+            context.packageManager.getApplicationInfo(fixturePackage, 0).uid)
+        try {
+            context.startActivity(Intent().setClassName(fixturePackage,
+                "dev.modkit.fixture.InternalMenuActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            fail("Android must reject the fixture's unexported activity")
+        } catch (expected: SecurityException) { /* Reproduce the reported Permission Denial. */ }
+        val launcher = requireNotNull(context.packageManager.getLaunchIntentForPackage(fixturePackage))
+        assertEquals(Intent.ACTION_MAIN, launcher.action)
+        assertTrue(launcher.hasCategory(Intent.CATEGORY_LAUNCHER))
+        assertNull(launcher.data)
+        assertNull(launcher.clipData)
+        io.github.ffenuss.modkit.space.SpaceMenuHandoff.launchForMenuSync(context, launcher)
+        assertTrue("Public launcher must open the real fixture from another UID",
+            device.wait(Until.hasObject(By.textContains("Health:")), 45_000))
+    }
+
     @Test fun a0_originalApkSetProducesVersionBoundSpaceMenuAndReadableHandoff() = runBlocking {
         val installed = io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(fixturePackage)!!
         val before = installed.apkFiles.map { java.security.MessageDigest.getInstance("SHA-256").digest(it.readBytes()).toList() }
@@ -221,6 +257,13 @@ class AutoModDeviceTest {
                 assertNotNull("Stored menu must be accessible without restarting analysis", saved)
                 saved.click()
                 assertTrue(device.wait(Until.hasObject(By.text(fixturePackage)), 15_000))
+                val genre = device.wait(Until.findObject(By.desc("Изменить жанр приложения")), 10_000)
+                assertNotNull("The existing genre label must allow correction", genre)
+                genre.click()
+                requireNotNull(device.wait(Until.findObject(By.text("Гонки")), 5_000)).click()
+                assertTrue(device.wait(Until.hasObject(By.text("Жанр: Гонки")), 10_000))
+                assertEquals(io.github.ffenuss.modkit.analysis.GameGenre.RACING,
+                    io.github.ffenuss.modkit.space.SavedSpaceMenus.selectedGenre(context, fixturePackage))
                 device.findObject(By.text("Назад")).click()
             }
             val after = installed.apkFiles.map { java.security.MessageDigest.getInstance("SHA-256").digest(it.readBytes()).toList() }
@@ -240,7 +283,10 @@ class AutoModDeviceTest {
                 AnalysisTargetDescriptor.InstalledPackage("dev.modkit.nativefixture", "Owned JNI fixture"), result, signal, progress, workspace)
             profile = File(menu.profilePath)
             val items = JSONObject(profile!!.readText()).getJSONArray("items")
-            val getter = (0 until items.length()).map { items.getJSONObject(it) }.single { it.getString("id").startsWith("jni:") }
+            val getters = (0 until items.length()).map { items.getJSONObject(it) }.filter { it.getString("id").startsWith("jni:") }
+            val arm64Getters = getters.filter { it.getJSONObject("patch").getString("abi") == "arm64-v8a" }
+            val arm32Getters = getters.filter { it.getJSONObject("patch").getString("abi") == "armeabi-v7a" }
+            val getter = arm64Getters.single { it.getString("evidence").endsWith("->getHealth()I") }
             assertTrue(getter.getString("evidence").endsWith("->getHealth()I"))
             val patch = getter.getJSONObject("patch")
             assertEquals("libmodkit_fixture.so", patch.getString("module"))
@@ -248,12 +294,57 @@ class AutoModDeviceTest {
             assertTrue(patch.getLong("address") > 0)
             assertEquals(64, patch.getString("imageSha256").length)
             assertNotEquals(patch.getString("expected"), patch.getString("replacement"))
-            assertEquals(1, menu.runtimeRecipes)
+            assertEquals(24, menu.runtimeRecipes)
+            assertEquals(24, getters.size)
+            val x64Getters = getters.filter { it.getJSONObject("patch").getString("abi") == "x86_64" }
+            assertEquals(10, x64Getters.size)
+            assertEquals(setOf("Z", "B", "S", "C", "I", "J", "F", "D"), x64Getters.map { it.getString("evidence").takeLast(1) }.toSet())
+            assertEquals("b800000040660f6ec0c39090", x64Getters.single { it.getString("evidence").endsWith("->getRunSpeed()F") }.getJSONObject("patch").getString("replacement"))
+            assertEquals("b801000000c39090", x64Getters.single { it.getString("evidence").endsWith("->canSprint()Z") }.getJSONObject("patch").getString("replacement"))
+            assertEquals(8, arm64Getters.size)
+            assertEquals(6, arm32Getters.size)
+            val arm32Health = arm32Getters.single { it.getString("evidence").endsWith("->getHealth()I") }
+            assertEquals("0f0702e31eff2fe1", arm32Health.getJSONObject("patch").getString("replacement"))
+            assertNotEquals(getter.getString("id"), arm32Health.getString("id"))
+            assertEquals(setOf("getHealth()I", "getEnergy()B", "getMaxHealth()S", "getMagazineSize()C", "getStamina()J", "getMoveSpeed()D"),
+                arm32Getters.map { it.getString("evidence").substringAfter("->") }.toSet())
+            for ((signature, expected, replacement) in listOf(
+                    Triple("getEnergy()B", "c0008012c0035fd6", "e00f80d2c0035fd6"),
+                    Triple("getMaxHealth()S", "60258012c0035fd6", "e0e184d2c0035fd6"),
+                    Triple("getMagazineSize()C", "006a9852c0035fd6", "e0e184d2c0035fd6"))) {
+                val narrow = arm64Getters.single { it.getString("evidence").endsWith("->$signature") }
+                assertEquals(expected, narrow.getJSONObject("patch").getString("expected"))
+                assertEquals(replacement, narrow.getJSONObject("patch").getString("replacement"))
+                assertTrue(narrow.getString("title").contains(signature.substringBefore('(')))
+                if (signature.endsWith("B")) assertTrue(narrow.getString("title").contains("значение 127"))
+            }
+            val intAmmo = arm64Getters.single { it.getString("evidence").endsWith("->getAmmo(I)I") }
+            val longAmmo = arm64Getters.single { it.getString("evidence").endsWith("->getAmmo(J)I") }
+            assertNotEquals(intAmmo.getString("id"), longAmmo.getString("id"))
+            assertNotEquals("Overloads must have distinguishable menu labels", intAmmo.getString("title"), longAmmo.getString("title"))
+            assertNotEquals(intAmmo.getJSONObject("patch").getLong("address"), longAmmo.getJSONObject("patch").getLong("address"))
+            assertEquals("40280011c0035fd6", intAmmo.getJSONObject("patch").getString("expected"))
+            assertEquals("40500011c0035fd6", longAmmo.getJSONObject("patch").getString("expected"))
+            assertFalse("Reference arguments remain outside the primitive getter contract",
+                getters.any { it.getString("evidence").contains("->getBullets(") })
+            assertEquals("e0e184d2c0035fd6", arm64Getters.single { it.getString("evidence").endsWith("->getStamina()J") }.getJSONObject("patch").getString("replacement"))
+            assertEquals("0010601ec0035fd6", arm64Getters.single { it.getString("evidence").endsWith("->getMoveSpeed()D") }.getJSONObject("patch").getString("replacement"))
+            val beforeItems = getters.associate { it.getString("id") to it.getJSONObject("patch").toString() }
+            val beforeSources = JSONObject(profile!!.readText()).getJSONArray("sources").toString()
+            io.github.ffenuss.modkit.space.SavedSpaceMenus.updateGenre(context, profile!!, io.github.ffenuss.modkit.analysis.GameGenre.RACING)
+            val refreshed = io.github.ffenuss.modkit.space.SpaceMenuCoordinator.prepare(context,
+                AnalysisTargetDescriptor.InstalledPackage("dev.modkit.nativefixture", "Owned JNI fixture"), result, signal, progress, workspace)
+            assertEquals(io.github.ffenuss.modkit.analysis.GameGenre.RACING, refreshed.plan.genre.genre)
+            val revised = JSONObject(profile!!.readText())
+            assertEquals(beforeSources, revised.getJSONArray("sources").toString())
+            val revisedItems = revised.getJSONArray("items")
+            assertEquals(beforeItems, (0 until revisedItems.length()).map { revisedItems.getJSONObject(it) }
+                .filter { it.getString("id").startsWith("jni:") }.associate { it.getString("id") to it.getJSONObject("patch").toString() })
             val unsupported = File(context.cacheDir, "jni-unsupported-module.apk")
             try {
                 java.util.zip.ZipFile(apk).use { input -> java.util.zip.ZipOutputStream(unsupported.outputStream()).use { output ->
                     input.entries().asSequence().forEach { entry ->
-                        val name = if (entry.name == "lib/arm64-v8a/libmodkit_fixture.so") "lib/arm64-v8a/libfixture.v1.so" else entry.name
+                        val name = if (entry.name.endsWith("/libmodkit_fixture.so")) entry.name.substringBeforeLast('/') + "/libfixture.v1.so" else entry.name
                         output.putNextEntry(java.util.zip.ZipEntry(name))
                         if (!entry.isDirectory) input.getInputStream(entry).use { it.copyTo(output) }
                         output.closeEntry()
@@ -266,6 +357,30 @@ class AutoModDeviceTest {
                 assertEquals("An unsupported module identity cannot invalidate a guest profile", 0, rejected.runtimeRecipes)
                 assertTrue(rejected.warnings.any { it.contains("неподдерживаемое имя библиотеки") })
             } finally { unsupported.delete() }
+            for (flag in listOf(0x400, 0)) {
+                val badAbi = File(context.cacheDir, "jni-bad-arm-flags-$flag.apk")
+                try {
+                    java.util.zip.ZipFile(apk).use { input -> java.util.zip.ZipOutputStream(badAbi.outputStream()).use { output ->
+                        input.entries().asSequence().forEach { entry ->
+                            output.putNextEntry(java.util.zip.ZipEntry(entry.name))
+                            if (!entry.isDirectory) {
+                                val bytes = input.getInputStream(entry).use { it.readBytes() }
+                                if (entry.name == "lib/armeabi-v7a/libmodkit_fixture.so") {
+                                    // Explicit hard-float, then missing convention: neither proves Android softfp.
+                                    val flags = (5 shl 24) or flag
+                                    for (i in 0..3) bytes[36 + i] = (flags ushr (i * 8)).toByte()
+                                }
+                                output.write(bytes)
+                            }
+                            output.closeEntry()
+                        }
+                    } }
+                    val badScan = io.github.ffenuss.modkit.space.JniSpaceRecipeScanner.scan(listOf(badAbi), context.cacheDir, signal)
+                    assertTrue("An uncertain library index must not produce executable recipes", badScan.recipes.isEmpty())
+                    assertTrue(badScan.truncated)
+                    assertTrue(badScan.warnings.any { it.contains("Unsupported ARM calling convention") })
+                } finally { badAbi.delete() }
+            }
             assertEquals(before, java.security.MessageDigest.getInstance("SHA-256").digest(apk.readBytes()).toList())
         } finally { profile?.delete(); apk.delete() }
     }
@@ -427,8 +542,10 @@ class AutoModDeviceTest {
         // The original certificate conflict was checked in b. The app produced by a
         // uses the same persistent ModKit key and can now update our owned fixture.
         assertTrue(context.packageManager.canRequestPackageInstalls())
+        awaitPreviousMainActivityDestroyed()
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val installButton = device.wait(Until.findObject(By.text("Установить")), 15_000)
+        if (installButton == null) evidence("retained-ui-build-missing.png") { device.takeScreenshot(it) }
         assertNotNull("Retained UI build must remain installable", installButton)
         val previousSessionId = RepackedRuntimeInstallStatusStore.status.value.sessionId
         val attemptedAt = System.currentTimeMillis()

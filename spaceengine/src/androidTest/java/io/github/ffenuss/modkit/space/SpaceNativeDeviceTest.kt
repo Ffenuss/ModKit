@@ -16,6 +16,140 @@ import java.util.zip.ZipFile
 
 @RunWith(AndroidJUnit4::class)
 class SpaceNativeDeviceTest {
+    private class MutableBackend(patch: NativePatch) : SpaceNativeController.Backend {
+        var memory = patch.expected.copyOf()
+        var available = true
+        var fail = false
+        var writes = 0
+        var rejectWrites = false
+        var beforeWrite: (() -> Unit)? = null
+        override fun imageMatches(patch: NativePatch): Boolean {
+            if (fail) throw IllegalStateException("Image lookup failed")
+            return available
+        }
+        override fun bytesMatch(patch: NativePatch, bytes: ByteArray) = memory.contentEquals(bytes)
+        override fun write(patch: NativePatch, expected: ByteArray, replacement: ByteArray): Int {
+            writes++
+            beforeWrite?.invoke()
+            if (rejectWrites) return 0
+            if (!memory.contentEquals(expected)) return 0
+            memory = replacement.copyOf()
+            return 1
+        }
+    }
+
+    @Test fun closingFencesQueuedCommandsAndRestoresInFlightWrites() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val original = File(context.cacheDir, "close-fence-fixture").apply { writeText("owned") }
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(2)
+        try {
+            val menu = MenuProfile(profile(original, patch("arm64-v8a", 16,
+                "e0008052c0035fd6", "e07c8052c0035fd6", "a".repeat(64))).toString())
+            val nativePatch = menu.items.single().patch!!
+            val backend = MutableBackend(nativePatch)
+            val controller = SpaceNativeController(menu, backend)
+            controller.refresh()
+            val writing = java.util.concurrent.CountDownLatch(1)
+            val releaseWrite = java.util.concurrent.CountDownLatch(1)
+            val closing = java.util.concurrent.CountDownLatch(1)
+            backend.beforeWrite = {
+                if (backend.writes == 1) {
+                    writing.countDown()
+                    assertTrue(releaseWrite.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                }
+            }
+            val enabling = executor.submit(java.util.concurrent.Callable { controller.set("fixture-value", true) })
+            assertTrue(writing.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            val ending = executor.submit(java.util.concurrent.Callable {
+                closing.countDown(); controller.close()
+            })
+            assertTrue(closing.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            releaseWrite.countDown()
+            assertTrue(enabling.get(5, java.util.concurrent.TimeUnit.SECONDS))
+            assertTrue(ending.get(5, java.util.concurrent.TimeUnit.SECONDS))
+            assertArrayEquals(nativePatch.expected, backend.memory)
+            assertEquals(SpaceNativeController.State.OFF, controller.state("fixture-value"))
+            val writes = backend.writes
+            assertFalse("Commands queued before closure must not re-enable code", controller.set("fixture-value", true))
+            assertFalse(controller.set("fixture-value", false))
+            assertTrue(controller.close())
+            assertEquals("Repeated closure and queued commands must not write", writes, backend.writes)
+
+            val uncertainBackend = MutableBackend(nativePatch)
+            val uncertain = SpaceNativeController(menu, uncertainBackend)
+            uncertain.refresh(); assertTrue(uncertain.set("fixture-value", true))
+            uncertainBackend.memory = ByteArray(nativePatch.expected.size) { 0x55.toByte() }
+            assertFalse("Closure must report failed restoration", uncertain.close())
+            assertEquals(SpaceNativeController.State.ERROR, uncertain.state("fixture-value"))
+            assertFalse(uncertain.set("fixture-value", true))
+
+            val retryBackend = MutableBackend(nativePatch)
+            val retry = SpaceNativeController(menu, retryBackend)
+            retry.refresh(); assertTrue(retry.set("fixture-value", true))
+            retryBackend.rejectWrites = true
+            assertFalse(retry.close())
+            assertEquals(SpaceNativeController.State.ON, retry.state("fixture-value"))
+            assertFalse(retry.set("fixture-value", true))
+            retryBackend.rejectWrites = false
+            assertTrue("A closed session may retry a safe rejected restoration", retry.close())
+            assertArrayEquals(nativePatch.expected, retryBackend.memory)
+        } finally { executor.shutdownNow(); original.delete() }
+    }
+
+    @Test fun liveStateDriftRejectsRefreshRepeatedRequestsAndCleanRestore() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val original = File(context.cacheDir, "state-drift-fixture").apply { writeText("owned") }
+        try {
+            val menu = MenuProfile(profile(original, patch("arm64-v8a", 16, "e0008052c0035fd6", "e07c8052c0035fd6", "a".repeat(64))).toString())
+            // Exercise both active/inactive states and every public path that can claim success.
+            for (enabled in listOf(false, true)) for (operation in listOf("refresh", "repeat", "restore")) {
+                val backend = MutableBackend(menu.items.single().patch!!)
+                val controller = SpaceNativeController(menu, backend)
+                controller.refresh()
+                assertTrue(controller.set("fixture-value", enabled))
+                backend.memory = ByteArray(backend.memory.size) { 0x55.toByte() }
+                val writes = backend.writes
+                when (operation) {
+                    "refresh" -> controller.refresh()
+                    "repeat" -> assertFalse(controller.set("fixture-value", enabled))
+                    "restore" -> assertFalse(controller.restoreAll())
+                }
+                assertEquals(SpaceNativeController.State.ERROR, controller.state("fixture-value"))
+                assertEquals("Foreign code must never be overwritten", writes, backend.writes)
+                backend.memory = menu.items.single().patch!!.expected.copyOf()
+                controller.refresh()
+                assertEquals("Uncertain states stay latched", SpaceNativeController.State.ERROR, controller.state("fixture-value"))
+                assertFalse(controller.restoreAll())
+            }
+        } finally { original.delete() }
+    }
+
+    @Test fun missingAndFailingImagesInvalidateConfirmedStatesButAllowLateLoading() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val original = File(context.cacheDir, "state-image-fixture").apply { writeText("owned") }
+        try {
+            val menu = MenuProfile(profile(original, patch("arm64-v8a", 16, "e0008052c0035fd6", "e07c8052c0035fd6", "a".repeat(64))).toString())
+            for (enabled in listOf(false, true)) for (failure in listOf(false, true)) {
+                val backend = MutableBackend(menu.items.single().patch!!).apply { available = false }
+                val controller = SpaceNativeController(menu, backend)
+                controller.refresh()
+                assertEquals(SpaceNativeController.State.UNAVAILABLE, controller.state("fixture-value"))
+                backend.fail = true
+                controller.refresh()
+                assertEquals(SpaceNativeController.State.UNAVAILABLE, controller.state("fixture-value"))
+                backend.fail = false; backend.available = true
+                controller.refresh()
+                assertTrue(controller.set("fixture-value", enabled))
+                val writes = backend.writes
+                backend.available = false; backend.fail = failure
+                controller.refresh()
+                assertEquals(SpaceNativeController.State.ERROR, controller.state("fixture-value"))
+                assertFalse(controller.restoreAll())
+                assertEquals(writes, backend.writes)
+            }
+        } finally { original.delete() }
+    }
+
     private val running = object : CancellationSignal { override fun isCancelled() = false }
     private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it) }
     private fun patch(abi: String, address: Long, original: String, replacement: String, hash: String) = JSONObject()
@@ -84,7 +218,53 @@ class SpaceNativeDeviceTest {
             wrong.getJSONArray("items").getJSONObject(0).getJSONObject("patch").put("imageSha256", "b".repeat(64))
             val rejected = SpaceNativeController(MenuProfile(wrong.toString()), SpaceNativeBackend(listOf(original)))
             rejected.refresh(); assertFalse(rejected.set("fixture-value", true)); assertEquals(7, GameActivity.readNativeValue())
+            if (abi in setOf("arm64-v8a", "x86_64")) {
+                verifyNarrowReturns(original, image, abi, token)
+                assertEquals(before, SourceInventory.hash(original, token))
+            }
         } finally { original.delete() }
+    }
+
+    private fun verifyNarrowReturns(original: File, image: File, abi: String, token: SourceInventory.Cancellation) {
+        val getters = listOf(Triple("getEnergy", -7, 127), Triple("getMaxHealth", -300, 9999),
+            Triple("getMagazineSize", 50000, 9999))
+        fun read() = listOf(GameActivity.getEnergy().toInt(), GameActivity.getMaxHealth().toInt(), GameActivity.getMagazineSize().code)
+        val originals = getters.map { it.second }
+        assertEquals(originals, read())
+        val hash = SourceInventory.hash(image, token)
+        val items = JSONArray()
+        for ((name, _, replacementValue) in getters) {
+            val (address, expected) = ElfImage.open(image, running).use { elf ->
+                val symbol = elf.dynamicSymbols.single { it.name == "Java_dev_modkit_nativefixture_GameActivity_$name" && it.defined }
+                assertEquals(8L, symbol.size)
+                symbol.value to requireNotNull(elf.readFileWindowAtVa(symbol.value, 8))
+            }
+            val replacement = if (abi == "arm64-v8a") {
+                val word = 0xd2800000L or (replacementValue.toLong() shl 5)
+                hex(ByteArray(4) { (word ushr (it * 8)).toByte() }) + "c0035fd6"
+            } else "b8" + hex(ByteArray(4) { (replacementValue ushr (it * 8)).toByte() }) + "c39090"
+            val item = profile(original, patch(abi, address, hex(expected), replacement, hash))
+                .getJSONArray("items").getJSONObject(0).put("id", name).put("title", name)
+            items.put(item)
+        }
+        val json = profile(original, items.getJSONObject(0).getJSONObject("patch")).put("items", items)
+        val controller = SpaceNativeController(MenuProfile(json.toString()), SpaceNativeBackend(listOf(original)))
+        controller.refresh()
+        getters.forEach { assertEquals(SpaceNativeController.State.OFF, controller.state(it.first)) }
+        try {
+            assertTrue(controller.set("getEnergy", true))
+            assertEquals(listOf(127, -300, 50000), read())
+            assertTrue(controller.set("getMaxHealth", true))
+            assertTrue(controller.set("getMagazineSize", true))
+            assertEquals(listOf(127, 9999, 9999), read())
+            assertTrue(controller.set("getEnergy", false))
+            assertEquals(listOf(-7, 9999, 9999), read())
+            assertTrue(controller.set("getMaxHealth", false))
+            assertEquals(listOf(-7, -300, 9999), read())
+            assertTrue(controller.restoreAll())
+            assertEquals(originals, read())
+            getters.forEach { assertEquals(SpaceNativeController.State.OFF, controller.state(it.first)) }
+        } finally { assertTrue(controller.restoreAll()) }
     }
 
     @Test fun uncertainRestorationCannotBecomeAnOffSwitch() {
@@ -113,4 +293,26 @@ class SpaceNativeDeviceTest {
             assertThrows(Exception::class.java) { MenuProfile(duplicate.toString()) }
         } finally { original.delete() }
     }
+    @Test fun imageIdentityMustRemainValidAfterTheWrite() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val source = File(context.cacheDir, "post-write-identity").apply { writeText("owned") }
+        try {
+            val menu = MenuProfile(profile(source, patch("arm64-v8a", 16,
+                "e0008052c0035fd6", "e07c8052c0035fd6", "a".repeat(64))).toString())
+            val backend = MutableBackend(menu.items.single().patch!!)
+            val controller = SpaceNativeController(menu, backend)
+            backend.available = false
+            controller.refresh()
+            assertTrue(controller.reason("fixture-value").isNotBlank())
+            assertEquals(SpaceNativeController.State.UNAVAILABLE, controller.state("fixture-value"))
+            backend.available = true
+            controller.refresh()
+            assertEquals("", controller.reason("fixture-value"))
+            backend.beforeWrite = { backend.available = false }
+            assertFalse("Matching bytes cannot override changed image identity", controller.set("fixture-value", true))
+            assertEquals(SpaceNativeController.State.ERROR, controller.state("fixture-value"))
+            assertFalse(controller.close())
+        } finally { source.delete() }
+    }
+
 }
