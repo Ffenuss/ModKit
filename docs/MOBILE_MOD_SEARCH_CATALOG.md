@@ -136,3 +136,15 @@ authority окончательное состояние определяет с�
 словарной фразы, CamelCase/аббревиатур, ложных подстрок, ограниченных счётчиков,
 отмены, DEX-цели без автоматического рецепта и late IL2CPP binding трёх новых
 механик. Результат текущего CI указывается отдельно после его завершения.
+
+Проверки commit `f3c3dd56709d2a6ca627cd5aeb6b7bf139461b66` завершены успешно:
+
+- [Android CI](https://github.com/Ffenuss/ModKit/actions/runs/38062257300):
+  модульные тесты ModKit, lint, debug-сборка, независимое выполнение native
+  векторов, 9 instrumentation-тестов на Android 29 и 9 на Android 35.
+- [Space source checks](https://github.com/Ffenuss/ModKit/actions/runs/38062257286):
+  тесты analysiscore (включая новый каталог), spaceengine, сборка и ABI,
+  13 instrumentation-тестов engine и 3 nativefixture на Android 35.
+
+Эти результаты относятся к анализу и собственным тестовым приложениям. Они не
+подтверждают работу новых читов в сторонних играх. Release APK не выпускался.
