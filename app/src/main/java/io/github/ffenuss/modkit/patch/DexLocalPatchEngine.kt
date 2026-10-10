@@ -133,6 +133,7 @@ object DexLocalPatchEngine {
         developerTestMode: Boolean,
         cancellation: CancellationSignal,
         progress: (Int, String) -> Unit = { _, _ -> },
+        observeSymbol: (String) -> Unit = {},
     ): DexLocalScan {
         val discovered = ArrayList<DexLocalOpportunity>()
         val warnings = ArrayList<String>()
@@ -176,6 +177,7 @@ object DexLocalPatchEngine {
                             developerTestMode = developerTestMode,
                             cancellation = cancellation,
                             progress = { count, name -> progress(methodCount + count, name) },
+                            observeSymbol = observeSymbol,
                         )
                         methodCount += scan.methodsExamined
                         inspectedClasses += scan.classesInspected
@@ -231,6 +233,7 @@ object DexLocalPatchEngine {
         developerTestMode: Boolean,
         cancellation: CancellationSignal,
         progress: (Int, String) -> Unit = { _, _ -> },
+        observeSymbol: (String) -> Unit = {},
     ): DexLocalScan {
         require(bytes.size.toLong() <= MAX_DEX_BYTES) {
             "DEX exceeds the bounded scanner limit."
@@ -256,9 +259,14 @@ object DexLocalPatchEngine {
                 classesExcluded++
                 continue
             }
+            for (field in classDef.fields) {
+                checkCancelled(cancellation)
+                observeSymbol(field.name)
+            }
             for (method in classDef.methods) {
                 checkCancelled(cancellation)
                 methods++
+                observeSymbol(method.name)
                 if (methods % 256 == 0) progress(methods, dexEntry)
                 val impl = method.implementation
                 if (impl != null) methodsWithCode++

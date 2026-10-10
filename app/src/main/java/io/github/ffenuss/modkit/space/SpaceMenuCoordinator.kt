@@ -32,11 +32,13 @@ object SpaceMenuCoordinator {
                     "Комплект должен содержать один base APK и splits одного приложения"
                 }
                 if (target is AnalysisTargetDescriptor.InstalledPackage) require(pkg == target.packageName)
+                val searchSurvey = StaticModSearchSurvey(cancellation)
                 val dex = DexLocalPatchEngine.scanApks(files, developerTestMode = true, cancellation = cancellation,
                     progress = { count, entry -> progress.publish(io.github.ffenuss.modkit.domain.EngineProgress(
                         "space.menu-dex", io.github.ffenuss.modkit.domain.EngineScheduleClass.TARGETED,
                         io.github.ffenuss.modkit.domain.RunState.RUNNING, currentTask = "Читаем код DEX для меню",
-                        currentArtifact = entry, processed = count.toLong(), lastHeartbeatEpochMs = System.currentTimeMillis())) })
+                        currentArtifact = entry, processed = count.toLong(), lastHeartbeatEpochMs = System.currentTimeMillis())) },
+                    observeSymbol = searchSurvey::observe)
                 val native = if (result.il2cppFastDump != null || result.il2cppBinaryBinding != null)
                     NativeRecipeCatalog.create(result, preparation, File(context.filesDir, "analysis-results"), cancellation)
                     else emptyList()
@@ -45,6 +47,8 @@ object SpaceMenuCoordinator {
                 val symbols = (result.il2cppFastDump?.metadata?.methods.orEmpty().asSequence().map { it.name } +
                     result.il2cppFastDump?.metadata?.fields.orEmpty().asSequence().map { it.name } +
                     dex.opportunities.asSequence().map { it.methodName }).asIterable()
+                result.il2cppFastDump?.metadata?.methods.orEmpty().forEach { searchSurvey.observe(it.name) }
+                result.il2cppFastDump?.metadata?.fields.orEmpty().forEach { searchSurvey.observe(it.name) }
                 val chosenGenre = SavedSpaceMenus.selectedGenre(context, pkg)
                 val plan = GameAnalysisPlanner.plan(result.index, symbols, chosenGenre, pkg)
                 val ordered = recipes.sortedWith(compareBy<AutoModRecipe> { recipe ->
@@ -93,6 +97,15 @@ object SpaceMenuCoordinator {
                     .put("genreSelectedByUser", chosenGenre != null).put("genreEvidence", JSONArray(plan.genre.evidence.map { it.take(256) }))
                     .put("engines", JSONArray(plan.engines.map { "${it.title} · ${it.status}" }))
                     .put("priorities", JSONArray(plan.searchPriorities))
+                    .put("searchCatalog", JSONObject().put("version", StaticModSearchCatalog.VERSION)
+                        .put("symbolsExamined", searchSurvey.symbolsExamined)
+                        .put("scope", "non_excluded_dex_members_and_available_il2cpp_metadata")
+                        .put("nameMatchesAreExecutable", false)
+                        .put("sets", JSONArray(StaticModSearchCatalog.orderedFor(plan.genre.genre).map { rule ->
+                            JSONObject().put("id", rule.id).put("title", rule.title)
+                                .put("hits", searchSurvey.hitCount(rule.id))
+                                .put("mechanisms", JSONArray(rule.mechanisms.map { it.name }))
+                        })))
                     .put("coverage", JSONObject().put("apkCount", files.size).put("indexedEntries", fresh.entries.size)
                         .put("dexFilesExamined", dex.dexFilesExamined).put("dexMethodsExamined", dex.methodsExamined)
                         .put("dexMethodsWithCode", dex.methodsWithCode).put("exportedItems", included.size + jniIncluded.size)

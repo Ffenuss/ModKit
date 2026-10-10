@@ -100,7 +100,8 @@ class Il2CppDiskBindingIndexTest {
             // Each must retain the actual slot, address and return type from disk.
             for (name in listOf("get_Coins", "get_Gems", "get_Money", "get_Ammo",
                 "get_Probability", "get_Pity", "get_XP", "get_FireRate", "get_Fov",
-                "get_RewardMultiplier", "get_IsInvincible", "get_IsStunned")) {
+                "get_RewardMultiplier", "get_IsInvincible", "get_IsStunned",
+                "get_Nitro", "get_Hunger", "get_HitWindow")) {
                 val expanded = Il2CppOnDemandBindings.lateGameplayBindings(
                     meta.copy(methods = listOf(meta.methods.first(), meta.methods.last().copy(name = name))),
                     evidence,

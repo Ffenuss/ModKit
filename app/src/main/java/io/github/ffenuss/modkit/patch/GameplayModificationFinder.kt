@@ -1,6 +1,7 @@
 package io.github.ffenuss.modkit.patch
 
 import io.github.ffenuss.modkit.analysis.EvidenceTarget
+import io.github.ffenuss.modkit.analysis.StaticModSearchCatalog
 import io.github.ffenuss.modkit.analysis.EvidenceTargetKind
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.Il2CppMethodBinaryBinding
@@ -86,7 +87,8 @@ object GameplayModificationFinder {
             "speed", "move", "jump", "inventory", "capacity", "experience", "level",
             "cooldown", "regen", "regeneration", "camera", "attack", "player",
             "character", "enemy", "loot", "drop", "resource", "currency")
-        return classify(tokens) != null || tokens.any { it in generalStateTerms }
+        return classify(tokens) != null || tokens.any { it in generalStateTerms } ||
+            StaticModSearchCatalog.signals(memberName).isNotEmpty()
     }
 
     fun find(

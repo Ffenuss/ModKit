@@ -2,7 +2,12 @@ package io.github.ffenuss.modkit.analysis
 
 enum class GameGenre(val title: String) {
     UNKNOWN("Не определён"), RPG("RPG"), SHOOTER("Шутер"), RACING("Гонки"),
-    STRATEGY("Стратегия"), PUZZLE("Головоломка"), SIMULATION("Симулятор"), APPLICATION("Приложение")
+    STRATEGY("Стратегия"), PUZZLE("Головоломка"), SIMULATION("Симулятор"), APPLICATION("Приложение"),
+    ACTION("Экшен"), PLATFORMER("Платформер / раннер"), ROGUELIKE("Roguelike"),
+    SURVIVAL("Выживание"), TOWER_DEFENSE("Tower Defense"), CARD("Карточная игра"),
+    BOARD("Настольная игра"), RHYTHM("Ритм-игра"), SPORTS("Спорт"), FIGHTING("Файтинг"),
+    IDLE("Idle / кликер"), ADVENTURE("Приключение"), VISUAL_NOVEL("Визуальная новелла"),
+    MMO("MMO / MOBA"), SANDBOX("Песочница")
 }
 data class GenreHint(val genre: GameGenre, val evidence: List<String>) : java.io.Serializable
 data class GameAnalysisPlan(val engines: List<RuntimeProfile>, val genre: GenreHint,
@@ -71,6 +76,18 @@ object GameAnalysisPlanner {
             GameGenre.STRATEGY -> listOf("Локальные ресурсы", "Строительство", "Исследования", "Время")
             GameGenre.PUZZLE -> listOf("Локальный счёт", "Ходы", "Подсказки", "Таймеры")
             GameGenre.SIMULATION -> listOf("Выносливость", "Локальные ресурсы", "Скорость", "Время")
+            GameGenre.ACTION, GameGenre.ROGUELIKE, GameGenre.FIGHTING ->
+                listOf("Здоровье", "Урон", "Стамина", "Кулдауны", "Дроп")
+            GameGenre.PLATFORMER -> listOf("Скорость", "Прыжок", "Коллизии", "Камера")
+            GameGenre.SURVIVAL, GameGenre.SANDBOX -> listOf("Здоровье", "Инвентарь", "Стамина", "Валюта", "Время")
+            GameGenre.TOWER_DEFENSE -> listOf("Валюта", "Скорость атаки", "Урон", "Кулдауны", "Время")
+            GameGenre.CARD -> listOf("Стамина", "Инвентарь", "Здоровье", "Валюта", "Ходы")
+            GameGenre.BOARD -> listOf("Ходы", "Подсказки", "Таймеры", "Локальный счёт")
+            GameGenre.RHYTHM -> listOf("Таймеры", "Локальный счёт", "Скорость", "Интерфейс")
+            GameGenre.SPORTS -> listOf("Стамина", "Скорость", "Локальный счёт", "Таймеры")
+            GameGenre.IDLE -> listOf("Валюта", "Локальные ресурсы", "Время", "Кулдауны")
+            GameGenre.ADVENTURE, GameGenre.VISUAL_NOVEL -> listOf("Инвентарь", "Ходы", "Локальные настройки", "Интерфейс")
+            GameGenre.MMO -> listOf("Камера", "Интерфейс", "Локальные настройки", "Здоровье")
             GameGenre.APPLICATION -> listOf("Локальные настройки", "Интерфейс", "Локальные таймеры")
             GameGenre.UNKNOWN -> listOf("Локальное состояние", "Числовые параметры", "Камера / время")
     }
