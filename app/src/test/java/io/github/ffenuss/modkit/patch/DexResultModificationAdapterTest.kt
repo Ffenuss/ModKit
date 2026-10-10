@@ -25,7 +25,9 @@ class DexResultModificationAdapterTest {
         val clazz = ImmutableClassDef(owner, AccessFlags.PUBLIC.value, "Ljava/lang/Object;", emptyList(), null,
             emptySet(), emptyList(), listOf(method))
         val pool = DexPool(Opcodes.getDefault()).apply { internClass(clazz) }
-        return MemoryDataStore().use { store -> pool.writeTo(store); store.data.copyOf(store.size) }
+        val store = MemoryDataStore()
+        return try { pool.writeTo(store); store.data.copyOf(store.size) }
+        finally { store.close() }
     }
     @Test fun commonRequestActuallyCreatesAWrapperAndPreservesTheOriginalMethod() {
         val source = dex()
