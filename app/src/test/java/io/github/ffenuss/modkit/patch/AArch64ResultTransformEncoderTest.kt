@@ -54,6 +54,9 @@ class AArch64ResultTransformEncoderTest {
         // Wrong FP precision, call, state write and cycle after an otherwise valid entry load.
         for (word in listOf(0x1E612800L, 0x94000000L, 0xBD001000L, 0x14000000L))
             rejected(bytes(0xBD401000, word, 0xD65F03C0, 0xD503201F, 0xD503201F))
+        // Literal read / ADR / ADRP may use unreachable instruction bytes as data.
+        for (word in listOf(0x18000068L, 0x10000008L, 0x90000008L))
+            rejected(bytes(0xBD401000, word, 0xD65F03C0, 0xD503201F, 0xD503201F))
         val code = bytes(0xBD401000, 0x1E201001, 0x1E212800, 0xD65F03C0, 0xD503201F, 0xD503201F)
         rejected(code, capacity = 20)
         val patched = Il2CppNativeMutationDraftBuilder.parseHex(AArch64ResultTransformEncoder.encodeHex(

@@ -56,6 +56,13 @@ object AArch64ResultTransformEncoder {
             // Inspect only bytes inside the verified method boundary. No branch relocation.
             val proof = AArch64ReadOnlyBody.inspect(original.copyOf(capacity / 4 * 4))
             require(proof.supported) { proof.reason }
+            // Unreachable instructions can still be literal data. Reject PC-relative
+            // reads/address formation rather than repurposing bytes they may reference.
+            require(proof.reachableOffsets.none { offset ->
+                val word = words[offset / 4]
+                word and 0x9F000000L in setOf(0x10000000L, 0x90000000L) ||
+                    word and 0x3B000000L == 0x18000000L
+            }) { "PC-relative данные или адреса требуют отдельной проверки перед использованием NOP." }
             // The unconditional entry load initializes S0/D0 on every path. This revision
             // requires all later scalar FP instructions to retain that same precision.
             require(proof.reachableOffsets.all { offset ->
