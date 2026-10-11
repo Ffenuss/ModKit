@@ -2,6 +2,7 @@ package io.github.ffenuss.modkit.patch
 
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
+import io.github.ffenuss.modkit.modification.ModificationRequest
 import io.github.ffenuss.modkit.modification.ScalarValue
 import io.github.ffenuss.modkit.modification.ValueOperation
 import java.io.File
@@ -20,7 +21,8 @@ import org.jf.dexlib2.writer.pool.DexPool
 
 /** A group of proven getter bodies shares one runtime switch. Original code is never discarded. */
 data class DexRuntimeSelection(val method: DexLocalOpportunity, val switchId: String,
-    val resultTransform: ValueOperation.Multiply? = null)
+    val resultTransform: ValueOperation.Multiply? = null,
+    val commonRequest: ModificationRequest? = null)
 
 object DexRuntimeSwitchRewriter {
     const val BRIDGE = "Lio/github/ffenuss/modkit/runtimeprobe/RuntimeDexSwitches;"
@@ -40,6 +42,11 @@ object DexRuntimeSwitchRewriter {
         val methods = selections.map { it.method }
         require(selections.all { switchPattern.matches(it.switchId) }) { "Invalid DEX switch identity." }
         DexLocalPatchEngine.validatedSelections(bytes, apkIndex, dexEntry, methods, false, cancellation)
+        for (selection in selections) selection.commonRequest?.let { request ->
+            val canonical = requireNotNull(ExistingModificationRequests.dex(selection.method))
+            val expected = selection.resultTransform?.let { canonical.copy(operation = it) } ?: canonical
+            require(request == expected) { "DEX common request differs from executable selection" }
+        }
         val wanted = selections.associateBy { it.method.id }
         val source = DexBackedDexFile(null, bytes)
         val originals = linkedMapOf<String, Method>()

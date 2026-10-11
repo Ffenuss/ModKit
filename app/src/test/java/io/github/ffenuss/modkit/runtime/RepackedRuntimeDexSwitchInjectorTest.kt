@@ -2,6 +2,8 @@ package io.github.ffenuss.modkit.runtime
 
 import io.github.ffenuss.modkit.analysis.AtomicCancellationSignal
 import io.github.ffenuss.modkit.patch.*
+import io.github.ffenuss.modkit.modification.*
+import org.jf.dexlib2.dexbacked.DexBackedDexFile
 import java.io.File
 import java.nio.file.Files
 import java.security.MessageDigest
@@ -21,10 +23,14 @@ import org.junit.Test
 class RepackedRuntimeDexSwitchInjectorTest {
     private val signal = AtomicCancellationSignal()
     private val owner = "Ldev/game/Player;"
-    private fun dex(): ByteArray {
-        val method = ImmutableMethod(owner, "getHealth", emptyList(), "I", AccessFlags.PUBLIC.value,
-            emptySet(), emptySet(), ImmutableMethodImplementation(1,
-                listOf(ImmutableInstruction11n(Opcode.CONST_4, 0, 7), ImmutableInstruction11x(Opcode.RETURN, 0)), emptyList(), emptyList()))
+    private fun dex(type: String = "I"): ByteArray {
+        val method = ImmutableMethod(owner, if (type == "I") "getHealth" else "getRunSpeed", emptyList(), type, AccessFlags.PUBLIC.value,
+            emptySet(), emptySet(), ImmutableMethodImplementation(if (type == "D") 3 else 2,
+                listOf(when(type) {
+                    "F" -> ImmutableInstruction31i(Opcode.CONST, 0, 1.25f.toRawBits())
+                    "D" -> ImmutableInstruction51l(Opcode.CONST_WIDE, 0, 1.25.toRawBits())
+                    else -> ImmutableInstruction11n(Opcode.CONST_4, 0, 7)
+                }, ImmutableInstruction11x(if (type == "D") Opcode.RETURN_WIDE else Opcode.RETURN, 0)), emptyList(), emptyList()))
         val clazz = ImmutableClassDef(owner, AccessFlags.PUBLIC.value, "Ljava/lang/Object;", emptyList(), null,
             emptySet(), emptyList(), emptyList(), emptyList(), listOf(method))
         val store = MemoryDataStore()
@@ -86,6 +92,34 @@ class RepackedRuntimeDexSwitchInjectorTest {
                 RepackedRuntimeDexSwitchInjector.inject(previous, listOf(base.name), listOf(selection(bytes, 0)), File(root, "out"), signal)
             }
         } finally { root.deleteRecursively() }
+    }
+
+    @Test fun catalogMultiplierReachesTheInjectedDexAndInconsistentRequestIsRejected() {
+        for (type in listOf("F", "D")) {
+            val root = Files.createTempDirectory("dex-common-injection").toFile()
+            try {
+                val bytes = dex(type); val base = File(root, "base.apk")
+                zip(base, mapOf("classes.dex" to bytes))
+                val scan = DexLocalPatchEngine.scanDex(bytes, 0, "classes.dex", false, signal)
+                val recipe = DexRecipeCatalog.create(scan).single { it.scalarMode == ScalarRecipeMode.MULTIPLIER }.withScalarValue("5")
+                val selection = DexRecipeRuntimeSelection.create(recipe).single()
+                val output = RepackedRuntimeDexSwitchInjector.inject(previous(listOf(base)), listOf(base.name),
+                    listOf(selection), File(root, "out"), signal)
+                ZipFile(output.sources.single().outputPath).use { z ->
+                    val methods = DexBackedDexFile(null, z.getInputStream(z.getEntry("classes.dex")).readBytes()).classes.single().methods.toList()
+                    val live = methods.single { it.name == "getRunSpeed" }
+                    assertEquals(1, live.implementation!!.instructions.count { it.opcode == if (type == "F") Opcode.MUL_FLOAT else Opcode.MUL_DOUBLE })
+                    assertEquals(selection.switchId, output.switchIds.single())
+                }
+                val forged = selection.copy(commonRequest = selection.commonRequest!!.copy(operation = ValueOperation.Multiply(
+                    ScalarValue.parse(selection.commonRequest!!.target.valueKind, "2"))))
+                assertThrows(IllegalArgumentException::class.java) {
+                    RepackedRuntimeDexSwitchInjector.inject(previous(listOf(base)), listOf(base.name),
+                        listOf(forged), File(root, "forged"), signal)
+                }
+                assertFalse(File(root, "forged").walkTopDown().any { it.isFile })
+            } finally { root.deleteRecursively() }
+        }
     }
 
     @Test fun existingCatalogIsNotSilentlyReplaced() {

@@ -78,5 +78,18 @@ object DexRecipeCatalog {
                 blocker = methods.firstOrNull { !it.selectable }?.reason ?: methods.firstNotNullOfOrNull { it.runtimeBlocker },
                 verification = ModificationVerification(recipePrepared = methods.all { it.selectable }),
             )
-        }
+        }.flatMap { recipe -> listOfNotNull(recipe, recipe.dexMultiplierVariant()) }
+}
+
+
+/** Only verified Float/Double getters get multiplicative variants. Same fields remain bundled. */
+private fun AutoModRecipe.dexMultiplierVariant(): AutoModRecipe? {
+    if (!selectable || dex.any { it.runtimeBlocker != null } || modificationRequests.size != dex.size ||
+        modificationRequests.any { it.target.valueKind !in setOf(ScalarKind.FLOAT32, ScalarKind.FLOAT64) }) return null
+    val requests = modificationRequests.map { request -> request.copy(operation = ValueOperation.Multiply(
+        ScalarValue.parse(request.target.valueKind, "2"))) }
+    return copy(id = id + ":multiply-v1", title = category + ScalarRecipeMode.MULTIPLIER.titleMarker + "2",
+        description = "Исходный метод вычисляет результат; включённый переключатель умножает его. Выключение возвращает исходное вычисление.",
+        scalarValues = listOf("0.5", "2", "3", "5", "10", "16").map { ScalarRecipeValue(it, "") },
+        scalarValue = "2", scalarMode = ScalarRecipeMode.MULTIPLIER, modificationRequests = requests)
 }

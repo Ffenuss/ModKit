@@ -49,7 +49,7 @@ class DexResultModificationAdapter(bytes: ByteArray, private val apkIndex: Int,
         val payload = requireNotNull(payloads[prepared.payloadId]) { "Unknown DEX payload" }
         require(payload.first == prepared.request) { "Prepared DEX request changed" }
         return DexRuntimeSelection(payload.second, DexRuntimeSwitchRewriter.switchId(recipeId),
-            prepared.request.operation as? ValueOperation.Multiply)
+            prepared.request.operation as? ValueOperation.Multiply, prepared.request)
     }
 
     fun rewrite(prepared: List<AdapterPreparation.Prepared>, destination: File,

@@ -3,6 +3,9 @@ package io.github.ffenuss.modkit.runtime
 import io.github.ffenuss.modkit.analysis.AnalysisCancelledException
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.patch.DexRuntimeSelection
+import io.github.ffenuss.modkit.patch.DexResultModificationAdapter
+import io.github.ffenuss.modkit.patch.ExistingModificationRequests
+import io.github.ffenuss.modkit.modification.AdapterPreparation
 import io.github.ffenuss.modkit.patch.DexRuntimeSwitchRewriter
 import java.io.File
 import java.io.InputStream
@@ -75,7 +78,22 @@ object RepackedRuntimeDexSwitchInjector {
                             out.toByteArray()
                         }
                         require(bytes.size.toLong() == entry.size && bytes.size <= MAX_DEX)
-                        val rewritten = DexRuntimeSwitchRewriter.rewrite(bytes, index, name, chosen,
+                        // Rebind common requests against actual bytes reopened from this APK, not catalog metadata.
+                        val adapter = DexResultModificationAdapter(bytes, index, name, cancellation)
+                        val rebound = chosen.map { selection ->
+                            val canonical = requireNotNull(ExistingModificationRequests.dex(selection.method))
+                            val request = selection.commonRequest ?: canonical.let {
+                                selection.resultTransform?.let { transform -> it.copy(operation = transform) } ?: it
+                            }
+                            val prepared = adapter.prepare(request)
+                            require(prepared is AdapterPreparation.Prepared) { "DEX common request cannot be prepared against current source" }
+                            val bound = adapter.selection(prepared).copy(switchId = selection.switchId)
+                            require(bound.method == selection.method && bound.resultTransform == selection.resultTransform) {
+                                "DEX selection disagrees with its common request or current method"
+                            }
+                            bound
+                        }
+                        val rewritten = DexRuntimeSwitchRewriter.rewrite(bytes, index, name, rebound,
                             File(root, "$index-$name"), cancellation)
                         require(rewritten.appliedIds == chosen.map { it.method.id }.toSet())
                         replacement[name] = rewritten.file.readBytes()

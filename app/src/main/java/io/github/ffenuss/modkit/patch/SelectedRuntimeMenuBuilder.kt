@@ -36,7 +36,7 @@ object RuntimeRecipeSelectionPolicy {
         if (recipe.dex.isNotEmpty()) recipe.native == null && recipe.dex.all {
             it.selectable && it.runtimeBlocker == null && it.category !in
                 setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI)
-        } else recipe.native?.let {
+        } && runCatching { DexRecipeRuntimeSelection.create(recipe) }.isSuccess else recipe.native?.let {
                 it.category in allowedCategories && !it.replacementHex.isNullOrBlank()
             } == true
 }
@@ -57,6 +57,11 @@ object SelectedRuntimeMenuBuilder {
         }
         require(selected.map { it.id }.distinct().size == selected.size) {
             "Один мод нельзя добавить в меню дважды."
+        }
+
+        val dexMethodIds = selected.flatMap { it.dex }.map { it.id }
+        require(dexMethodIds.distinct().size == dexMethodIds.size) {
+            "Несколько выбранных модов изменяют один DEX-метод. Выберите один режим."
         }
 
         val targets = result.evidenceGraph?.targets.orEmpty().associateBy { it.id }
