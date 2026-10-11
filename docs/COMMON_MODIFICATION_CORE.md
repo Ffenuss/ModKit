@@ -124,3 +124,16 @@ Native-передача в Space и подготовка runtime menu также
 Используется полное ограниченное окно анализа (до 1024 байтов), а длина самой
 записи остаётся не более 64. Legacy non-scalar рецепты сохраняют отдельный
 существующий путь проверки. Формат native_v1 и исполнитель Space не меняются.
+
+
+Интеграционная проверка кода:
+[CI 38107575065](https://github.com/Ffenuss/ModKit/actions/runs/38107575065),
+commit `49256f75a3161009936f1167044869aea91f1c05`, успешна. Помимо предыдущих
+проверок запускались `DexRecipeRuntimeSelectionTest`,
+`RepackedRuntimeDexSwitchInjectorTest`, `SelectedRuntimeMenuBuilderTest` и
+`NativeRecipeRuntimeLoweringTest`. Проверены выбор ×5 для Float/Double до
+реально записанного DEX, сохранение switch ID и отказ при несовпадении запроса;
+повторная генерация native scalar bytes и отказ при stale source/selection.
+Все 36 ARM64-векторов прошли с неизменной памятью. APK приложения не собирались,
+build/device/release jobs пропущены. Android VM, Space-гость и игровые эффекты
+нового пути в этом задании не запускались.
