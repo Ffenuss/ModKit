@@ -4,6 +4,7 @@ import android.content.Context
 import io.github.ffenuss.modkit.analysis.*
 import io.github.ffenuss.modkit.patch.*
 import io.github.ffenuss.modkit.runtime.BinaryAndroidManifestInspector
+import io.github.ffenuss.modkit.modification.BindingEvidence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -58,16 +59,31 @@ object SpaceMenuCoordinator {
                 val jniIncluded = jni.recipes.take(128)
                 val warnings = (dex.warnings + jni.warnings + result.engineWarnings + result.index.warnings + preparation.globalBlockers).distinct().take(32).map { it.take(1000) }
                 val imageHashes = mutableMapOf<String, String>()
+                val verifiedNativeIndices = mutableMapOf<String, Boolean>()
                 val patchRanges = jniIncluded.filter { it.abi == "arm64-v8a" && it.module == "libil2cpp.so" }.map { it.address to (it.address + it.expected.length / 2) }.toMutableList()
                 val nativePatches = ordered.asSequence().mapNotNull { recipe ->
                     val candidate = recipe.native ?: return@mapNotNull null
                     if (!recipe.selectable || !recipe.verification.recipePrepared) return@mapNotNull null
                     runCatching {
                         val window = Il2CppNativeMutationDraftBuilder.readCodeWindow(result, candidate.targetId,
-                            File(context.filesDir, "analysis-results"))
+                            File(context.filesDir, "analysis-results"), 1024)
                         require(window.abi == "arm64-v8a")
                         val address = requireNotNull(window.binaryVirtualAddress)
-                        val replacement = Il2CppNativeMutationDraftBuilder.parseHex(requireNotNull(candidate.replacementHex))
+                        val targetEvidence = requireNotNull(result.evidenceGraph?.targets?.singleOrNull { it.id == candidate.targetId })
+                        val binding = requireNotNull(Il2CppPatchTargetBrowser.bindingFor(result, targetEvidence))
+                        require(binding.functionFileOffset == window.fileOffset)
+                        val libraryEvidence = requireNotNull(result.il2cppBinaryBinding?.evidence?.singleOrNull { it.libraryEntry == targetEvidence.artifact })
+                        val functionIndex = requireNotNull(libraryEvidence.functionIndex)
+                        require(verifiedNativeIndices.getOrPut(libraryEvidence.libraryEntry) {
+                            functionIndex.complete && functionIndex.verify()
+                        })
+                        val span = requireNotNull(functionIndex.lookup(window.fileOffset))
+                        require(span.references == 1)
+                        val fullOriginal = Il2CppNativeMutationDraftBuilder.parseHex(window.originalHex)
+                        val replacement = NativeRecipeRuntimeLowering.verify(recipe, result.index.artifactSha256,
+                            candidate.targetId, binding.returnKind, fullOriginal,
+                            if (span.nextOffset == null) minOf(4, fullOriginal.size) else fullOriginal.size,
+                            BindingEvidence(true, true, true, true, true, true))
                         val expected = Il2CppNativeMutationDraftBuilder.parseHex(window.originalHex).take(replacement.size).toByteArray()
                         require(address > 0 && address % 4L == 0L && replacement.size in 4..64 && replacement.size % 4 == 0 && expected.size == replacement.size)
                         require(address <= Long.MAX_VALUE - replacement.size)
