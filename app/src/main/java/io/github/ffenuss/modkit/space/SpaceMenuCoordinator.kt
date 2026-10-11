@@ -4,6 +4,7 @@ import android.content.Context
 import io.github.ffenuss.modkit.analysis.*
 import io.github.ffenuss.modkit.patch.*
 import io.github.ffenuss.modkit.runtime.BinaryAndroidManifestInspector
+import io.github.ffenuss.modkit.modification.BindingEvidence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -32,11 +33,13 @@ object SpaceMenuCoordinator {
                     "Комплект должен содержать один base APK и splits одного приложения"
                 }
                 if (target is AnalysisTargetDescriptor.InstalledPackage) require(pkg == target.packageName)
+                val searchSurvey = StaticModSearchSurvey(cancellation)
                 val dex = DexLocalPatchEngine.scanApks(files, developerTestMode = true, cancellation = cancellation,
                     progress = { count, entry -> progress.publish(io.github.ffenuss.modkit.domain.EngineProgress(
                         "space.menu-dex", io.github.ffenuss.modkit.domain.EngineScheduleClass.TARGETED,
                         io.github.ffenuss.modkit.domain.RunState.RUNNING, currentTask = "Читаем код DEX для меню",
-                        currentArtifact = entry, processed = count.toLong(), lastHeartbeatEpochMs = System.currentTimeMillis())) })
+                        currentArtifact = entry, processed = count.toLong(), lastHeartbeatEpochMs = System.currentTimeMillis())) },
+                    observeSymbol = searchSurvey::observe)
                 val native = if (result.il2cppFastDump != null || result.il2cppBinaryBinding != null)
                     NativeRecipeCatalog.create(result, preparation, File(context.filesDir, "analysis-results"), cancellation)
                     else emptyList()
@@ -45,25 +48,42 @@ object SpaceMenuCoordinator {
                 val symbols = (result.il2cppFastDump?.metadata?.methods.orEmpty().asSequence().map { it.name } +
                     result.il2cppFastDump?.metadata?.fields.orEmpty().asSequence().map { it.name } +
                     dex.opportunities.asSequence().map { it.methodName }).asIterable()
-                val plan = GameAnalysisPlanner.plan(result.index, symbols)
+                result.il2cppFastDump?.metadata?.methods.orEmpty().forEach { searchSurvey.observe(it.name) }
+                result.il2cppFastDump?.metadata?.fields.orEmpty().forEach { searchSurvey.observe(it.name) }
+                val chosenGenre = SavedSpaceMenus.selectedGenre(context, pkg)
+                val plan = GameAnalysisPlanner.plan(result.index, symbols, chosenGenre, pkg)
                 val ordered = recipes.sortedWith(compareBy<AutoModRecipe> { recipe ->
                     plan.searchPriorities.indexOfFirst { priority -> recipe.category.contains(priority.substringBefore(" /"), true) }
                         .let { if (it < 0) Int.MAX_VALUE else it }
                 }.thenBy { it.id })
                 val jniIncluded = jni.recipes.take(128)
-                val included = ordered.take(128 - jniIncluded.size)
                 val warnings = (dex.warnings + jni.warnings + result.engineWarnings + result.index.warnings + preparation.globalBlockers).distinct().take(32).map { it.take(1000) }
                 val imageHashes = mutableMapOf<String, String>()
-                val patchRanges = jniIncluded.filter { it.module == "libil2cpp.so" }.map { it.address to (it.address + it.expected.length / 2) }.toMutableList()
-                val nativePatches = included.mapNotNull { recipe ->
+                val verifiedNativeIndices = mutableMapOf<String, Boolean>()
+                val patchRanges = jniIncluded.filter { it.abi == "arm64-v8a" && it.module == "libil2cpp.so" }.map { it.address to (it.address + it.expected.length / 2) }.toMutableList()
+                val nativePatches = ordered.asSequence().mapNotNull { recipe ->
                     val candidate = recipe.native ?: return@mapNotNull null
                     if (!recipe.selectable || !recipe.verification.recipePrepared) return@mapNotNull null
                     runCatching {
                         val window = Il2CppNativeMutationDraftBuilder.readCodeWindow(result, candidate.targetId,
-                            File(context.filesDir, "analysis-results"))
+                            File(context.filesDir, "analysis-results"), 1024)
                         require(window.abi == "arm64-v8a")
                         val address = requireNotNull(window.binaryVirtualAddress)
-                        val replacement = Il2CppNativeMutationDraftBuilder.parseHex(requireNotNull(candidate.replacementHex))
+                        val targetEvidence = requireNotNull(result.evidenceGraph?.targets?.singleOrNull { it.id == candidate.targetId })
+                        val binding = requireNotNull(Il2CppPatchTargetBrowser.bindingFor(result, targetEvidence))
+                        require(binding.functionFileOffset == window.fileOffset)
+                        val libraryEvidence = requireNotNull(result.il2cppBinaryBinding?.evidence?.singleOrNull { it.libraryEntry == targetEvidence.artifact })
+                        val functionIndex = requireNotNull(libraryEvidence.functionIndex)
+                        require(verifiedNativeIndices.getOrPut(libraryEvidence.libraryEntry) {
+                            functionIndex.complete && functionIndex.verify()
+                        })
+                        val span = requireNotNull(functionIndex.lookup(window.fileOffset))
+                        require(span.references == 1)
+                        val fullOriginal = Il2CppNativeMutationDraftBuilder.parseHex(window.originalHex)
+                        val replacement = NativeRecipeRuntimeLowering.verify(recipe, result.index.artifactSha256,
+                            candidate.targetId, binding.returnKind, fullOriginal,
+                            if (span.nextOffset == null) minOf(4, fullOriginal.size) else fullOriginal.size,
+                            BindingEvidence(true, true, true, true, true, true))
                         val expected = Il2CppNativeMutationDraftBuilder.parseHex(window.originalHex).take(replacement.size).toByteArray()
                         require(address > 0 && address % 4L == 0L && replacement.size in 4..64 && replacement.size % 4 == 0 && expected.size == replacement.size)
                         require(address <= Long.MAX_VALUE - replacement.size)
@@ -85,29 +105,45 @@ object SpaceMenuCoordinator {
                             .put("address", address).put("expected", hex(expected)).put("replacement", hex(replacement))
                             .put("imageSha256", imageHash)
                     }.getOrElse { error -> if (error is AnalysisCancelledException) throw error; null }
-                }.toMap()
+                }.take(128 - jniIncluded.size).toMap()
+                val included = SpaceMenuSelection.select(ordered, 128 - jniIncluded.size) { it.id in nativePatches }
                 val profile = JSONObject().put("schema", 2).put("packageName", pkg).put("label", target.label.take(180))
                     .put("artifactSha256", result.index.artifactSha256).put("backend", "native_v1")
-                    .put("genre", plan.genre.genre.title).put("genreEvidence", JSONArray(plan.genre.evidence.map { it.take(256) }))
+                    .put("genre", plan.genre.genre.title).put("genreKey", plan.genre.genre.name)
+                    .put("genreSelectedByUser", chosenGenre != null).put("genreEvidence", JSONArray(plan.genre.evidence.map { it.take(256) }))
                     .put("engines", JSONArray(plan.engines.map { "${it.title} · ${it.status}" }))
                     .put("priorities", JSONArray(plan.searchPriorities))
+                    .put("searchCatalog", JSONObject().put("version", StaticModSearchCatalog.VERSION)
+                        .put("symbolsExamined", searchSurvey.symbolsExamined)
+                        .put("scope", "non_excluded_dex_members_and_available_il2cpp_metadata")
+                        .put("nameMatchesAreExecutable", false)
+                        .put("sets", JSONArray(StaticModSearchCatalog.orderedFor(plan.genre.genre).map { rule ->
+                            JSONObject().put("id", rule.id).put("title", rule.title)
+                                .put("hits", searchSurvey.hitCount(rule.id))
+                                .put("mechanisms", JSONArray(rule.mechanisms.map { it.name }))
+                        })))
                     .put("coverage", JSONObject().put("apkCount", files.size).put("indexedEntries", fresh.entries.size)
                         .put("dexFilesExamined", dex.dexFilesExamined).put("dexMethodsExamined", dex.methodsExamined)
-                        .put("dexMethodsWithCode", dex.methodsWithCode).put("universalDeepAnalysis", false))
+                        .put("dexMethodsWithCode", dex.methodsWithCode).put("exportedItems", included.size + jniIncluded.size)
+                        .put("executableItems", nativePatches.size + jniIncluded.size)
+                        .put("jniRecipeAbis", JSONArray(jniIncluded.map { it.abi }.distinct())).put("universalDeepAnalysis", false))
                     .put("truncated", result.index.truncated || recipes.size > included.size || jni.truncated || result.il2cppFastDump?.metadata?.truncated == true)
                     .put("warnings", JSONArray(warnings))
                     .put("sources", JSONArray(fresh.sources.map { JSONObject().put("sha256", it.sha256).put("size", it.size) }))
                     .put("items", JSONArray(jniIncluded.map { recipe -> JSONObject().put("id", recipe.id.take(512))
                         .put("title", recipe.title).put("category", recipe.category).put("evidence", recipe.evidence.take(512))
                         .put("state", "static_recipe").put("detail", "Проверены Java-сигнатура и JNI-экспорт без вызовов и записи состояния. Игровой эффект требует проверки.")
-                        .put("patch", JSONObject().put("module", recipe.module).put("abi", "arm64-v8a").put("address", recipe.address)
+                        .put("patch", JSONObject().put("module", recipe.module).put("abi", recipe.abi).put("address", recipe.address)
                             .put("expected", recipe.expected).put("replacement", recipe.replacement).put("imageSha256", recipe.imageSha256))
                     } + included.map { recipe -> JSONObject().put("id", recipe.id.take(512))
                         .put("title", recipe.title.take(180)).put("category", recipe.category.take(180))
                         .put("evidence", recipe.targetLabel.take(256))
                         .put("state", if (recipe.selectable && recipe.verification.recipePrepared) "static_recipe" else "candidate")
                         .put("patch", nativePatches[recipe.id] ?: JSONObject.NULL)
-                        .put("detail", (recipe.blocker ?: recipe.description).take(400)) }))
+                        .put("detail", (recipe.blocker ?: if (recipe.id !in nativePatches)
+                            if (recipe.native != null) "Для этого native-кандидата не подтверждены адрес, исходные байты или допустимый диапазон записи."
+                            else "Для этого DEX-рецепта нет исполнителя внутри оригинального Space. Доступно экспертное перепаковывание."
+                            else recipe.description).take(400)) }))
                 if (cancellation.isCancelled()) throw AnalysisCancelledException()
                 // Rehash after scanners; no profile may bind stale or changing source bytes.
                 val after = PortableArtifactIndexer.index(files, cancellation, progress).index
@@ -120,6 +156,7 @@ object SpaceMenuCoordinator {
                 val stream = atomic.startWrite()
                 try { stream.write(bytes); atomic.finishWrite(stream) }
                 catch (failure: Throwable) { atomic.failWrite(stream); throw failure }
+                SavedSpaceMenus.notifyMenus(context)
                 SpaceMenuSummary(pkg, target.label, file.absolutePath, plan, recipes.size + jni.recipes.size,
                     recipes.count { it.selectable && it.verification.recipePrepared } + jni.recipes.size, profile.getBoolean("truncated"), warnings, nativePatches.size + jniIncluded.size)
         }

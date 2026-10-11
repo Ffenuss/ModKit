@@ -62,7 +62,7 @@ val prepareSpaceDeviceFixtures = tasks.register("prepareSpaceDeviceFixtures") {
             rootProject.file("runtimeprobe/src/main/java/io/github/ffenuss/modkit/runtimeprobe/$name").copyTo(bridge.resolve(name), overwrite = true)
         }
         val fixture = root.resolve("java/dev/modkit/nativefixture").apply { mkdirs() }
-        fixture.resolve("GameActivity.java").writeText("package dev.modkit.nativefixture; public final class GameActivity { public static native int readNativeValue(); }\n")
+        fixture.resolve("GameActivity.java").writeText("package dev.modkit.nativefixture; public final class GameActivity { public static native int readNativeValue(); public static native byte getEnergy(); public static native short getMaxHealth(); public static native char getMagazineSize(); }\n")
         assets.resolve("modkit-space-engine.apk").writeBytes(carrier)
         val sha = MessageDigest.getInstance("SHA-256").digest(carrier).joinToString("") { "%02x".format(it.toInt() and 255) }
         assets.resolve("modkit-space-engine.sha256").writeText(sha, Charsets.US_ASCII)

@@ -110,9 +110,8 @@ object AutoModRuntimeTestMenuCoordinator {
                                 outputRoot = outputRoot,
                                 cancellation = cancellation,
                             )
-                    val dexSelections = selected.orEmpty().flatMap { recipe -> recipe.dex.map {
-                        DexRuntimeSelection(it, DexRuntimeSwitchRewriter.switchId(recipe.id))
-                    } }
+                    val dexSelections = selected.orEmpty().filter { it.dex.isNotEmpty() }
+                        .flatMap(DexRecipeRuntimeSelection::create)
                     val dexInjection = if (dexSelections.isEmpty()) null else RepackedRuntimeDexSwitchInjector.inject(
                         instrumentation.nativeProbeInjection, result.index.sources.map { it.displayName },
                         dexSelections, outputRoot, cancellation,

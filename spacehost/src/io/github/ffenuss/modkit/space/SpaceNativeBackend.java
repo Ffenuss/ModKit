@@ -13,6 +13,13 @@ import io.github.ffenuss.modkit.runtimeprobe.RuntimeNativeBridge;
 final class SpaceNativeBackend implements SpaceNativeController.Backend {
     private final List<File> sources;
     private final Map<String, String> hashes = new HashMap<>();
+    public String unavailableReason(NativePatch patch) {
+        if (!patch.abi.equals(SpaceNativePayload.processAbi()))
+            return "Рецепт для " + patch.abi + "; процесс использует " + SpaceNativePayload.processAbi();
+        if (RuntimeNativeBridge.loadedModulePath(patch.module) == null)
+            return "Библиотека " + patch.module + " ещё не загружена";
+        return "Образ библиотеки или исходные байты не совпадают с анализом";
+    }
     SpaceNativeBackend(List<File> sources) { this.sources = sources; }
     public boolean imageMatches(NativePatch patch) throws Exception {
         if (!patch.abi.equals(SpaceNativePayload.processAbi())) return false;

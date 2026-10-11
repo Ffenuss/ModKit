@@ -27,6 +27,18 @@ class DexLocalPatchEngineTest {
     }
 
     @Test
+    fun catalogSeesMethodsWithoutPromotingUnsupportedMechanics() {
+        val observed = ArrayList<String>()
+        val source = syntheticDex("Ldev/game/Player;", "get_HitWindow", "I")
+        val found = DexLocalPatchEngine.scanDex(source, 0, "classes.dex", false, signal,
+            observeSymbol = observed::add)
+        assertTrue("get_HitWindow" in observed)
+        assertTrue(found.opportunities.isEmpty())
+        assertTrue(io.github.ffenuss.modkit.analysis.StaticModSearchCatalog.signals(observed.single())
+            .any { it.id == "rhythm" })
+    }
+
+    @Test
     fun fullVersionOnlySelectableForDevelopersOwnTestBuild() {
         val source = syntheticDex("Ldev/game/FeatureManager;", "get_IsFullVersion", "Z")
         val locked = DexLocalPatchEngine.scanDex(

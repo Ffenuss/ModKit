@@ -309,7 +309,7 @@ private fun RecipeCard(recipe: AutoModRecipe, selected: Boolean, enabled: Boolea
                 Text(recipe.targetLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(recipe.blocker ?: recipe.description, style = MaterialTheme.typography.bodySmall)
                 if (recipe.selectable && recipe.scalarValues.isNotEmpty()) Box {
-                    TextButton(onClick = { valuesOpen = true }, enabled = enabled) { Text("Значение: ${recipe.scalarValue}") }
+                    TextButton(onClick = { valuesOpen = true }, enabled = enabled) { Text("${recipe.scalarMode.label}: ${recipe.scalarValue}") }
                     DropdownMenu(valuesOpen, { valuesOpen = false }) {
                         recipe.scalarValues.forEach { choice -> DropdownMenuItem(text = { Text(choice.value) },
                             onClick = { valuesOpen = false; setValue(choice.value) }) }

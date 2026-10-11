@@ -11,10 +11,12 @@ import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.space.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 
 @Composable
 fun SavedSpaceMenusScreen(onBack: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var menus by remember { mutableStateOf<List<SavedSpaceMenu>?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { menus = withContext(Dispatchers.IO) { SavedSpaceMenus.load(context) } }
@@ -35,11 +37,14 @@ fun SavedSpaceMenusScreen(onBack: () -> Unit) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(menu.label, style = MaterialTheme.typography.titleMedium)
                         Text(menu.packageName)
-                        Text("Жанр: ${menu.genre}. Пунктов: ${menu.items}, статических рецептов: ${menu.staticRecipes}.")
+                        SpaceGenreField(menu.file, menu.genre) {
+                            scope.launch { menus = withContext(Dispatchers.IO) { SavedSpaceMenus.load(context) } }
+                        }
+                        Text("Пунктов: ${menu.items}, статических рецептов: ${menu.staticRecipes}.")
                         if (menu.truncated) Text("Анализ содержит ограничения")
                         Text("Для включения в пространстве: ${menu.runtimeRecipes}")
                         Button(onClick = {
-                            try { SpaceMenuHandoff.open(context, menu.file); message = "Меню передано: ${menu.label}" }
+                            try { SpaceMenuHandoff.open(context, menu.file); message = "Пространство открыто. Меню ${menu.label} доступно для автоматической загрузки." }
                             catch (error: Exception) { message = error.message ?: "Не удалось передать меню" }
                         }, modifier = Modifier.fillMaxWidth()) { Text("Передать меню") }
                     }

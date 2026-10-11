@@ -41,7 +41,7 @@ final class SpaceNativePayload {
                     throw new IllegalArgumentException("Runtime payload changed");
                 int machine = (bytes[18] & 255) | ((bytes[19] & 255) << 8);
                 int expected = "arm64-v8a".equals(abi) ? 183 : "armeabi-v7a".equals(abi) ? 40 : "x86_64".equals(abi) ? 62 : "x86".equals(abi) ? 3 : -1;
-                if (machine != expected || bytes[5] != 1) throw new IllegalArgumentException("Runtime ELF ABI mismatch");
+                if (machine != expected || bytes[5] != 1 || bytes[4] != (("arm64-v8a".equals(abi) || "x86_64".equals(abi)) ? 2 : 1)) throw new IllegalArgumentException("Runtime ELF ABI mismatch");
                 File root = new File(host.getCodeCacheDir(), "modkit-native");
                 if (!root.isDirectory() && !root.mkdirs()) throw new IllegalStateException("Runtime storage unavailable");
                 File file = new File(root, hash + ".so");

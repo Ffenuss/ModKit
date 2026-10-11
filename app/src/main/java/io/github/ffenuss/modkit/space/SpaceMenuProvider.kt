@@ -78,14 +78,19 @@ internal fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-2
 
 internal object TrustedSpace {
     const val PACKAGE = "com.dualspace.multispace.androidx"
-    // Public certificate fingerprint of the user's authorized Aniimo QA space key.
-    private const val CERTIFICATE = "03498720af5c326fc3a399d7c96aed5fdea2f378ec1799580bb119e1bcbc4b5f"
+    // Explicit public pins for the existing QA host and the authorized replacement key.
+    private val CERTIFICATES = setOf(
+        "03498720af5c326fc3a399d7c96aed5fdea2f378ec1799580bb119e1bcbc4b5f",
+        "b44a6c2b53689c16cb08da3ca22e4aba20d9d0d1ecbc26df13e15c04b6665073",
+    )
+    internal fun acceptsSignerFingerprints(fingerprints: List<String>): Boolean =
+        fingerprints.size == 1 && fingerprints.single() in CERTIFICATES
     @Suppress("DEPRECATION")
     fun installed(context: Context): Boolean = runCatching {
         val signatures = if (Build.VERSION.SDK_INT >= 28) {
             context.packageManager.getPackageInfo(PACKAGE, PackageManager.GET_SIGNING_CERTIFICATES)
                 .signingInfo?.apkContentsSigners.orEmpty()
         } else context.packageManager.getPackageInfo(PACKAGE, PackageManager.GET_SIGNATURES).signatures.orEmpty()
-        signatures.size == 1 && sha256(signatures.single().toByteArray()) == CERTIFICATE
+        acceptsSignerFingerprints(signatures.map { sha256(it.toByteArray()) })
     }.getOrDefault(false)
 }

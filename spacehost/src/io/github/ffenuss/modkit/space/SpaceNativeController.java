@@ -9,11 +9,15 @@ final class SpaceNativeController {
         boolean imageMatches(NativePatch patch) throws Exception;
         boolean bytesMatch(NativePatch patch, byte[] bytes);
         int write(NativePatch patch, byte[] expected, byte[] replacement);
+        default String unavailableReason(NativePatch patch) { return "Библиотека или версия ещё не подтверждена"; }
     }
     enum State { OFF, ON, UNAVAILABLE, ERROR }
     private final Backend backend;
     private final Map<String, NativePatch> patches = new HashMap<>();
     private final Map<String, State> states = new HashMap<>();
+    private boolean closed;
+    private final Map<String, String> reasons = new HashMap<>();
+    synchronized String reason(String id) { return reasons.getOrDefault(id, "Библиотека или версия ещё не подтверждена"); }
     SpaceNativeController(MenuProfile profile, Backend backend) {
         this.backend = backend;
         for (MenuProfile.Item item : profile.items) if (item.patch != null) {
@@ -21,38 +25,61 @@ final class SpaceNativeController {
         }
     }
     synchronized State state(String id) { return states.getOrDefault(id, State.UNAVAILABLE); }
+    private boolean matchesState(NativePatch patch, State state) throws Exception {
+        return backend.imageMatches(patch) && backend.bytesMatch(patch,
+            state == State.ON ? patch.replacement : patch.expected);
+    }
     synchronized void refresh() {
         for (Map.Entry<String, NativePatch> entry : patches.entrySet()) {
-            if (state(entry.getKey()) != State.UNAVAILABLE) continue;
+            State before = state(entry.getKey());
+            if (before == State.ERROR) continue;
             try {
-                if (backend.imageMatches(entry.getValue()) && backend.bytesMatch(entry.getValue(), entry.getValue().expected))
-                    states.put(entry.getKey(), State.OFF);
-            } catch (Exception | LinkageError ignored) { }
+                boolean matches = matchesState(entry.getValue(), before);
+                reasons.put(entry.getKey(), matches ? "" : backend.unavailableReason(entry.getValue()));
+                if (before == State.UNAVAILABLE) {
+                    if (matches) states.put(entry.getKey(), State.OFF);
+                } else if (!matches) states.put(entry.getKey(), State.ERROR);
+            } catch (Exception | LinkageError failure) {
+                reasons.put(entry.getKey(), "Исполнитель не смог подтвердить библиотеку и код");
+                if (before != State.UNAVAILABLE) states.put(entry.getKey(), State.ERROR);
+            }
         }
     }
     synchronized boolean set(String id, boolean enabled) {
+        if (closed) return false;
+        return changeState(id, enabled);
+    }
+    private boolean changeState(String id, boolean enabled) {
         NativePatch patch = patches.get(id); State before = state(id);
         if (patch == null || before == State.ERROR || before == State.UNAVAILABLE) return false;
-        if ((before == State.ON) == enabled) return true;
         try {
-            if (!backend.imageMatches(patch)) { states.put(id, State.ERROR); return false; }
+            // Even an idempotent request must confirm the live image and bytes.
+            if (!matchesState(patch, before)) { states.put(id, State.ERROR); return false; }
+            if ((before == State.ON) == enabled) return true;
             byte[] from = enabled ? patch.expected : patch.replacement;
             byte[] to = enabled ? patch.replacement : patch.expected;
             int result = backend.write(patch, from, to);
-            if (result == 1 && backend.bytesMatch(patch, to)) {
+            if (result == 1 && backend.imageMatches(patch) && backend.bytesMatch(patch, to)) {
                 states.put(id, enabled ? State.ON : State.OFF); return true;
             }
             // A rejected precondition may leave the known old state. A partial write is unknown.
-            states.put(id, result == 0 && backend.bytesMatch(patch, from) ? before : State.ERROR);
+            states.put(id, result == 0 && backend.imageMatches(patch) && backend.bytesMatch(patch, from) ? before : State.ERROR);
         } catch (Exception | LinkageError failure) { states.put(id, State.ERROR); }
         return false;
     }
     synchronized boolean restoreAll() {
+        // OFF is also evidence: do not report a clean session if its code drifted.
+        refresh();
         boolean restored = true;
         for (String id : patches.keySet()) {
-            if (state(id) == State.ON) restored &= set(id, false);
+            if (state(id) == State.ON) restored &= changeState(id, false);
             if (state(id) == State.ERROR) restored = false;
         }
         return restored;
+    }
+    /** Fence queued/in-flight writes and restore under the same lock as set(). */
+    synchronized boolean close() {
+        closed = true;
+        return restoreAll();
     }
 }

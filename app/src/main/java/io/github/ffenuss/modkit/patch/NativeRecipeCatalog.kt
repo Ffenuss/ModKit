@@ -3,6 +3,7 @@ package io.github.ffenuss.modkit.patch
 import io.github.ffenuss.modkit.analysis.*
 import io.github.ffenuss.modkit.analysis.nativecode.*
 import java.io.File
+import io.github.ffenuss.modkit.modification.*
 
 /** Every enabled recipe has a type, unique address, bounded body and concrete bytes. */
 object NativeRecipeCatalog {
@@ -20,6 +21,7 @@ object NativeRecipeCatalog {
                 var effective = candidate
                 var reason = candidate.blocker
                 var title = candidate.title
+                var scalarMode = ScalarRecipeMode.VALUE
                 var selectedValue: String? = null
                 var description = "Назначение предполагается по метаданным; игровой эффект ещё не проверен."
                 var values = emptyList<ScalarRecipeValue>()
@@ -103,7 +105,7 @@ object NativeRecipeCatalog {
                                 member.contains("Cost") || member.startsWith("GetNeeded") -> "0"
                                 else -> when (candidate.category) {
                                 GameplayModificationCategory.SURVIVABILITY, GameplayModificationCategory.STAMINA,
-                                GameplayModificationCategory.ECONOMY -> "999"
+                                GameplayModificationCategory.ECONOMY, GameplayModificationCategory.PUZZLE -> "999"
                                 GameplayModificationCategory.COOLDOWN -> "0"
                                 GameplayModificationCategory.INVENTORY, GameplayModificationCategory.PROGRESSION -> "99"
                                 else -> "2"
@@ -144,20 +146,68 @@ object NativeRecipeCatalog {
                             }
                             effective = candidate.copy(replacementHex = replacement)
                         }
+                        if (numeric && !presentation && candidate.category in setOf(
+                                GameplayModificationCategory.DAMAGE, GameplayModificationCategory.MOVEMENT,
+                                GameplayModificationCategory.ATTACK_SPEED, GameplayModificationCategory.REGENERATION)) {
+                            val scalarKind = when (binding.returnKind) {
+                                Il2CppNativeReturnKind.FLOAT32 -> ScalarKind.FLOAT32
+                                Il2CppNativeReturnKind.FLOAT64 -> ScalarKind.FLOAT64
+                                else -> null
+                            }
+                            val transforms = if (scalarKind == null) emptyList() else {
+                                val targetIdentity = ModificationTarget(CodeFamily.NATIVE, result.index.artifactSha256,
+                                    candidate.targetId, TargetShape.METHOD, scalarKind)
+                                // These facts were checked above: exact binding, unique indexed body,
+                                // source window and read-only paths. Original bytes are retained for OFF.
+                                val adapter = NativeResultModificationAdapter(targetIdentity, code, minOf(patchCapacity, 64),
+                                    BindingEvidence(true, true, true, true, true, true))
+                                listOf("0.5", "2", "3", "5", "10", "16").mapNotNull { factor ->
+                                    val request = ExistingModificationRequests.result(candidate.id + ":multiply-v1",
+                                        candidate.category.name, CodeFamily.NATIVE, result.index.artifactSha256,
+                                        candidate.targetId, scalarKind, factor, ScalarRecipeMode.MULTIPLIER)
+                                    val prepared = adapter.prepare(request) as? AdapterPreparation.Prepared
+                                    prepared?.let { ScalarRecipeValue(factor, adapter.replacementHex(it)) }
+                                }
+                            }
+                            if (transforms.isNotEmpty()) {
+                                values = transforms
+                                val chosen = transforms.firstOrNull { it.value == "2" } ?: transforms.first()
+                                selectedValue = chosen.value
+                                scalarMode = ScalarRecipeMode.MULTIPLIER
+                                effective = candidate.copy(id = candidate.id + ":multiply-v1", selectable = true, blocker = null,
+                                    action = GameplayMutationAction.FORCE_SCALAR_DEFAULT, replacementHex = chosen.replacementHex)
+                                title = parameterLabel(target.memberName.orEmpty().removePrefix("get_")) +
+                                    scalarMode.titleMarker + chosen.value
+                            }
+                        }
                         reason = null
                         description = if (binding.returnKind == Il2CppNativeReturnKind.VOID)
                             "Отключает единственную запись поля в этом методе. Проверяйте, каких игровых объектов это касается."
                         else "Меняет результат вычисления без удаления вызовов и записи состояния. Проверьте эффект в игре."
+                        if (scalarMode == ScalarRecipeMode.MULTIPLIER)
+                            description = "Сохраняет исходное чтение поля, вычисления и условия, затем умножает возвращаемый результат. Отключение восстанавливает исходный код. Проверьте эффект в игре."
                         if (binding.returnKind == Il2CppNativeReturnKind.BOOLEAN && numeric)
                             description += " 1 — да, 0 — нет."
                         if (presentation) description = "По контексту это элемент отображения. Изменение показателя на экране не доказывает изменение игровой механики."
                     } catch (failure: AnalysisCancelledException) { throw failure }
                     catch (failure: Exception) { reason = failure.message ?: "Тело метода не подтверждено." }
                 } else if (reason == null) reason = "Нет проверенного рецепта для этой цели."
-                AutoModRecipe(candidate.id, if (presentation) "Визуальные изменения" else candidate.category.title.substringBefore(" /"),
+                AutoModRecipe(effective.id, if (presentation) "Визуальные изменения" else candidate.category.title.substringBefore(" /"),
                     title, description, targets[candidate.targetId]?.declaringType?.substringAfterLast('.').orEmpty(),
-                    native = effective, blocker = reason, scalarValues = values, scalarValue = selectedValue,
-                    verification = ModificationVerification(recipePrepared = reason == null))
+                    native = effective, blocker = reason, scalarValues = values, scalarValue = selectedValue, scalarMode = scalarMode,
+                    verification = ModificationVerification(recipePrepared = reason == null),
+                    modificationRequests = if (reason == null && selectedValue != null && binding != null) {
+                        val kind = when (binding.returnKind) {
+                            Il2CppNativeReturnKind.BOOLEAN -> ScalarKind.BOOLEAN
+                            Il2CppNativeReturnKind.INTEGER -> ScalarKind.INT32
+                            Il2CppNativeReturnKind.FLOAT32 -> ScalarKind.FLOAT32
+                            Il2CppNativeReturnKind.FLOAT64 -> ScalarKind.FLOAT64
+                            else -> null
+                        }
+                        if (kind == null) emptyList() else listOf(ExistingModificationRequests.result(
+                            effective.id, effective.category.name, CodeFamily.NATIVE, result.index.artifactSha256,
+                            effective.targetId, kind, requireNotNull(selectedValue), scalarMode))
+                    } else emptyList())
             }
     }
 
@@ -174,6 +224,9 @@ object NativeRecipeCatalog {
         "Level" -> "Уровень"
         "CanLevelUp" -> "Возможность повышения уровня"
         "ReachedMaxLevel" -> "Проверка максимального уровня"
+        "RemainingMoves", "MovesLeft", "MoveCount" -> "Оставшиеся ходы"
+        "HintCount", "RemainingHints", "HintsLeft" -> "Количество подсказок"
+        "RemainingTime", "TimeLeft", "RoundTime", "LevelTime" -> "Время раунда"
         "Zoom" -> "Масштаб камеры"
         else -> member.replace(Regex("([a-z0-9])([A-Z])"), "$1 $2").replace('_', ' ').trim()
     }

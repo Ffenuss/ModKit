@@ -1,6 +1,7 @@
 package io.github.ffenuss.modkit.patch
 
 import io.github.ffenuss.modkit.analysis.EvidenceTarget
+import io.github.ffenuss.modkit.analysis.StaticModSearchCatalog
 import io.github.ffenuss.modkit.analysis.EvidenceTargetKind
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.analysis.Il2CppMethodBinaryBinding
@@ -27,6 +28,7 @@ enum class GameplayModificationCategory(
     DIFFICULTY("Сложность / параметры врагов", 14),
     WORLD("Прыжок / гравитация / время", 15),
     CAMERA("Камера / FOV", 16),
+    PUZZLE("Ходы / подсказки / время раунда", 17),
     OWNER_ENTITLEMENT("Full / Premium — локальный тест", 17),
     SENSITIVE_SURFACE("Billing / auth / anti-cheat", 90),
 }
@@ -74,6 +76,21 @@ data class GameplayModificationOpportunity(
  * not to invent gameplay meaning for generic methods such as ctor/Invoke.
  */
 object GameplayModificationFinder {
+    /** Discovery only: share the complete catalog vocabulary with disk-index expansion.
+     * This does not promote a method to an executable recipe.
+     */
+    fun hasGameplayNameSignal(memberName: String): Boolean {
+        val tokens = semanticMethodTokens(memberName)
+        // Discovery must retain general state reads such as getHealth even
+        // when the precision catalog cannot yet assign a prepared action.
+        val generalStateTerms = setOf("health", "damage", "stamina", "energy", "mana",
+            "speed", "move", "jump", "inventory", "capacity", "experience", "level",
+            "cooldown", "regen", "regeneration", "camera", "attack", "player",
+            "character", "enemy", "loot", "drop", "resource", "currency")
+        return classify(tokens) != null || tokens.any { it in generalStateTerms } ||
+            StaticModSearchCatalog.signals(memberName).isNotEmpty()
+    }
+
     fun find(
         result: FastAnalysisResult,
         preparation: PatchPreparationPlan,
@@ -1617,6 +1634,12 @@ object GameplayModificationFinder {
 
     private val categoryPhrases =
         listOf(
+            GameplayModificationCategory.PUZZLE to listOf(
+                p("remaining moves"), p("moves left"), p("move count"),
+                p("hint count"), p("remaining hints"), p("hints left"),
+                p("remaining time"), p("time left"), p("round time"), p("level time"),
+            ),
+
             GameplayModificationCategory.COLLISION to
                 listOf(
                     p("no clip"),
@@ -1816,6 +1839,10 @@ object GameplayModificationFinder {
 
     private val categoryContextPhrases =
         mapOf(
+            GameplayModificationCategory.PUZZLE to listOf(
+                p("puzzle"), p("round"), p("level"), p("board"), p("hint"), p("timer"),
+            ),
+
             GameplayModificationCategory.SURVIVABILITY to
                 listOf(
                     p("player"),
@@ -2055,6 +2082,12 @@ object GameplayModificationFinder {
 
     private val strongStandaloneMethodPhrases =
         mapOf(
+            GameplayModificationCategory.PUZZLE to listOf(
+                p("remaining moves"), p("moves left"), p("move count"),
+                p("hint count"), p("remaining hints"), p("hints left"),
+                p("remaining time"), p("time left"), p("round time"), p("level time"),
+            ),
+
             GameplayModificationCategory.SURVIVABILITY to
                 listOf(
                     p("is invincible"),
@@ -2137,6 +2170,12 @@ object GameplayModificationFinder {
 
     private val fieldCategoryPhrases =
         listOf(
+            GameplayModificationCategory.PUZZLE to listOf(
+                p("remaining moves"), p("moves left"), p("move count"),
+                p("hint count"), p("remaining hints"), p("hints left"),
+                p("remaining time"), p("time left"), p("round time"), p("level time"),
+            ),
+
             GameplayModificationCategory.COLLISION to
                 listOf(
                     p("no clip"),
@@ -2290,6 +2329,7 @@ object GameplayModificationFinder {
 
     private val numericCategories =
         setOf(
+            GameplayModificationCategory.PUZZLE,
             GameplayModificationCategory.SURVIVABILITY,
             GameplayModificationCategory.DAMAGE,
             GameplayModificationCategory.MOVEMENT,

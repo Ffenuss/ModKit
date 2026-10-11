@@ -9,6 +9,7 @@ on:
   workflow_dispatch:
 jobs:
   source:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[code only]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -83,6 +84,7 @@ jobs:
       - name: Verify builder shell syntax
         run: bash -n spacehost/build.sh
   device:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[code only]')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -133,6 +135,7 @@ jobs:
             nativefixture/build/outputs/androidTest-results/
 
   build_tools:
+    if: github.event_name != 'push' || !contains(github.event.head_commit.message, '[code only]')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-java@v5

@@ -5,6 +5,7 @@ import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.analysis.FastAnalysisResult
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestMenuItem
 import io.github.ffenuss.modkit.runtime.RepackedRuntimeTestMenuItemMode
+import io.github.ffenuss.modkit.modification.BindingEvidence
 import java.io.File
 import java.security.MessageDigest
 
@@ -36,7 +37,7 @@ object RuntimeRecipeSelectionPolicy {
         if (recipe.dex.isNotEmpty()) recipe.native == null && recipe.dex.all {
             it.selectable && it.runtimeBlocker == null && it.category !in
                 setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI)
-        } else recipe.native?.let {
+        } && runCatching { DexRecipeRuntimeSelection.create(recipe) }.isSuccess else recipe.native?.let {
                 it.category in allowedCategories && !it.replacementHex.isNullOrBlank()
             } == true
 }
@@ -57,6 +58,11 @@ object SelectedRuntimeMenuBuilder {
         }
         require(selected.map { it.id }.distinct().size == selected.size) {
             "Один мод нельзя добавить в меню дважды."
+        }
+
+        val dexMethodIds = selected.flatMap { it.dex }.map { it.id }
+        require(dexMethodIds.distinct().size == dexMethodIds.size) {
+            "Несколько выбранных модов изменяют один DEX-метод. Выберите один режим."
         }
 
         val targets = result.evidenceGraph?.targets.orEmpty().associateBy { it.id }
@@ -112,13 +118,16 @@ object SelectedRuntimeMenuBuilder {
                 "Неверная длина runtime-патча для «${recipe.title}»."
             }
             val code = Il2CppNativeMutationDraftBuilder.readCodeWindow(
-                result, target.id, analysisResultsRoot, MAX_PATCH_BYTES,
+                result, target.id, analysisResultsRoot, 1024,
             )
             require(code.byteLength >= replacement.size) {
                 "Граница метода не вмещает переключаемый патч."
             }
-            val original = Il2CppNativeMutationDraftBuilder.parseHex(code.originalHex)
-                .copyOf(replacement.size)
+            val fullOriginal = Il2CppNativeMutationDraftBuilder.parseHex(code.originalHex)
+            NativeRecipeRuntimeLowering.verify(recipe, result.index.artifactSha256, target.id,
+                binding.returnKind, fullOriginal, if (span.nextOffset == null) minOf(4, fullOriginal.size) else fullOriginal.size,
+                BindingEvidence(true, true, true, true, true, true))
+            val original = fullOriginal.copyOf(replacement.size)
             require(!original.contentEquals(replacement)) {
                 "Метод уже содержит выбранные байты; переключатель не нужен."
             }

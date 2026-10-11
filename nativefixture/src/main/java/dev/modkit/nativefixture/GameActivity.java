@@ -12,6 +12,17 @@ public final class GameActivity extends Activity {
     static { System.loadLibrary("modkit_fixture"); }
     private static native int readNativeValue();
     public static native int getHealth();
+    public static native long getStamina();
+    public static native double getMoveSpeed();
+    public static native int getAmmo(int slot);
+    public static native int getAmmo(long slot);
+    public static native int getBullets(String slot);
+    public static native byte getEnergy();
+    public static native short getMaxHealth();
+    public static native char getMagazineSize();
+    // These two exports are supplied by the x86_64 fixture only.
+    public static native boolean canSprint();
+    public static native float getRunSpeed();
     private TextView value;
 
     @Override public void onCreate(Bundle saved) {

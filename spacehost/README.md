@@ -37,6 +37,33 @@ Requires Python 3.10+, Java 17, apktool 2.12.1+, Android API35 SDK and build-too
 
 Run `bash spacehost/build.sh /path/to/Launcher.apk /path/to/ModKit-Space.apk`.
 
+### Upgrade an existing native-recipes test host
+
+`upgrade_host.py` provides a separate route for the previously signed
+`ModKit-Space-native-recipes-test.apk` (SHA256
+`6f9cd491a2bc344538a515408d3f9b7682f494eab9caabab7f7dda372d4d79a6`).
+It validates this exact predecessor and its single authenticated signer, then
+replaces only `classes4.dex` and the two engine assets. Every other decompressed
+entry must remain identical, including the bootstrap DEX, binary manifest,
+resources and virtual engine. Original-host validation is unchanged.
+
+Build the current host DEX and engine carrier as in the source CI, then run:
+
+```sh
+python3 spacehost/upgrade_host.py prepare OLD_SPACE.apk HOST_CLASSES.dex ENGINE.apk SPACE_UNSIGNED.apk
+python3 spacehost/upgrade_host.py sign OLD_SPACE.apk SPACE_UNSIGNED.apk SPACE_UPDATED.apk
+```
+
+Both commands use `MODKIT_SPACE_BUILD_TOOLS` or `ANDROID_SDK_ROOT`. An optional
+`MODKIT_SPACE_JAVA` selects the Java executable. The sign command uses the same
+keystore, alias and password environment variables as `build.sh`; an independent
+key password can be supplied as `MODKIT_SPACE_KEY_PASSWORD`. Secrets are never
+command-line arguments. Preparing an unsigned APK does not require a password;
+it is an intermediate file and cannot be installed as an update. Signing stages
+the result and publishes it only after signer, alignment and preservation checks.
+The manifest version is retained; Android permits same-version updates signed
+with the existing key. This packaging check does not prove phone compatibility.
+
 The reference SHA256 must be `251acbe2e3199b4a7b6454a495dcdeac0a479dfa00b14066f4615fed37bc6719`. Any different or already modified APK is rejected. No guest APK is a build input.
 
 ## Verification
@@ -114,6 +141,11 @@ An observed guest is accepted only when its package and Application match the vi
 
 The guest menu attaches to resumed Activity decor without requiring root or the system overlay grant. Only explicit schema-2 patches have switches. Library identity, original bytes, executable segment bounds and a unique loaded module are checked before writing. Disabling restores the recorded original bytes; an uncertain write or permission restoration is reported as an error rather than an OFF state. Selecting another app first restores enabled recipes.
 
+Closing the guest menu fences commands inside the native controller's lock:
+an in-flight write finishes before restoration, and queued commands cannot
+re-enable a recipe after closure. Closure still reports uncertain restoration as
+an error, and repeated closure can retry a previously rejected safe restoration.
+
 The runtime payload is obtained from the authenticated installed ModKit provider, verified by SHA-256 and ELF ABI, and staged read-only in host private code cache. An updated ModKit installation is required as well as the updated space host. The main exporter emits ARM64 IL2CPP and typed exported JNI patches; DEX candidates and other engines do not become executable merely because they were detected. Native loader support for four ABIs is infrastructure, not universal engine/version compatibility. Root devices can use the same guest-process route, but this change adds no root-only external-process executor.
 
 A new owned-fixture Android test loads a real ELF, applies a recipe, observes 7 → 999 → 7, checks restore-all, rejects a wrong library hash and verifies unchanged source APK and library bytes. All nine space device tests passed in workflow run 37818451654. Java/API35 compilation and the exact-reference Python checks passed locally. Proprietary host startup, Google login and third-party game effects still require device verification.
@@ -122,6 +154,69 @@ A new owned-fixture Android test loads a real ELF, applies a recipe, observes 7 
 
 JNI preparation reads native Java declarations from original APK/split DEX files and resolves the exact short or signature-qualified export in ARM64 ELF images. It supports recognized no-argument gameplay getters returning `int`, `boolean` or `float`; JNI escaping, overloaded declarations and VM short-name precedence are explicit. A unique exported function, bounded read-only body, executable file-backed address, full library hash and original bytes are required. Incomplete indexes, duplicate libraries, aliases and overlapping patches are rejected. Dynamic `RegisterNatives`, obfuscated names and arbitrary C++ exports are not inferred; gameplay effect still requires testing.
 
+The 0.0.36 line additionally supports declared JNI `long` and `double` getters, emitting x0 and d0 return bodies respectively. Wide values do not enable wide DEX rewriting. The owned native APK adds separate stamina/speed getters and scanner tests check three exported recipes; independent CPU vectors include both new return types. Declaration/overload counts are indexed once rather than repeatedly rescanning the entire declaration list.
+
+Bounded menu transfer prioritizes actual executable patches over inventory-only candidates while preserving genre order within each group. A large candidate prefix cannot hide a valid native recipe. Compound/acronym genre signals are tokenized, and at least two distinct symbol names are required for inferred genre. These changes expand specific typed native coverage, not all engines/versions.
+
 The guest menu can collapse and drag within screen insets. Its position persists across Activity recreation, lifecycle callbacks remove old views, busy switches prevent duplicate writes, and late-loaded native libraries are periodically rechecked. No additional visible controls are added.
 
 `GuestMenuDeviceTest` uses production overlay/controller code in the original owned `nativefixture` process. It checks the real native value, switch ON/OFF, Activity recreation, one overlay, collapse/drag bounds, restoration and unchanged source APK. This is distinct from proprietary virtual-kernel/Google sign-in verification on a phone. `AutoModDeviceTest` independently checks an executable JNI profile exported from an original APK without IL2CPP.
+
+### Live recipe state verification (2026-10-09)
+
+Capability refresh now rechecks confirmed OFF and ON recipes against the loaded image and actual code bytes. Repeated switch requests also verify their state before returning success. Restore-all revalidates inactive recipes before reporting a clean session. Changed bytes, a missing image or a failed image lookup invalidate confirmed states; the controller latches ERROR without overwriting foreign code. Unavailable recipes can still become ready when their libraries load later.
+
+Local Java 8-target compilation and an isolated JVM harness against the production controller passed 11 scenarios covering code drift, image loss/failure, late loading, repeated requests and normal restore. The same harness fails against the previous controller. Eight Python source tests passed; proprietary-reference tests were skipped because the reference APK is absent. Workflow 37892744188 passed the new controller Android regressions. The expanded JNI/menu line subsequently passed full Android CI 37893427425 (unit tests, lint, APK assembly, seven independent ARM64 CPU vectors and API29/API35 device tests) and space checks 37893427445. These are owned-fixture checks, not proprietary host startup or phone validation.
+
+### Activity-owned host settings and retained genre
+
+The host picker now exposes one MK entry whose panel belongs to its Activity decor. It requests no system overlay grant, has no second floating bubble, and detaches on pause/destroy or guest launch. Target dialogs use the live Activity rather than an application-context system window. Guest menus retain their in-process lifecycle.
+
+Clicking the existing genre label opens correction without adding another toolbar control. A selected genre is retained on later analysis of the same package. Reordering preserves all source identities and exact native patch payloads and prioritizes executable items. Profile writes notify the read-only bridge; the host refreshes through authenticated/hash-checked sync while preserving its selected application. API35 host compilation and local Python tests passed; new host panel and genre-preservation Android tests are pending CI for this change.
+
+## Authorized replacement signing key (0.0.37)
+
+The companion ModKit trusts only the existing QA certificate and the explicitly
+pinned replacement certificate. `upgrade_host.py sign --new-key` verifies the
+old predecessor signature, then requires the new pinned certificate on output.
+This is a fresh installation, not a same-signer update; Android will reject an
+update over the old space. Removing the old space can erase its local guest data.
+The package, manifest and kernel remain unchanged. Preserve the new keystore
+and its credentials for subsequent updates; private signing material is never
+committed to this repository.
+
+## Typed primitive JNI getter arguments (0.0.38)
+
+The companion scanner accepts up to eight declared primitive arguments
+(boolean, byte, char, short, int, long, float and double) while retaining the
+existing return-type and read-only body checks. Object and array arguments are
+excluded. Overloads require exact JNI export resolution; ambiguous short names
+are rejected. Recipe identities include the full method signature. Two owned
+getAmmo overloads exercise int/long arguments, distinct ELF addresses and
+independent menu switches. The reference-argument getter stays excluded.
+This extends the engine-neutral native getter route; it does not implement
+Flutter Dart AOT, Unreal Blueprint, Mono CIL or universal engine support.
+The existing signed Space 0.0.37 runtime accepts these schema-2 recipes.
+
+## ARM32 recipes and closed guest sessions (2026-10-09)
+
+The bounded ARM-state JNI route, ABI-specific discovery, readable unavailable reasons and guest-session ownership fences are documented in [SPACE_RUNTIME_VALIDATION_20261009.md](../docs/SPACE_RUNTIME_VALIDATION_20261009.md). ModKit passed 450 unit tests, lint, 22 independent ARM CPU vectors and full API29/API35 owned-fixture scenarios. Space passed 13 executor and 3 guest/panel Android35 tests. These do not establish physical-phone or third-party compatibility. Updating the guest overlay requires a newly built and signed Space host; no new APK pair has been issued, and previous 0.0.46 artifacts belong to their earlier tested checkpoint.
+
+## Bounded x86_64 JNI discovery
+
+The companion scanner now emits ABI-separated x86_64 recipes for all eight primitive JNI results within a strict read-only leaf subset. It preserves ENDBR64 and native_v1 alignment/length constraints. The owned guest verifies new boolean/float switches and restoration alongside existing scalar recipes. [X86_64_JNI_VALIDATION_20261009.md](../docs/X86_64_JNI_VALIDATION_20261009.md) records 452 unit tests, 32 CPU vectors, API29/API35 and Space results, including initial accessibility failures and successful unchanged-code retries. Short/unaligned stubs, arbitrary native bodies, IA-32/x87 and dynamic RegisterNatives bindings remain unsupported. No signed APK pair or universal engine coverage is claimed.
+
+## Upgrade of the supplied new-key Space 0.0.37 (2026-10-10)
+
+The existing new-key APK is now a second exact pinned predecessor:
+`ec3ffc685880b27ad23b3305334a992dad313ce67ff7690420ffc7d0e2f22870`.
+Its single signer must be the already authorized replacement certificate.
+The old predecessor/hash/certificate pairing remains required on the old route.
+Unknown APKs and hash/signer cross-pairings remain rejected.
+
+`prepare` and `sign` accept this exact predecessor without `--new-key` and
+retain its signer. This allows a same-package, same-signer update while retaining
+manifest versionCode 99/versionName 9.9.9.99 from the original kernel. The
+human distribution filename identifies the refreshed runtime; it does not change
+that manifest. Only classes4.dex and the two engine assets are replaced.
+See docs/SPACE_SIGNED_UPDATE_20261010.md for APK hashes and validation limits.

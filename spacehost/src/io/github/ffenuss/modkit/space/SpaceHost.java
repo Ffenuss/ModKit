@@ -7,18 +7,15 @@ import android.app.Application;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
-import android.graphics.PixelFormat;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
@@ -55,6 +52,7 @@ public final class SpaceHost {
     private static long generation;
     private static boolean checking;
     private static SourceInventory.Cancellation profileToken;
+    private static MenuUpdates menuUpdates;
     private SpaceHost() {}
 
     /** Called after the reference host's initialization, including its early-return path. */
@@ -64,6 +62,8 @@ public final class SpaceHost {
         if (Build.VERSION.SDK_INT < 26 || application != null || app == null || !HOST.equals(app.getPackageName()) || !isHostProcess(app)) return;
         application = app;
         targets = new SpaceTargetStore(app.getSharedPreferences("modkit_space_profiles", Context.MODE_PRIVATE));
+        menuUpdates = new MenuUpdates(app, UI, SpaceHost::syncMenus);
+        menuUpdates.register();
         SpaceTargetStore.Session restored = targets.selected();
         if (restored != null) { target = restored.packageName; userId = restored.user; }
         app.registerActivityLifecycleCallbacks(new Application.ActivityLifecycleCallbacks() {
@@ -71,14 +71,13 @@ public final class SpaceHost {
             public void onActivityStarted(Activity a) {}
             public void onActivityResumed(Activity a) {
                 activity = new WeakReference<>(a);
-                if (MAIN.equals(a.getClass().getName())) { consumeIntent(a, a.getIntent()); attachHostButton(a); syncMenus(); }
-                if (!Settings.canDrawOverlays(app)) removeOverlay();
-                else if (target != null) showOverlay();
+                if (MAIN.equals(a.getClass().getName())) { consumeIntent(a, a.getIntent()); attachHostButton(a); menuUpdates.register(); syncMenus(); }
+                if (!MAIN.equals(a.getClass().getName())) removeOverlay();
             }
-            public void onActivityPaused(Activity a) { if (activity.get() == a) activity.clear(); }
+            public void onActivityPaused(Activity a) { if (activity.get() == a) { removeOverlay(); activity.clear(); } }
             public void onActivityStopped(Activity a) {}
             public void onActivitySaveInstanceState(Activity a, Bundle state) {}
-            public void onActivityDestroyed(Activity a) { if (activity.get() == a) activity.clear(); }
+            public void onActivityDestroyed(Activity a) { if (activity.get() == a) { removeOverlay(); activity.clear(); } }
         });
         Log.i(TAG, "Host UI registered; guest files unchanged");
     }
@@ -151,21 +150,12 @@ public final class SpaceHost {
         ViewGroup decor = (ViewGroup) a.getWindow().getDecorView();
         if (decor.findViewWithTag("modkit-space-entry") != null) return;
         Button entry = new Button(a);
-        entry.setTag("modkit-space-entry"); entry.setText("MK · пространство");
+        entry.setTag("modkit-space-entry"); entry.setText("MK");
         entry.setAllCaps(false); entry.setContentDescription("Настроить оверлей пространства ModKit");
         entry.setOnClickListener(v -> {
-            if (!Settings.canDrawOverlays(a)) {
-                new AlertDialog.Builder(a).setTitle("Оверлей ModKit")
-                    .setMessage("Разрешите окна поверх приложений. После этого MK будет появляться при запуске игры из пространства.")
-                    .setPositiveButton("Разрешить", (dialog, which) -> {
-                        try { a.startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + HOST))); }
-                        catch (RuntimeException error) { toast("Не удалось открыть разрешения оверлея"); }
-                    }).setNegativeButton("Позже", null).show();
-            } else {
-                if (target == null) { toast("Выберите приложение в списке пространства"); return; }
-                showOverlay();
-                if (panel != null) { panel.setVisibility(View.VISIBLE); refresh(); }
-            }
+            if (overlay != null) { removeOverlay(); return; }
+            if (target == null) { toast("Выберите приложение в списке пространства"); return; }
+            showOverlay();
         });
         FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         p.gravity = Gravity.TOP | Gravity.END; p.topMargin = dp(28); p.rightMargin = dp(8);
@@ -174,50 +164,48 @@ public final class SpaceHost {
 
     private static int dp(int value) { return (int) (value * application.getResources().getDisplayMetrics().density + .5f); }
     private static TextView label(String message, int size) {
-        TextView t = new TextView(application); t.setText(message); t.setTextColor(Color.WHITE);
+        TextView t = new TextView(uiContext()); t.setText(message); t.setTextColor(Color.WHITE);
         t.setTextSize(size); t.setPadding(dp(8), dp(6), dp(8), dp(6)); return t;
     }
     private static Button button(String message, Runnable action) {
-        Button b = new Button(application); b.setText(message); b.setAllCaps(false);
+        Button b = new Button(uiContext()); b.setText(message); b.setAllCaps(false);
         b.setOnClickListener(v -> action.run()); return b;
     }
+    private static Context uiContext() { Activity a = activity.get(); return a == null ? application : a; }
 
     private static void showOverlay() {
-        if (application == null || !Settings.canDrawOverlays(application)) { removeOverlay(); return; }
+        Activity a = activity.get();
+        if (application == null || a == null || a.isFinishing() || a.isDestroyed() || !MAIN.equals(a.getClass().getName())) { removeOverlay(); return; }
         if (overlay != null) { refresh(); return; }
-        LinearLayout host = new LinearLayout(application); host.setOrientation(LinearLayout.VERTICAL);
-        host.setPadding(dp(4), dp(4), dp(4), dp(4)); host.setBackgroundColor(Color.argb(245, 24, 31, 38));
-        Button bubble = button("MK", () -> {
-            panel.setVisibility(panel.getVisibility() == View.GONE ? View.VISIBLE : View.GONE);
-            if (panel.getVisibility() == View.VISIBLE) refresh();
-        });
-        bubble.setContentDescription("Открыть оверлей ModKit Space"); host.addView(bubble, new LinearLayout.LayoutParams(dp(64), dp(48)));
-        LinearLayout content = new LinearLayout(application); content.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout host = new LinearLayout(a); host.setOrientation(LinearLayout.VERTICAL);
+        host.setPadding(dp(8), dp(8), dp(8), dp(8));
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(0xf5111915); bg.setCornerRadius(dp(16)); host.setBackground(bg); host.setElevation(dp(8));
+        host.setTag("modkit-space-panel");
+        LinearLayout content = new LinearLayout(a); content.setOrientation(LinearLayout.VERTICAL);
         content.addView(label("ModKit · пространство", 17));
         status = label("Проверяем виртуальное окружение…", 12); content.addView(status);
         content.addView(label("Добавляйте оригинальные приложения через список пространства. APK игры не изменяется.", 12));
-        content.addView(button("Открыть пространство / добавить приложение", SpaceHost::openSpace));
         content.addView(button("Открыть Google Play в пространстве", () -> openGooglePlay()));
         content.addView(button("Обновить состояние", SpaceHost::refresh));
         content.addView(button("Настройки · выбрать приложение", SpaceHost::chooseTarget));
         content.addView(label("Профиль меню сохраняется отдельно для каждого приложения и пользователя пространства. Анализ выполняется в ModKit.", 12));
-        menuContent = new LinearLayout(application); menuContent.setOrientation(LinearLayout.VERTICAL); content.addView(menuContent);
-        content.addView(button("Скрыть оверлей", SpaceHost::removeOverlay));
-        ScrollView scroll = new ScrollView(application); scroll.addView(content); scroll.setVisibility(View.GONE); panel = scroll;
+        menuContent = new LinearLayout(a); menuContent.setOrientation(LinearLayout.VERTICAL); content.addView(menuContent);
+        content.addView(button("Закрыть", SpaceHost::removeOverlay));
+        ScrollView scroll = new ScrollView(a); scroll.addView(content); panel = scroll;
         int width = Math.min(dp(330), application.getResources().getDisplayMetrics().widthPixels - dp(24));
         int height = Math.min(dp(430), application.getResources().getDisplayMetrics().heightPixels * 2 / 3);
         host.addView(scroll, new LinearLayout.LayoutParams(width, height));
-        WindowManager.LayoutParams params = new WindowManager.LayoutParams(-2, -2, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL, PixelFormat.TRANSLUCENT);
-        params.gravity = Gravity.TOP | Gravity.END; params.x = dp(10); params.y = dp(90);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(-2, -2);
+        params.gravity = Gravity.TOP | Gravity.END; params.rightMargin = dp(10); params.topMargin = dp(90);
         try {
-            ((WindowManager) application.getSystemService(Context.WINDOW_SERVICE)).addView(host, params);
+            ((ViewGroup) a.getWindow().getDecorView()).addView(host, params);
             overlay = host; refresh();
         } catch (RuntimeException error) { overlay = null; status = null; panel = null; menuContent = null; menuEpoch = -1; Log.e(TAG, "Overlay window rejected", error); }
     }
 
     private static void refresh() {
-        if (!Settings.canDrawOverlays(application)) { removeOverlay(); return; }
+        if (overlay == null || activity.get() == null) return;
         if (status == null || target == null) return;
         if (menuContent != null && menuEpoch != generation) {
             menuEpoch = generation; menuContent.removeAllViews();
@@ -290,9 +278,11 @@ public final class SpaceHost {
     }
 
     private static void chooseTarget() {
+        Activity a = activity.get();
+        if (a == null || a.isFinishing() || a.isDestroyed()) return;
         final String[] choices = targets.choices();
         if (choices.length == 0) { toast("Добавьте и откройте приложение через список пространства"); return; }
-        AlertDialog dialog = new AlertDialog.Builder(application)
+        AlertDialog dialog = new AlertDialog.Builder(a)
             .setTitle("Приложение для меню модов")
             .setItems(choices, (ignored, position) -> {
                 SpaceTargetStore.Session selection = SpaceTargetStore.parse(choices[position]);
@@ -314,7 +304,6 @@ public final class SpaceHost {
                     } catch (Exception error) { Log.w(TAG, "Target selection failed", error); UI.post(() -> toast("Не удалось выбрать приложение")); }
                 });
             }).setNegativeButton("Закрыть", null).create();
-        if (dialog.getWindow() != null) dialog.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
         try { dialog.show(); } catch (RuntimeException error) { toast("Не удалось открыть выбор приложения"); }
     }
     private static String state(boolean installed) { return installed ? "есть внутри пространства" : "отсутствует внутри пространства"; }
@@ -337,7 +326,9 @@ public final class SpaceHost {
     private static void toast(String message) { Toast.makeText(application, message, Toast.LENGTH_LONG).show(); }
     private static void removeOverlay() {
         cancelProfileCheck();
-        if (overlay != null) try { ((WindowManager) application.getSystemService(Context.WINDOW_SERVICE)).removeViewImmediate(overlay); }
+        if (overlay != null) try {
+            if (overlay.getParent() instanceof ViewGroup) ((ViewGroup) overlay.getParent()).removeView(overlay);
+        }
         catch (RuntimeException error) { Log.w(TAG, "Overlay already removed", error); }
         overlay = null; panel = null; status = null; menuContent = null; menuEpoch = -1; generation++;
     }

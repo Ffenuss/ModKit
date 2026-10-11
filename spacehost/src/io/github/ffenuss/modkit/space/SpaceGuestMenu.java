@@ -37,8 +37,9 @@ final class SpaceGuestMenu {
     private WeakReference<Activity> activity = new WeakReference<>(null);
     private LinearLayout root, rows;
     private ScrollView panel;
-    private MenuProfile profile;
-    private SpaceNativeController controller;
+    private volatile MenuProfile profile;
+    private volatile SpaceNativeController controller;
+    private final Object lifecycle = new Object();
     private String message = "Проверяем меню и версию приложения…";
     private boolean expanded = true;
     private volatile boolean closed;
@@ -56,7 +57,11 @@ final class SpaceGuestMenu {
     }
 
     static synchronized void install(Application host, SpaceGuestBootstrap.Session session) {
-        if (installed != null) return;
+        if (installed != null) {
+            if (!installed.closed && installed.session.application == session.application &&
+                installed.session.user == session.user && installed.session.packageName.equals(session.packageName)) return;
+            if (!installed.close()) throw new IllegalStateException("Предыдущая сессия не восстановлена. Перезапустите пространство");
+        }
         bind(host, session, new Inputs() {
             public MenuProfile profile() throws Exception { MenuProfileStore.sync(host); return MenuProfileStore.load(host, session.packageName); }
             public List<File> sources() throws Exception { return new ReferenceKernel(host.getClassLoader()).sources(session.packageName, session.user); }
@@ -71,6 +76,7 @@ final class SpaceGuestMenu {
             public void onActivityCreated(Activity a, Bundle saved) {}
             public void onActivityStarted(Activity a) {}
             public void onActivityResumed(Activity a) {
+                if (menu.closed) return;
                 menu.activity = new WeakReference<>(a); menu.attach(a); menu.refreshCapabilities();
             }
             public void onActivityPaused(Activity a) { if (menu.activity.get() == a) { menu.detach(); menu.activity.clear(); } }
@@ -83,14 +89,24 @@ final class SpaceGuestMenu {
         return menu;
     }
     boolean close() {
-        closed = true; UI.removeCallbacks(capabilityTick);
-        boolean restored = controller == null || controller.restoreAll();
-        session.application.unregisterActivityLifecycleCallbacks(callbacks); detach();
-        synchronized (SpaceGuestMenu.class) { if (installed == this) installed = null; }
+        boolean restored;
+        synchronized (lifecycle) {
+            closed = true;
+            restored = controller == null || controller.close();
+        }
+        Runnable cleanup = () -> {
+            UI.removeCallbacks(capabilityTick);
+            session.application.unregisterActivityLifecycleCallbacks(callbacks);
+            detach(); activity.clear(); busy.clear();
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) cleanup.run(); else UI.post(cleanup);
+        // Retain an uncertain session: a new guest must not hide failed restoration.
+        if (restored) synchronized (SpaceGuestMenu.class) { if (installed == this) installed = null; }
         return restored;
     }
     private void load() {
         try {
+            if (closed) return;
             MenuProfile loaded = inputs.profile();
             if (loaded == null) throw new IllegalStateException("Сначала выполните анализ этого приложения в ModKit");
             if (!session.packageName.equals(loaded.packageName)) throw new IllegalArgumentException("Menu belongs to another guest");
@@ -107,9 +123,14 @@ final class SpaceGuestMenu {
                 detail = "Изменения действуют только в этом процессе";
             }
             final SpaceNativeController prepared = ready; final String summary = detail;
-            UI.post(() -> { if (!closed) { profile = loaded; controller = prepared; message = summary; render(); } });
+            // Transfer controller ownership before publishing UI. close() shares this lock.
+            synchronized (lifecycle) {
+                if (closed) { if (prepared != null) prepared.close(); return; }
+                profile = loaded; controller = prepared;
+            }
+            UI.post(() -> { if (!closed) { message = summary; render(); } });
         } catch (Exception | LinkageError error) {
-            UI.post(() -> { message = error.getMessage() == null ? "Не удалось подготовить меню" : error.getMessage(); render(); });
+            UI.post(() -> { if (closed) return; message = error.getMessage() == null ? "Не удалось подготовить меню" : error.getMessage(); render(); });
         }
     }
     private void refreshCapabilities() {
@@ -125,7 +146,7 @@ final class SpaceGuestMenu {
             current.refresh(); int index = 0; boolean changed = false;
             for (MenuProfile.Item item : profile.items) if (item.patch != null) changed |= before.get(index++) != current.state(item.id);
             final boolean update = changed;
-            UI.post(() -> { refreshing = false; if (update) render(); if (!closed && root != null) UI.postDelayed(capabilityTick, 1000); });
+            UI.post(() -> { refreshing = false; if (closed) return; if (update) render(); if (!closed && root != null) UI.postDelayed(capabilityTick, 1000); });
         });
     }
     private int dp(int n) { return (int)(n * session.application.getResources().getDisplayMetrics().density + .5f); }
@@ -141,7 +162,7 @@ final class SpaceGuestMenu {
     }
     private void attach(Activity a) {
         detach();
-        if (!session.packageName.equals(a.getPackageName())) return;
+        if (closed || !session.packageName.equals(a.getPackageName())) return;
         ViewGroup decor = (ViewGroup)a.getWindow().getDecorView();
         root = new LinearLayout(a); root.setOrientation(LinearLayout.VERTICAL); root.setPadding(dp(8), dp(8), dp(8), dp(8));
         root.setBackground(background(0xf5111915, 20)); root.setElevation(dp(12)); root.setTag("modkit-guest-menu");
@@ -228,7 +249,7 @@ final class SpaceGuestMenu {
         Activity a = activity.get(); if (a == null || rows == null) return;
         rows.removeAllViews();
         rows.addView(text(a, profile == null ? session.packageName : profile.label, 17, Color.WHITE));
-        TextView subtitle = text(a, "Без root · пользователь " + session.user, 12, 0xffa1b4a8);
+        TextView subtitle = text(a, "Работает без root · пользователь " + session.user, 12, 0xffa1b4a8);
         subtitle.setPadding(0, dp(4), 0, dp(12)); rows.addView(subtitle);
         if (profile == null) { rows.addView(text(a, message, 13, 0xffc4ccc7)); return; }
         int available = 0;
@@ -250,19 +271,26 @@ final class SpaceGuestMenu {
                 });
             });
             row.addView(toggle);
-            if (state == SpaceNativeController.State.UNAVAILABLE) row.addView(text(a, "Библиотека или версия ещё не подтверждена", 11, 0xffabb9b0));
+            if (state == SpaceNativeController.State.UNAVAILABLE) row.addView(text(a, controller == null ? "Исполнитель ещё не готов" : controller.reason(item.id), 11, 0xffabb9b0));
             if (state == SpaceNativeController.State.ERROR) row.addView(text(a, "Состояние не подтверждено. Перезапустите приложение", 11, 0xffffb4ab));
             LinearLayout.LayoutParams spacing = new LinearLayout.LayoutParams(-1, -2); spacing.bottomMargin = dp(8); rows.addView(row, spacing);
         }
         if (available == 0) rows.addView(text(a, message, 13, 0xffc4ccc7));
         int pending = profile.items.size() - available;
-        if (pending > 0) rows.addView(text(a, "Других кандидатов: " + pending + ". Для них пока нет исполнителя", 11, 0xffa1b4a8));
+        if (pending > 0) {
+            rows.addView(text(a, "Недоступных кандидатов: " + pending, 11, 0xffa1b4a8));
+            int explanations = 0;
+            for (MenuProfile.Item item : profile.items) if (item.patch == null && explanations++ < 3)
+                rows.addView(text(a, item.title + " · " + item.detail, 11, 0xffa1b4a8));
+        }
     }
     private void settings() {
-        Activity a = activity.get(); if (a == null) return;
+        Activity a = activity.get(); if (closed || a == null) return;
         new AlertDialog.Builder(a).setTitle("Меню ModKit").setItems(new String[]{"Отключить все изменения", "Выбрать другое приложение"}, (dialog, choice) -> {
+            // Fence clicks immediately; queued commands cannot outlive "choose another app".
+            if (choice == 1) synchronized (lifecycle) { closed = true; }
             IO.execute(() -> {
-                boolean restored = controller == null || controller.restoreAll();
+                boolean restored = choice == 1 ? close() : controller == null || controller.restoreAll();
                 UI.post(() -> {
                     render();
                     if (!restored) { Toast.makeText(a, "Не все изменения восстановлены. Перезапустите приложение", Toast.LENGTH_LONG).show(); return; }

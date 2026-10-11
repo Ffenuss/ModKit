@@ -1759,7 +1759,7 @@ fun AutoModScreen(
                                     Column {
                                         Text(
                                             opportunity.category.label +
-                                                ": " + opportunity.action.label,
+                                                ": " + opportunity.actionLabel,
                                             fontWeight = FontWeight.SemiBold,
                                         )
                                         Text(

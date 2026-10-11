@@ -48,8 +48,173 @@ Java_dev_modkit_nativefixture_GameActivity_getHealth:
     nop
 #endif
 .size Java_dev_modkit_nativefixture_GameActivity_getHealth, .-Java_dev_modkit_nativefixture_GameActivity_getHealth
+#if defined(__aarch64__)
+// Wide typed getters exercise x0 and d0 independently of the int/float return ABI.
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getStamina
+.type Java_dev_modkit_nativefixture_GameActivity_getStamina, %function
+Java_dev_modkit_nativefixture_GameActivity_getStamina:
+    mov x0, #11
+    ret
+.size Java_dev_modkit_nativefixture_GameActivity_getStamina, .-Java_dev_modkit_nativefixture_GameActivity_getStamina
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed
+.type Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed, %function
+Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed:
+    fmov d0, #1.0
+    ret
+.size Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed, .-Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed
+#elif defined(__x86_64__)
+// Deterministic 16-byte JNI bodies let the emulator check full-width returns.
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getStamina
+.type Java_dev_modkit_nativefixture_GameActivity_getStamina, @function
+Java_dev_modkit_nativefixture_GameActivity_getStamina:
+    movabs $11, %rax
+    ret
+    .fill 5, 1, 0x90
+.size Java_dev_modkit_nativefixture_GameActivity_getStamina, .-Java_dev_modkit_nativefixture_GameActivity_getStamina
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed
+.type Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed, @function
+Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed:
+    movabs $0x3ff0000000000000, %rax
+    movq %rax, %xmm0
+    ret
+.size Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed, .-Java_dev_modkit_nativefixture_GameActivity_getMoveSpeed
+#endif
+// Exact long JNI names for two overloads; the first primitive argument is x2/rdx.
+#if defined(__aarch64__) || defined(__x86_64__)
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getAmmo__I
+#if defined(__aarch64__)
+.type Java_dev_modkit_nativefixture_GameActivity_getAmmo__I, %function
+Java_dev_modkit_nativefixture_GameActivity_getAmmo__I:
+    add w0, w2, #10
+    ret
+#else
+.type Java_dev_modkit_nativefixture_GameActivity_getAmmo__I, @function
+Java_dev_modkit_nativefixture_GameActivity_getAmmo__I:
+    lea 10(%rdx), %eax
+    ret
+    .fill 4, 1, 0x90
+#endif
+.size Java_dev_modkit_nativefixture_GameActivity_getAmmo__I, .-Java_dev_modkit_nativefixture_GameActivity_getAmmo__I
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getAmmo__J
+#if defined(__aarch64__)
+.type Java_dev_modkit_nativefixture_GameActivity_getAmmo__J, %function
+Java_dev_modkit_nativefixture_GameActivity_getAmmo__J:
+    add w0, w2, #20
+    ret
+#else
+.type Java_dev_modkit_nativefixture_GameActivity_getAmmo__J, @function
+Java_dev_modkit_nativefixture_GameActivity_getAmmo__J:
+    lea 20(%rdx), %eax
+    ret
+    .fill 4, 1, 0x90
+#endif
+.size Java_dev_modkit_nativefixture_GameActivity_getAmmo__J, .-Java_dev_modkit_nativefixture_GameActivity_getAmmo__J
+#endif
+// Narrow JNI results: signed byte/short and unsigned char, each its own body.
+#if defined(__aarch64__) || defined(__x86_64__)
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getEnergy
+#if defined(__aarch64__)
+.type Java_dev_modkit_nativefixture_GameActivity_getEnergy, %function
+Java_dev_modkit_nativefixture_GameActivity_getEnergy:
+    mov w0, #-7
+    ret
+#else
+.type Java_dev_modkit_nativefixture_GameActivity_getEnergy, @function
+Java_dev_modkit_nativefixture_GameActivity_getEnergy:
+    mov $-7, %eax
+    ret
+    nop
+    nop
+#endif
+.size Java_dev_modkit_nativefixture_GameActivity_getEnergy, .-Java_dev_modkit_nativefixture_GameActivity_getEnergy
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getMaxHealth
+#if defined(__aarch64__)
+.type Java_dev_modkit_nativefixture_GameActivity_getMaxHealth, %function
+Java_dev_modkit_nativefixture_GameActivity_getMaxHealth:
+    mov w0, #-300
+    ret
+#else
+.type Java_dev_modkit_nativefixture_GameActivity_getMaxHealth, @function
+Java_dev_modkit_nativefixture_GameActivity_getMaxHealth:
+    mov $-300, %eax
+    ret
+    nop
+    nop
+#endif
+.size Java_dev_modkit_nativefixture_GameActivity_getMaxHealth, .-Java_dev_modkit_nativefixture_GameActivity_getMaxHealth
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getMagazineSize
+#if defined(__aarch64__)
+.type Java_dev_modkit_nativefixture_GameActivity_getMagazineSize, %function
+Java_dev_modkit_nativefixture_GameActivity_getMagazineSize:
+    mov w0, #50000
+    ret
+#else
+.type Java_dev_modkit_nativefixture_GameActivity_getMagazineSize, @function
+Java_dev_modkit_nativefixture_GameActivity_getMagazineSize:
+    mov $50000, %eax
+    ret
+    nop
+    nop
+#endif
+.size Java_dev_modkit_nativefixture_GameActivity_getMagazineSize, .-Java_dev_modkit_nativefixture_GameActivity_getMagazineSize
+#endif
 #if defined(__aarch64__) || defined(__arm__)
 .section .note.GNU-stack,"",%progbits
 #else
 .section .note.GNU-stack,"",@progbits
+#endif
+
+#if defined(__arm__)
+// ARM-state, base AAPCS/softfp fixtures. No padding is counted as function code.
+.text
+.macro ARM_GETTER name, low, high=-1
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_\name
+.type Java_dev_modkit_nativefixture_GameActivity_\name, %function
+Java_dev_modkit_nativefixture_GameActivity_\name:
+    movw r0, #(\low & 0xffff)
+    movt r0, #((\low >> 16) & 0xffff)
+.if \high != -1
+    movw r1, #(\high & 0xffff)
+    movt r1, #((\high >> 16) & 0xffff)
+.endif
+    bx lr
+.size Java_dev_modkit_nativefixture_GameActivity_\name, .-Java_dev_modkit_nativefixture_GameActivity_\name
+.endm
+ARM_GETTER getEnergy, 0xfffffff9
+ARM_GETTER getMaxHealth, 0xfffffed4
+ARM_GETTER getMagazineSize, 50000
+ARM_GETTER getStamina, 11, 0
+ARM_GETTER getMoveSpeed, 0, 0x3ff00000
+#endif
+
+#if defined(__x86_64__)
+.text
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_canSprint
+.type Java_dev_modkit_nativefixture_GameActivity_canSprint, @function
+Java_dev_modkit_nativefixture_GameActivity_canSprint:
+    mov $0, %eax
+    ret
+    nop
+    nop
+.size Java_dev_modkit_nativefixture_GameActivity_canSprint, .-Java_dev_modkit_nativefixture_GameActivity_canSprint
+.p2align 2
+.global Java_dev_modkit_nativefixture_GameActivity_getRunSpeed
+.type Java_dev_modkit_nativefixture_GameActivity_getRunSpeed, @function
+Java_dev_modkit_nativefixture_GameActivity_getRunSpeed:
+    mov $0x3f800000, %eax
+    movd %eax, %xmm0
+    ret
+    .fill 6, 1, 0x90
+.size Java_dev_modkit_nativefixture_GameActivity_getRunSpeed, .-Java_dev_modkit_nativefixture_GameActivity_getRunSpeed
 #endif

@@ -6,6 +6,8 @@ data class AArch64ReadOnlyProof(
     val visitedInstructions: Int = 0,
     val returnSites: Int = 0,
     val entryLandingPad: Long? = null,
+    val reachableOffsets: Set<Int> = emptySet(),
+    val returnOffsets: Set<Int> = emptySet(),
 )
 
 /**
@@ -65,7 +67,10 @@ object AArch64ReadOnlyBody {
         return AArch64ReadOnlyProof(complete,
             if (complete) "Все достижимые пути возвращают результат без вызовов и записи состояния."
             else failure ?: "Возврат из метода не доказан.", visited, returns,
-            words.first().takeIf { it in landingPads })
+            words.first().takeIf { it in landingPads },
+            if (complete) words.indices.filter { state[it] == 2 }.map { it * 4 }.toSet() else emptySet(),
+            if (complete) words.indices.filter { state[it] == 2 && words[it] == 0xD65F03C0L }
+                .map { it * 4 }.toSet() else emptySet())
     }
 
     private fun isReadOnlyInstruction(w: Long): Boolean {

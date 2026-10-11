@@ -76,7 +76,7 @@ object DexScanDiagnosticReport {
             scan.opportunities.forEach {
                 appendLine("- " + it.category.label)
                 appendLine("  method: " + it.displayName)
-                appendLine("  return patch: " + it.action.label)
+                appendLine("  return patch: " + it.actionLabel)
                 appendLine("  selectable: " + it.selectable)
                 appendLine("  reason: " + it.reason)
             }
