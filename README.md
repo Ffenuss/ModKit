@@ -179,3 +179,21 @@ See [docs/PORTING_MATRIX.md](docs/PORTING_MATRIX.md) and [docs/ROADMAP.md](docs/
 ## Security / authorization
 
 Use ModKit only for applications and environments you are authorized to assess. Do not publish customer APKs, secrets, access tokens, signing keys or proprietary analysis artifacts in public issues.
+
+<!-- omgithub:readme:start -->
+## 🚀 Build, play, and remix with OMGithub
+
+**Remixed using [OMGithub.com](https://omgithub.com).**
+
+[![OMGithub](https://img.shields.io/badge/OMGithub-Open%20project-orange?style=for-the-badge)](https://omgithub.com/Ffenuss/ModKit)
+[![GitHub](https://img.shields.io/badge/GitHub-Source-181717?logo=github&style=for-the-badge)](https://github.com/Ffenuss/ModKit)
+
+- 🎮 [Open the project](https://omgithub.com/Ffenuss/ModKit).
+- ✨ [Remix this project](https://omgithub.com/?remix=Ffenuss%2FModKit).
+- 💻 [Explore the source](https://github.com/Ffenuss/ModKit).
+- 🛠️ [Check build runs](https://github.com/Ffenuss/ModKit/actions).
+- 🐛 [Report an issue](https://github.com/Ffenuss/ModKit/issues).
+- 👤 [Explore the creator's projects](https://omgithub.com/Ffenuss).
+- 🌍 [Create with OMGithub](https://omgithub.com).
+- 🧬 [Explore the remix source](https://github.com/Ffenuss/ModKit).
+<!-- omgithub:readme:end -->
