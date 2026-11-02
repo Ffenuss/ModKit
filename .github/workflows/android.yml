@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'fix/installer-confirmation-lifecycle-20261102' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
