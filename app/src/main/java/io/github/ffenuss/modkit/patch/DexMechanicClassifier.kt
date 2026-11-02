@@ -76,8 +76,15 @@ object DexMechanicClassifier {
             // semantic anchor before confirming local currency.
             val currencyAnchor = hasDamage && hasIncrement &&
                 hasCurrencyNameAnchor(field, gettersByField[field].orEmpty())
+            // A cooldown requires a local countdown write-back AND an actual
+            // positive "currently cooling down" predicate on the same field.
+            // A generic stamina/retry counter or a named boolean alone is insufficient.
+            val cooldownAnchor = hasDamage && !hasIncrement &&
+                thresholdActions.contains(DexLocalAction.TRUE) &&
+                hasCooldownAnchor(field, patterns, methodsById)
             val structMechanic = when {
                 currencyAnchor -> GameMechanic.CURRENCY
+                cooldownAnchor -> GameMechanic.COOLDOWN
                 hasDamage && hasIncrement -> GameMechanic.UNKNOWN
                 else -> structuralMechanic(patternTypes, thresholdActions)
             }
@@ -184,6 +191,29 @@ object DexMechanicClassifier {
         return getters.any { it.name.lowercase().filter(Char::isLetterOrDigit) in getterNames }
     }
 
+    private val cooldownPredicateNames = setOf(
+        "isoncooldown", "getisoncooldown", "iscooldownactive",
+    )
+
+    private fun hasCooldownAnchor(
+        field: String,
+        patterns: List<DexBehavioralPattern>,
+        methodsById: Map<String, Method>,
+    ): Boolean {
+        val normalizedField = field.substringAfter("->").substringBefore(':')
+            .lowercase().filter(Char::isLetterOrDigit)
+        if (normalizedField !in setOf(
+                "cooldown", "cooldownticks", "cooldownframes",
+                "cooldownremaining", "remainingcooldown",
+            )) return false
+        return patterns.any { pattern ->
+            pattern.type == DexBehavioralPatternType.ZERO_THRESHOLD_CHECK &&
+                pattern.thresholdAction == DexLocalAction.TRUE &&
+                methodsById[pattern.method]?.name
+                    ?.lowercase()?.filter(Char::isLetterOrDigit) in cooldownPredicateNames
+        }
+    }
+
     private fun emitCandidates(
         mechanic: GameMechanic,
         field: String,
@@ -196,6 +226,22 @@ object DexMechanicClassifier {
         val category = categoryForMechanic(mechanic) ?: return
         val reason = "Структурное подтверждение: " + mechanic.label +
             " (поле " + field + "). Эффект в игре ещё не проверен."
+        if (mechanic == GameMechanic.COOLDOWN) {
+            // A larger countdown would make things worse. Patch ONLY a
+            // side-effect-free positive "on cooldown" boolean to false, and
+            // only after proving the same field is decremented locally.
+            for ((methodId, observedAction) in thresholdMethods) {
+                if (observedAction != DexLocalAction.TRUE) continue
+                val method = methodsById[methodId] ?: continue
+                if (method.name.lowercase().filter(Char::isLetterOrDigit) !in cooldownPredicateNames) continue
+                if (method.returnType != "Z") continue
+                if (!DexMethodBodyInspector.inspect(method).supportsScalarReplacement) continue
+                candidates += StructuralModCandidate(
+                    method, category, DexLocalAction.FALSE, field, confidence, reason,
+                )
+            }
+            return
+        }
         for (getter in getters) {
             val body = DexMethodBodyInspector.inspect(getter)
             if (!body.supportsScalarReplacement) continue
@@ -244,6 +290,7 @@ object DexMechanicClassifier {
         GameMechanic.STAMINA -> DexLocalCategory.STAMINA
         GameMechanic.AMMO -> DexLocalCategory.AMMO
         GameMechanic.CURRENCY -> DexLocalCategory.CURRENCY
+        GameMechanic.COOLDOWN -> DexLocalCategory.COOLDOWN
         GameMechanic.SPEED -> DexLocalCategory.MOVEMENT
         else -> null
     }
