@@ -10,13 +10,16 @@ import android.widget.TextView;
 public final class GameActivity extends Activity {
     private PlayerStats player;
     private ObfuscatedStats obf;
+    private WalletStats wallet;
     private TextView state;
     private TextView distance;
     private TextView obfState;
+    private TextView walletState;
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         player = new PlayerStats();
         obf = new ObfuscatedStats();
+        wallet = new WalletStats();
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setGravity(Gravity.CENTER);
@@ -30,6 +33,9 @@ public final class GameActivity extends Activity {
         obfState = new TextView(this);
         obfState.setTextSize(24);
         layout.addView(obfState);
+        walletState = new TextView(this);
+        walletState.setTextSize(24);
+        layout.addView(walletState);
         Button hit = new Button(this);
         hit.setText("Take damage");
         hit.setOnClickListener(v -> { player.hit(); showState(); });
@@ -46,9 +52,17 @@ public final class GameActivity extends Activity {
         obfMove.setText("Obf move");
         obfMove.setOnClickListener(v -> { obf.i(); showState(); });
         layout.addView(obfMove);
+        Button buyCoins = new Button(this);
+        buyCoins.setText("Buy coins item");
+        buyCoins.setOnClickListener(v -> { wallet.purchase(); showState(); });
+        layout.addView(buyCoins);
+        Button earnCoins = new Button(this);
+        earnCoins.setText("Earn coins");
+        earnCoins.setOnClickListener(v -> { wallet.earnCoins(); showState(); });
+        layout.addView(earnCoins);
         Button reset = new Button(this);
         reset.setText("Reset");
-        reset.setOnClickListener(v -> { player = new PlayerStats(); obf = new ObfuscatedStats(); showState(); });
+        reset.setOnClickListener(v -> { player = new PlayerStats(); obf = new ObfuscatedStats(); wallet = new WalletStats(); showState(); });
         layout.addView(reset);
         setContentView(layout);
         showState();
@@ -57,5 +71,6 @@ public final class GameActivity extends Activity {
         state.setText((player.isDead() ? "GAME OVER" : "ALIVE") + " | Health: " + player.getHealth());
         distance.setText("Distance: " + player.distance());
         obfState.setText((obf.g() ? "OBF DEAD" : "OBF ALIVE") + " | Obf HP: " + obf.d());
+        walletState.setText("Coins: " + wallet.getCoins() + " | Purchases: " + wallet.purchases());
     }
 }
