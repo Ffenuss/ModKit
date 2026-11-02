@@ -63,6 +63,10 @@ data class DexLocalOpportunity(
     val bodyKind: DexMethodBodyKind = DexMethodBodyKind.UNSUPPORTED,
     val fieldIdentity: String? = null,
     val matchedByField: Boolean = false,
+    /** True when the method was found by structural/behavioral analysis, not by name. */
+    val matchedByStructure: Boolean = false,
+    /** Confidence ladder level at discovery time (static analysis only). */
+    val confidence: MechanicConfidence = MechanicConfidence.DISCOVERED,
 ) {
     val displayName: String
         get() = className.removePrefix("L").removeSuffix(";")
@@ -84,28 +88,37 @@ data class DexLocalScan(
     val excludedAmbiguousProgressionNames: Int = 0,
     val nativeLibrariesObserved: Int = 0,
     val diagnostics: List<String> = emptyList(),
+    val structuralMechanicsConfirmed: Int = 0,
+    val structuralCandidates: Int = 0,
+    val mechanicHypotheses: List<String> = emptyList(),
 ) {
     val explanation: String
-        get() = when {
-            opportunities.isNotEmpty() ->
-                "Найдены локальные методы с проверенной сигнатурой. " +
-                    "Эффект модификации нужно проверить в запущенной игре."
-            dexFilesExamined == 0 ->
-                "DEX-код отсутствует. Логика может быть в нативных библиотеках " +
-                    "или приложение содержит только ресурсы."
-            methodsExamined == 0 ->
-                "DEX присутствует, но пригодных классов приложения не обнаружено. " +
-                    "Возможно, это только загрузчик Unity или системные библиотеки."
-            semanticNamesMatched > 0 && rejectedReturnTypes > 0 ->
-                "Найдены имена, похожие на игровые функции, но часть имеет " +
-                    "неподдерживаемые параметры или возвращаемый тип."
-            excludedAmbiguousProgressionNames > 0 ->
-                "Пропущено " + excludedAmbiguousProgressionNames +
-                    " методов с неоднозначными именами Level/Experience: " +
-                    "они не имеют доказанного игрового контекста."
-            else ->
-                "DEX прочитан, но подходящих локальных методов не найдено. " +
-                    "Возможны обфускация, нестандартная логика или нативный движок."
+        get() = buildString {
+            if (structuralMechanicsConfirmed > 0) {
+                append("Структурный анализ подтвердил " +
+                    structuralMechanicsConfirmed +
+                    " игровых механик по поведению кода (без опоры на имена). ")
+            }
+            append(
+                when {
+                    dexFilesExamined == 0 ->
+                        "DEX-код отсутствует. Логика может быть в нативных библиотеках " +
+                            "или приложение содержит только ресурсы."
+                    methodsExamined == 0 ->
+                        "DEX присутствует, но пригодных классов приложения не обнаружено. " +
+                            "Возможно, это только загрузчик Unity или системные библиотеки."
+                    semanticNamesMatched > 0 && rejectedReturnTypes > 0 ->
+                        "Найдены имена, похожие на игровые функции, но часть имеет " +
+                            "неподдерживаемые параметры или возвращаемый тип."
+                    excludedAmbiguousProgressionNames > 0 ->
+                        "Пропущено " + excludedAmbiguousProgressionNames +
+                            " методов с неоднозначными именами Level/Experience: " +
+                            "они не имеют доказанного игрового контекста."
+                    else ->
+                        "DEX прочитан, но подходящих локальных методов не найдено. " +
+                            "Возможны обфускация, нестандартная логика или нативный движок."
+                }
+            )
         }
 }
 
@@ -143,6 +156,9 @@ object DexLocalPatchEngine {
         var rejectedReturnTypes = 0
         var excludedAmbiguousProgressionNames = 0
         var nativeLibraries = 0
+        var structuralConfirmed = 0
+        var structuralCandidates = 0
+        val hypothesisNotes = ArrayList<String>()
         val diagnostics = ArrayList<String>()
         apkFiles.forEachIndexed { apkIndex, apk ->
             checkCancelled(cancellation)
@@ -183,6 +199,9 @@ object DexLocalPatchEngine {
                         rejectedReturnTypes += scan.rejectedReturnTypes
                         excludedAmbiguousProgressionNames +=
                             scan.excludedAmbiguousProgressionNames
+                        structuralConfirmed += scan.structuralMechanicsConfirmed
+                        structuralCandidates += scan.structuralCandidates
+                        hypothesisNotes += scan.mechanicHypotheses
                         diagnostics += scan.diagnostics.map {
                             apk.name + ":" + entry.name + ": " + it
                         }.take(20)
@@ -217,6 +236,9 @@ object DexLocalPatchEngine {
                 excludedAmbiguousProgressionNames,
             nativeLibrariesObserved = nativeLibraries,
             diagnostics = diagnostics.distinct().take(30),
+            structuralMechanicsConfirmed = structuralConfirmed,
+            structuralCandidates = structuralCandidates,
+            mechanicHypotheses = hypothesisNotes.distinct().take(30),
         )
     }
 
@@ -322,6 +344,38 @@ object DexLocalPatchEngine {
                 )
             }
         }
+        // Structural/behavioral pass: name-independent discovery. Name-based
+        // candidates above remain the primary signal; structural candidates
+        // are deduplicated by stable id so a method is never offered twice.
+        val behavioral = DexBehavioralAnalyzer.analyze(dex, cancellation)
+        val classification = DexMechanicClassifier.classify(behavioral, dex)
+        val existingIds = candidates.mapTo(HashSet()) { it.id }
+        var structuralAdded = 0
+        for (spec in classification.candidates) {
+            val id = stableId(apkIndex, dexEntry, spec.method)
+            if (!existingIds.add(id)) continue
+            val body = DexMethodBodyInspector.inspect(spec.method)
+            candidates += DexLocalOpportunity(
+                id = id,
+                apkIndex = apkIndex,
+                dexEntry = dexEntry,
+                className = spec.method.definingClass,
+                methodName = spec.method.name,
+                signature = "()" + spec.method.returnType,
+                originalDexSha256 = sha,
+                category = spec.category,
+                action = spec.action,
+                selectable = body.supportsScalarReplacement &&
+                    (spec.category !in setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI) ||
+                        developerTestMode),
+                reason = spec.reason,
+                bodyKind = body.kind,
+                fieldIdentity = spec.field,
+                matchedByStructure = true,
+                confidence = spec.confidence,
+            )
+            structuralAdded++
+        }
         progress(methods, dexEntry)
         if (excludedAmbiguousProgressionNames > 0) {
             warnings +=
@@ -345,6 +399,14 @@ object DexLocalPatchEngine {
             excludedAmbiguousProgressionNames =
                 excludedAmbiguousProgressionNames,
             diagnostics = diagnostics,
+            structuralMechanicsConfirmed = classification.hypotheses.count {
+                it.confidence == MechanicConfidence.CONFIRMED
+            },
+            structuralCandidates = structuralAdded,
+            mechanicHypotheses = classification.hypotheses
+                .sortedByDescending { it.confidence.ordinal }
+                .map { it.summary }
+                .take(30),
         )
     }
 
@@ -525,7 +587,7 @@ object DexLocalPatchEngine {
         )
     }
 
-    private fun classify(
+    internal fun classify(
         methodName: String,
         returnType: String,
         definingClass: String,
@@ -684,7 +746,7 @@ object DexLocalPatchEngine {
             key == "gethp"
     }
 
-    private fun excludedClass(name: String): Boolean {
+    internal fun excludedClass(name: String): Boolean {
         val path = name.lowercase()
         val sensitive = listOf(
             "billing", "receipt", "purchaseclient",

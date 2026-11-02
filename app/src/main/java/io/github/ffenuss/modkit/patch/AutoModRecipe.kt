@@ -38,6 +38,9 @@ data class AutoModRecipe(
 object DexRecipeCatalog {
     fun create(scan: DexLocalScan): List<AutoModRecipe> = scan.opportunities
         .filter { it.category !in setOf(DexLocalCategory.FULL_VERSION, DexLocalCategory.DEBUG_UI) }
+        // Name-based hits are the primary signal; structural-only discoveries
+        // are listed after them so the UI order stays stable and explainable.
+        .sortedBy { it.matchedByStructure }
         // Only getters reading the SAME proven field with the SAME action form a bundle.
         // Unrelated methods in a category must never become one silent multi-method patch.
         .groupBy { "${it.apkIndex}:${it.dexEntry}:${it.fieldIdentity ?: it.id}:${it.action}" }

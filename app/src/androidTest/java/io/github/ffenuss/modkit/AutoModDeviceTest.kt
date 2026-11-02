@@ -67,6 +67,12 @@ class AutoModDeviceTest {
         device.waitForIdle()
     }
 
+    private fun obfHit() {
+        val button = device.wait(Until.findObject(By.text(Pattern.compile("obf hit", Pattern.CASE_INSENSITIVE))), 10_000)
+        requireNotNull(button) { "Fixture obfuscated damage button is missing" }.click()
+        device.waitForIdle()
+    }
+
     private fun launchGame() {
         context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(fixturePackage))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
@@ -242,5 +248,78 @@ class AutoModDeviceTest {
         assertTrue("The APK selected and installed through the UI must change gameplay",
             device.hasObject(By.text("ALIVE | Health: 9999")))
         evidence("ui-installed-game.png") { device.takeScreenshot(it) }
+    }
+
+    /**
+     * Structural discovery end-to-end: the obfuscated health (single-letter
+     * members, no gameplay names) is confirmed by code behavior alone, patched
+     * by the existing engine, and the running game must reflect the change.
+     */
+    @Test fun d_structuralDiscoveryPatchesTheObfuscatedHealthAlone() = runBlocking {
+        val installed = io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(fixturePackage)!!
+        val target = AnalysisTargetDescriptor.InstalledPackage(fixturePackage, "ModKit Test Game")
+        val analysis = FastArtifactIndexer.index(installed.apkFiles, signal, progress)
+        val scan = DexAutoModCoordinator.scan(context, target, analysis, signal, progress)
+
+        val obfHealth = scan.opportunities.single {
+            it.matchedByStructure && it.className.endsWith("/ObfuscatedStats;") && it.methodName == "d"
+        }
+        assertEquals(DexLocalCategory.HEALTH, obfHealth.category)
+        assertEquals(DexLocalAction.INT_9999, obfHealth.action)
+        assertEquals(MechanicConfidence.CONFIRMED, obfHealth.confidence)
+        assertTrue("Confirmed structural candidate must be selectable", obfHealth.selectable)
+        assertTrue("Structural confirmation must be reported", scan.structuralMechanicsConfirmed >= 1)
+        // A name-only or structure-only false positive must not be confirmed:
+        // the stamina gate (h) and the distance counter (j) stay non-selectable.
+        assertTrue(scan.opportunities.none {
+            it.matchedByStructure && it.className.endsWith("/ObfuscatedStats;") &&
+                it.methodName in setOf("e", "j", "h", "g")
+        })
+
+        val recipe = DexRecipeCatalog.create(scan).single {
+            it.selectable && it.dex.any { d -> d.id == obfHealth.id }
+        }
+        val preparation = PatchPreparationPlan(analysis.index.artifactSha256, true,
+            System.currentTimeMillis(), emptyList(), emptyList())
+        val built = AutoModBuildCoordinator.build(context, target, analysis, preparation,
+            listOf(recipe), signal, progress)
+        assertEquals(installed.apkFiles.size, built.files.size)
+        assertTrue(built.files.all { it.signature.verified })
+        assertTrue(built.mutationDiffVerification.verified)
+
+        val plan = RepackedRuntimeInstallPlanner.plan(built, signal)
+        device.executeShellCommand("appops set ${context.packageName} REQUEST_INSTALL_PACKAGES allow")
+        // Test-fixture cleanup only: a fresh install regardless of the prior
+        // signature state left by a_/b_/c_. The production app never uninstalls.
+        device.executeShellCommand("pm uninstall $fixturePackage")
+        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        device.waitForIdle()
+        val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+        val deadline = System.currentTimeMillis() + 30_000
+        while (System.currentTimeMillis() < deadline) {
+            val status = RepackedRuntimeInstallStatusStore.status.value
+            if (status.kind == RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED) {
+                instrumentation.runOnMainSync {
+                    RepackedRuntimeInstallConfirmationStore.open(context, submission.sessionId)
+                }
+                val install = device.wait(Until.findObject(By.res("com.android.packageinstaller", "ok_button")), 1500)
+                    ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
+                    ?: device.findObject(By.text("Install"))
+                    ?: device.findObject(By.text("INSTALL"))
+                install?.click()
+            }
+            if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) break
+            assertNotEquals(status.message, RepackedRuntimeInstallStatusKind.FAILURE, status.kind)
+            device.waitForIdle(500)
+        }
+        assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, RepackedRuntimeInstallStatusStore.status.value.kind)
+
+        launchGame()
+        assertTrue("Obfuscated health must be raised by structural discovery",
+            device.hasObject(By.text("OBF ALIVE | Obf HP: 9999")))
+        repeat(3) { obfHit() }
+        assertTrue("Patched obfuscated getter must feed the real death rule",
+            device.hasObject(By.text("OBF ALIVE | Obf HP: 9999")))
+        evidence("obfuscated-structural-mod.png") { device.takeScreenshot(it) }
     }
 }

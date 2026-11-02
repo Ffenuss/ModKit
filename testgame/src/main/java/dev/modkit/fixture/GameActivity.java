@@ -9,11 +9,14 @@ import android.widget.TextView;
 
 public final class GameActivity extends Activity {
     private PlayerStats player;
+    private ObfuscatedStats obf;
     private TextView state;
     private TextView distance;
+    private TextView obfState;
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         player = new PlayerStats();
+        obf = new ObfuscatedStats();
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setGravity(Gravity.CENTER);
@@ -24,6 +27,9 @@ public final class GameActivity extends Activity {
         distance = new TextView(this);
         distance.setTextSize(24);
         layout.addView(distance);
+        obfState = new TextView(this);
+        obfState.setTextSize(24);
+        layout.addView(obfState);
         Button hit = new Button(this);
         hit.setText("Take damage");
         hit.setOnClickListener(v -> { player.hit(); showState(); });
@@ -32,9 +38,17 @@ public final class GameActivity extends Activity {
         sprint.setText("Sprint");
         sprint.setOnClickListener(v -> { player.sprint(); showState(); });
         layout.addView(sprint);
+        Button obfHit = new Button(this);
+        obfHit.setText("Obf hit");
+        obfHit.setOnClickListener(v -> { obf.f(); showState(); });
+        layout.addView(obfHit);
+        Button obfMove = new Button(this);
+        obfMove.setText("Obf move");
+        obfMove.setOnClickListener(v -> { obf.i(); showState(); });
+        layout.addView(obfMove);
         Button reset = new Button(this);
         reset.setText("Reset");
-        reset.setOnClickListener(v -> { player = new PlayerStats(); showState(); });
+        reset.setOnClickListener(v -> { player = new PlayerStats(); obf = new ObfuscatedStats(); showState(); });
         layout.addView(reset);
         setContentView(layout);
         showState();
@@ -42,5 +56,6 @@ public final class GameActivity extends Activity {
     private void showState() {
         state.setText((player.isDead() ? "GAME OVER" : "ALIVE") + " | Health: " + player.getHealth());
         distance.setText("Distance: " + player.distance());
+        obfState.setText((obf.g() ? "OBF DEAD" : "OBF ALIVE") + " | Obf HP: " + obf.d());
     }
 }
