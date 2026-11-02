@@ -207,10 +207,10 @@ object DexMechanicClassifier {
                 "cooldownremaining", "remainingcooldown",
             )) return false
         return patterns.any { pattern ->
-            pattern.type == DexBehavioralPatternType.ZERO_THRESHOLD_CHECK &&
-                pattern.thresholdAction == DexLocalAction.TRUE &&
-                methodsById[pattern.method]?.name
-                    ?.lowercase()?.filter(Char::isLetterOrDigit) in cooldownPredicateNames
+            if (pattern.type != DexBehavioralPatternType.ZERO_THRESHOLD_CHECK ||
+                pattern.thresholdAction != DexLocalAction.TRUE) return@any false
+            val name = methodsById[pattern.method]?.name ?: return@any false
+            name.lowercase().filter(Char::isLetterOrDigit) in cooldownPredicateNames
         }
     }
 
