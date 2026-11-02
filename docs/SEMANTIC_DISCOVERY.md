@@ -39,6 +39,12 @@ secondary signal, never as the only proof.
    - `DAMAGE_WRITE_BACK` + availability gate / guarded consumption → STAMINA-like;
      a retry counter is structurally identical, so it is **CONFIRMED only with a
      matching name anchor on the same field**, otherwise PROBABLE;
+   - `DAMAGE_WRITE_BACK` + `CLAMPED_INCREMENT` on the same proven field
+     are insufficient to label currency alone: both health and generic counters
+     may be bidirectional. Local CURRENCY requires both write-back patterns
+     **and** an exact coin/money/cash field or getter anchor. A generic
+     `count`/`balance` stays PROBABLE; a mere name without both patterns
+     never yields a currency recipe;
    - a name signal without corroborating structure never reaches CONFIRMED.
 
 ## Confidence ladder (static analysis ceiling: CONFIRMED)
@@ -89,4 +95,11 @@ Static code never claims the top two levels without proof.
 
 - Runtime (FUNCTIONALLY_VERIFIED) promotion for the IL2CPP side.
 - Multi-level interprocedural dataflow and loop handling.
-- CURRENCY/SPEED/COOLDOWN executable recipes (currently hypotheses only).
+- Local currency now has a proof-of-concept path on a **controlled offline
+  wallet**. Confirmation means a locally-written field with symmetric earn/spend
+  mutations and an exact semantic anchor; online balances or authoritative
+  server-side currency remain outside the supported contract. Device evidence
+  must confirm purchases actually change before it is marked verified.
+- SPEED/COOLDOWN executable recipes (currently hypotheses only).
+- Currency device validation on real D8 fixture and stronger false-positive
+  counterexamples beyond exact name-based anchors.
