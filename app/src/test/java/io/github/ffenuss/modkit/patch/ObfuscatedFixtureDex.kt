@@ -48,9 +48,9 @@ object ObfuscatedFixtureDex {
 
     fun build(): ByteArray {
         val fields = listOf(
-            ImmutableField(OWNER, "a", "I", AccessFlags.PRIVATE.value),
-            ImmutableField(OWNER, "b", "I", AccessFlags.PRIVATE.value),
-            ImmutableField(OWNER, "c", "I", AccessFlags.PRIVATE.value),
+            ImmutableField(OWNER, "a", "I", AccessFlags.PRIVATE.value, null, emptySet(), emptySet()),
+            ImmutableField(OWNER, "b", "I", AccessFlags.PRIVATE.value, null, emptySet(), emptySet()),
+            ImmutableField(OWNER, "c", "I", AccessFlags.PRIVATE.value, null, emptySet(), emptySet()),
         )
         val methods = listOf(
             getter("d", fieldA),
