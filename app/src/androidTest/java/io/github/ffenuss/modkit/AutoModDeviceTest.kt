@@ -73,6 +73,27 @@ class AutoModDeviceTest {
         device.waitForIdle()
     }
 
+    /** The fixture scrolls on smaller emulators; no UI test assumes a fixed viewport. */
+    private fun fixtureText(label: String): androidx.test.uiautomator.UiObject2 {
+        val selector = By.text(label)
+        var control = device.wait(Until.findObject(selector), 1000)
+        if (control != null) return control
+        val center = device.displayWidth / 2
+        val top = device.displayHeight / 5
+        val bottom = device.displayHeight * 4 / 5
+        repeat(4) {
+            device.swipe(center, bottom, center, top, 25)
+            control = device.wait(Until.findObject(selector), 750)
+            if (control != null) return requireNotNull(control)
+        }
+        repeat(4) {
+            device.swipe(center, top, center, bottom, 25)
+            control = device.wait(Until.findObject(selector), 750)
+            if (control != null) return requireNotNull(control)
+        }
+        throw AssertionError("Fixture UI element not reachable: $label")
+    }
+
     private fun launchGame() {
         context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(fixturePackage))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
@@ -380,14 +401,14 @@ class AutoModDeviceTest {
      */
     @Test fun e_localCoinBalanceAllowsMoreFixturePurchases() = runBlocking {
         launchGame()
-        assertTrue(device.hasObject(By.text("Coins: 20 | Purchases: 0")))
+        fixtureText("Coins: 20 | Purchases: 0")
         repeat(3) {
-            requireNotNull(device.findObject(By.text("Buy coins item"))).click()
+            fixtureText("Buy coins item").click()
             device.waitForIdle()
         }
         assertTrue(
             "Baseline should allow only two purchases from twenty coins",
-            device.hasObject(By.text("Coins: 0 | Purchases: 2")),
+            fixtureText("Coins: 0 | Purchases: 2") != null,
         )
 
         val installed = io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(fixturePackage)!!
@@ -452,14 +473,14 @@ class AutoModDeviceTest {
         assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, RepackedRuntimeInstallStatusStore.status.value.kind)
 
         launchGame()
-        assertTrue(device.hasObject(By.text("Coins: 9999 | Purchases: 0")))
+        fixtureText("Coins: 9999 | Purchases: 0")
         repeat(3) {
-            requireNotNull(device.findObject(By.text("Buy coins item"))).click()
+            fixtureText("Buy coins item").click()
             device.waitForIdle()
         }
         assertTrue(
             "Patched getter must allow a third real transaction",
-            device.hasObject(By.text("Coins: 9999 | Purchases: 3")),
+            fixtureText("Coins: 9999 | Purchases: 3") != null,
         )
         evidence("currency-structural-mod.png") { device.takeScreenshot(it) }
     }
