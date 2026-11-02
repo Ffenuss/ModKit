@@ -307,8 +307,16 @@ object DexBehavioralAnalyzer {
                     val dest = destRegister(instruction, registerCount) ?: return null
                     val (sources, literal) = arithmeticSources(instruction)
                     val (fieldIdx, constValue) = fieldAndConstant(sources, literal, derivedFrom, constInt)
-                    if (fieldIdx >= 0 && constValue != null && constValue > 0) {
-                        facts.increments[facts.fields[fieldIdx]] = constValue
+                    if (fieldIdx >= 0 && constValue != null) {
+                        when {
+                            constValue > 0 -> facts.increments[facts.fields[fieldIdx]] = constValue
+                            // D8 normally lowers "field - 7" to add-int/lit8 -7.
+                            // This is a subtraction only for the literal ADD opcodes:
+                            // never infer one from a register whose sign is unknown.
+                            constValue < 0 &&
+                                op in setOf(Opcode.ADD_INT_LIT8, Opcode.ADD_INT_LIT16) ->
+                                facts.subtractions[facts.fields[fieldIdx]] = -constValue
+                        }
                     }
                     derivedFrom[dest] = fieldIdx
                     constInt.remove(dest)
