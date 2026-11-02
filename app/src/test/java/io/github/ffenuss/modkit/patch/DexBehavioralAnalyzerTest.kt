@@ -99,7 +99,7 @@ class DexBehavioralAnalyzerTest {
             model.fieldWriters[owner + "->a:I"],
         )
         assertEquals(
-            setOf(owner + "->h()Z", owner + "->i()V"),
+            setOf(owner + "->e()I", owner + "->h()Z", owner + "->i()V"),
             model.fieldReaders[owner + "->b:I"],
         )
         assertFalse(model.fieldWriters.containsKey(owner + "->d()I"))
