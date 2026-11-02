@@ -28,7 +28,7 @@ secondary signal, never as the only proof.
    method boundaries (one level; a call to a proven getter counts as a read of that field).
 2. **Method-local dataflow (pass 2).** Linear register→field binding, fail-closed:
    any unmodeled instruction invalidates bindings. Recognized shapes:
-   - `field = field - const` (+ optional `Math.max(0, x)` clamp) → `DAMAGE_WRITE_BACK`;
+   - `field = field - const` (+ optional `Math.max(0, x)` clamp) → `DAMAGE_WRITE_BACK`. Includes D8's equivalent `add-int/lit8` or `add-int/lit16` with a **negative immediate literal**; arbitrary register additions are not treated as damage;
    - boolean `field <= 0` / `field > 0` → `ZERO_THRESHOLD_CHECK` with direction
      (depleted→`FALSE`, available→`TRUE`);
    - `if (field > 0) { field -= const }` in the same method → `GUARDED_CONSUMPTION`;
@@ -61,6 +61,13 @@ Static code never claims the top two levels without proof.
   skipped, not guessed.
 - PROBABLE hypotheses are reported in `DexLocalScan.mechanicHypotheses` but produce
   no executable recipe.
+
+## Verified build and device evidence (2026-11-02)
+
+- GitHub Actions [run 41390776138](https://github.com/Ffenuss/ModKit/actions/runs/41390776138): JVM tests, lint, APK build, ARM64 vector checks and emulator device suites **passed** on API 29 (single APK) and API 35 (split APK).
+- The APK's D8-compiled `ObfuscatedStats.f()` actually uses `invoke-virtual → move-result → add-int/lit8 → Math.max → iput`. An earlier synthetic test encoded only `sub-int`; adding recognition of negative literal additions fixed the discrepancy.
+- The owned fixture confirms obfuscated-health discovery and an in-game effect after applying a static DEX recipe. This is **not** proof of general compatibility or server-side modifications.
+- An occasional system installer confirmation failure was observed in earlier emulator runs; continued hardening and repeatability testing are still relevant.
 
 ## Limitations (honest list)
 
