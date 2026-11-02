@@ -226,7 +226,11 @@ object DexBehavioralAnalyzer {
                     val field = (instruction as? ReferenceInstruction)?.reference as? FieldReference
                         ?: return null
                     val two = instruction as? TwoRegisterInstruction ?: return null
-                    if (field.type !in SCALAR_TYPES || field.definingClass != method.definingClass) {
+                    if (field.type !in SCALAR_TYPES ||
+                        field.definingClass != method.definingClass || two.registerB != thisReg
+                    ) {
+                        // Never attribute writes through another object to this
+                        // instance's proven field. Their alias cannot be proved.
                         continue
                     }
                     val identity = fieldIdentity(field)
