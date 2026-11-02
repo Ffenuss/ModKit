@@ -232,7 +232,11 @@ class AutoModDeviceTest {
             val status = RepackedRuntimeInstallStatusStore.status.value
             if (status.updatedAtEpochMs >= attemptedAt) {
                 if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) break
-                assertNotEquals(status.message, RepackedRuntimeInstallStatusKind.FAILURE, status.kind)
+                if (status.kind == RepackedRuntimeInstallStatusKind.FAILURE) {
+                    evidence("ui-install-failure-screen.png") { device.takeScreenshot(it) }
+                    evidence("ui-install-failure-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+                    throw AssertionError("Installer reported failure: ${status.message} (session=${status.sessionId})")
+                }
                 device.findObject(By.text("Подтвердить установку"))?.click()
                 val systemInstall = device.findObject(By.res("com.android.packageinstaller", "ok_button"))
                     ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
@@ -240,7 +244,11 @@ class AutoModDeviceTest {
                     ?: device.findObject(By.text("INSTALL"))
                     ?: device.findObject(By.text("Update"))
                     ?: device.findObject(By.text("UPDATE"))
-                systemInstall?.click()
+                if (systemInstall != null) {
+                    evidence("ui-install-confirmation-screen.png") { device.takeScreenshot(it) }
+                    evidence("ui-install-confirmation-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+                    systemInstall.click()
+                }
             }
             device.wait(Until.hasObject(By.text("Приложение установлено")), 500)
         }
