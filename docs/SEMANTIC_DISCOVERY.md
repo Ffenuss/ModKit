@@ -82,6 +82,24 @@ Static code never claims the top two levels without proof.
 - An unanchored generic counter and a one-way increment remain non-selectable; no result is claimed for real online economies.
 - Device instrumentation uses a case-insensitive accessibility selector for Android's all-caps buttons. The prior retained-install fixture test now launches the debug-suffixed APK by the full `ComponentName`.
 
+## Local cooldown — device verified on owned offline fixture
+
+- A local integer field must have a proven decrement-and-write-back method and
+  a proven read-only boolean predicate over that same field. A narrow cooldown
+  field identifier plus the exact positive on-cooldown predicate name corroborate
+  the evidence; arbitrary counters remain PROBABLE.
+- The only generated cooldown action returns `false` from the proven positive
+  predicate. **The countdown value itself is not increased to 9999**, and
+  an inverted predicate cannot be misclassified as health.
+- The owned `CooldownStats` fixture uses a skill gate and real action counter.
+  The device test checks zero executions before the patch and three after it,
+  rather than accepting a changed HUD label as proof.
+- The classifier also requires an `IPUT` receiver bound to `this` before
+  treating a field write as local-state evidence.
+- Scope is offline DEX only. Native engines, server-authoritative cooldowns,
+  and loops/complex control-flow are not covered by these checks.
+- **Device validation:** [GitHub Actions run 41414958037, attempt 2](https://github.com/Ffenuss/ModKit/actions/runs/41414958037/attempts/2) passed build/JVM/lint, Android API29 single-APK and Android API35 split-APK. The sixth device test confirms that the owned fixture can execute a skill three times after the cooldown predicate rewrite, versus none before. The initial API29 attempt failed to boot its emulator; retry succeeded without source changes.
+
 ## Limitations (honest list)
 
 - **Method-local, linear dataflow.** Loops, complex CFGs, and more than one level of
@@ -107,6 +125,6 @@ Static code never claims the top two levels without proof.
   mutations and an exact semantic anchor; online balances or authoritative
   server-side currency remain outside the supported contract. Device evidence
   must confirm purchases actually change before it is marked verified.
-- SPEED/COOLDOWN executable recipes (currently hypotheses only).
+- SPEED executable recipes (currently hypotheses only); device confirmation for the new local COOLDOWN prototype.
 - Currency device validation on real D8 fixture and stronger false-positive
   counterexamples beyond exact name-based anchors.

@@ -498,4 +498,96 @@ class AutoModDeviceTest {
         evidence("currency-structural-mod.png") { device.takeScreenshot(it) }
     }
 
+    /**
+     * New structural cooldown proof must allow skill activation after
+     * replacing only a read-only on-cooldown predicate. A visible flag
+     * without a changed action counter is not enough to pass.
+     */
+    @Test fun f_confirmedCooldownAllowsOfflineSkillExecution() = runBlocking {
+        launchGame()
+        fixtureText("Cooldown: 3 | Actions: 0")
+        repeat(3) {
+            fixtureText("Use skill").click()
+            device.waitForIdle()
+        }
+        fixtureText("Cooldown: 3 | Actions: 0")
+
+        val installed = io.github.ffenuss.modkit.data.InstalledAppRepository(context)
+            .find(fixturePackage)!!
+        val target = AnalysisTargetDescriptor.InstalledPackage(fixturePackage, "ModKit Test Game")
+        val analysis = FastArtifactIndexer.index(installed.apkFiles, signal, progress)
+        val scan = DexAutoModCoordinator.scan(context, target, analysis, signal, progress)
+        val matches = scan.opportunities.filter {
+            it.className.endsWith("/CooldownStats;") &&
+                it.methodName == "isOnCooldown" &&
+                it.category == DexLocalCategory.COOLDOWN &&
+                it.matchedByStructure
+        }
+        assertEquals(
+            "One confirmed cooldown predicate expected; hypotheses=${scan.mechanicHypotheses}",
+            1, matches.size,
+        )
+        val candidate = matches.single()
+        assertEquals(MechanicConfidence.CONFIRMED, candidate.confidence)
+        assertEquals(DexLocalAction.FALSE, candidate.action)
+        assertTrue(candidate.selectable)
+        val recipe = DexRecipeCatalog.create(scan).single {
+            it.selectable && it.dex.any { d -> d.id == candidate.id }
+        }
+
+        val preparation = PatchPreparationPlan(
+            analysis.index.artifactSha256, true,
+            System.currentTimeMillis(), emptyList(), emptyList(),
+        )
+        val built = AutoModBuildCoordinator.build(
+            context, target, analysis, preparation,
+            listOf(recipe), signal, progress,
+        )
+        assertEquals(installed.apkFiles.size, built.files.size)
+        assertTrue(built.files.all { it.signature.verified })
+        assertTrue(built.mutationDiffVerification.verified)
+
+        val plan = RepackedRuntimeInstallPlanner.plan(built, signal)
+        device.executeShellCommand("appops set ${context.packageName} REQUEST_INSTALL_PACKAGES allow")
+        // The test owns this disposable fixture; production never uninstalls.
+        device.executeShellCommand("pm uninstall $fixturePackage")
+        context.startActivity(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        device.waitForIdle()
+        val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+        val deadline = System.currentTimeMillis() + 45_000
+        while (System.currentTimeMillis() < deadline) {
+            val status = RepackedRuntimeInstallStatusStore.status.value
+            if (status.kind == RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED) {
+                instrumentation.runOnMainSync {
+                    RepackedRuntimeInstallConfirmationStore.open(context, submission.sessionId)
+                }
+                val systemInstall =
+                    device.findObject(By.res("com.android.packageinstaller", "ok_button"))
+                        ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
+                        ?: device.findObject(By.text("Install"))
+                        ?: device.findObject(By.text("INSTALL"))
+                        ?: device.findObject(By.text("Update"))
+                systemInstall?.click()
+            }
+            if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) break
+            assertNotEquals(status.message, RepackedRuntimeInstallStatusKind.FAILURE, status.kind)
+            device.waitForIdle(500)
+        }
+        assertEquals(
+            RepackedRuntimeInstallStatusKind.SUCCESS,
+            RepackedRuntimeInstallStatusStore.status.value.kind,
+        )
+
+        launchGame()
+        fixtureText("Cooldown: 3 | Actions: 0")
+        repeat(3) {
+            fixtureText("Use skill").click()
+            device.waitForIdle()
+        }
+        fixtureText("Cooldown: 3 | Actions: 3")
+        evidence("cooldown-structural-mod.png") { device.takeScreenshot(it) }
+    }
+
 }
