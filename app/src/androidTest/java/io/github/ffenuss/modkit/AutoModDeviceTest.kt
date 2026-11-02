@@ -261,9 +261,45 @@ class AutoModDeviceTest {
         val analysis = FastArtifactIndexer.index(installed.apkFiles, signal, progress)
         val scan = DexAutoModCoordinator.scan(context, target, analysis, signal, progress)
 
-        val obfHealth = scan.opportunities.single {
+        val matching = scan.opportunities.filter {
             it.matchedByStructure && it.className.endsWith("/ObfuscatedStats;") && it.methodName == "d"
         }
+        if (matching.size != 1) {
+            val dexEvidence = buildString {
+                for (apk in installed.apkFiles) {
+                    ZipFile(apk).use { archive ->
+                        val entries = archive.entries()
+                        while (entries.hasMoreElements()) {
+                            val entry = entries.nextElement()
+                            if (!entry.name.endsWith(".dex")) continue
+                            val dex = DexBackedDexFile(
+                                Opcodes.getDefault(), archive.getInputStream(entry).use { it.readBytes() },
+                            )
+                            for (clazz in dex.classes) {
+                                if (!clazz.type.endsWith("/ObfuscatedStats;")) continue
+                                append("found class ").append(clazz.type).append(" in ").append(entry.name)
+                                for (method in clazz.methods) {
+                                    append("\n").append(method.name).append("()")
+                                    append(method.returnType).append(": ")
+                                    append(method.implementation?.instructions?.take(40)?.joinToString(" ") {
+                                        it.opcode.name
+                                    } ?: "no body")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            val obfCandidates = scan.opportunities.filter { it.className.contains("ObfuscatedStats") }
+            throw AssertionError(
+                "Missing unique obfuscated structural health recipe; matches=${matching.size}, " +
+                    "structuralConfirmed=${scan.structuralMechanicsConfirmed}, " +
+                    "structuralCandidates=${scan.structuralCandidates}, " +
+                    "nearby=${obfCandidates.map { it.methodName to it.matchedByStructure }}, " +
+                    "hypotheses=${scan.mechanicHypotheses.take(8)}; dex=[$dexEvidence]",
+            )
+        }
+        val obfHealth = matching.single()
         assertEquals(DexLocalCategory.HEALTH, obfHealth.category)
         assertEquals(DexLocalAction.INT_9999, obfHealth.action)
         assertEquals(MechanicConfidence.CONFIRMED, obfHealth.confidence)
