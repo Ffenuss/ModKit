@@ -91,7 +91,9 @@ class AutoModDeviceTest {
             control = device.wait(Until.findObject(selector), 750)
             if (control != null) return requireNotNull(control)
         }
-        throw AssertionError("Fixture UI element not reachable: $label")
+        evidence("fixture-control-missing.png") { device.takeScreenshot(it) }
+        evidence("fixture-control-missing-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+        throw AssertionError("Fixture UI element not reachable: $label; screenshot and hierarchy were saved")
     }
 
     private fun launchGame() {
