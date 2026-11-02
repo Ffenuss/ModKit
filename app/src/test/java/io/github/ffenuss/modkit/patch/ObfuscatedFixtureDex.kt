@@ -112,8 +112,8 @@ object ObfuscatedFixtureDex {
             listOf(
                 ImmutableInstruction35c(Opcode.INVOKE_VIRTUAL, 1, 2, 0, 0, 0, 0, getterRef),
                 ImmutableInstruction11x(Opcode.MOVE_RESULT, 0),
-                ImmutableInstruction11n(Opcode.CONST_4, 1, amount),
-                ImmutableInstruction23x(Opcode.SUB_INT, 0, 0, 1),
+                // D8 lowers `value - amount` into ADD_INT_LIT8 with a negative literal.
+                ImmutableInstruction22b(Opcode.ADD_INT_LIT8, 0, 0, -amount),
                 ImmutableInstruction11n(Opcode.CONST_4, 1, 0),
                 ImmutableInstruction3rc(Opcode.INVOKE_STATIC_RANGE, 0, 2, mathMax),
                 ImmutableInstruction11x(Opcode.MOVE_RESULT, 0),
@@ -182,8 +182,8 @@ object ObfuscatedFixtureDex {
                 ImmutableInstruction22b(Opcode.ADD_INT_LIT8, 0, 0, 1),
                 ImmutableInstruction22c(Opcode.IPUT, 0, 3, counter),
                 ImmutableInstruction22c(Opcode.IGET, 0, 3, resource),
-                ImmutableInstruction11n(Opcode.CONST_4, 1, amount),
-                ImmutableInstruction23x(Opcode.SUB_INT, 0, 0, 1),
+                // D8 lowers `value - amount` into ADD_INT_LIT8 with a negative literal.
+                ImmutableInstruction22b(Opcode.ADD_INT_LIT8, 0, 0, -amount),
                 ImmutableInstruction11n(Opcode.CONST_4, 1, 0),
                 ImmutableInstruction3rc(Opcode.INVOKE_STATIC_RANGE, 0, 2, mathMax),
                 ImmutableInstruction11x(Opcode.MOVE_RESULT, 0),
