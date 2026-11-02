@@ -55,12 +55,12 @@ sealed class MechanicEvidence {
         val method: String,
         val field: String,
     ) : MechanicEvidence() {
-        override val summary: String get() = pattern + " в " + method + " для поля " + field
+        override val summary: String get() = pattern + " в " + method + " для поля " + this.field
     }
 
     /** One-level interprocedural dataflow: a proven getter returns the field. */
     data class GetterLink(val getter: String, val field: String) : MechanicEvidence() {
-        override val summary: String get() = getter + " возвращает поле " + field
+        override val summary: String get() = getter + " возвращает поле " + this.field
     }
 }
 
@@ -90,6 +90,6 @@ data class MechanicHypothesis(
     }
 
     val summary: String
-        get() = mechanic.label + ": поле " + field + " — " + confidence.name +
+        get() = mechanic.label + ": поле " + this.field + " — " + confidence.name +
             (if (reasons.isEmpty()) "" else " (" + reasons.joinToString("; ") + ")")
 }

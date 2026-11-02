@@ -125,20 +125,26 @@ class DexStructuralDiscoveryTest {
             org.jf.dexlib2.immutable.ImmutableMethodImplementation(
                 3,
                 listOf(
-                    org.jf.dexlib2.immutable.instruction.ImmutableInstruction51l(
-                        org.jf.dexlib2.Opcode.INVOKE_VIRTUAL, 0, 2, 3, getHealth,
+                    org.jf.dexlib2.immutable.instruction.ImmutableInstruction35c(
+                        org.jf.dexlib2.Opcode.INVOKE_VIRTUAL, 1, 2, 0, 0, 0, 0, getHealth,
+                    ),
+                    org.jf.dexlib2.immutable.instruction.ImmutableInstruction11x(
+                        org.jf.dexlib2.Opcode.MOVE_RESULT, 0,
                     ),
                     org.jf.dexlib2.immutable.instruction.ImmutableInstruction11n(
                         org.jf.dexlib2.Opcode.CONST_4, 1, 7,
                     ),
                     org.jf.dexlib2.immutable.instruction.ImmutableInstruction23x(
-                        org.jf.dexlib2.Opcode.ISUB_INT, 0, 0, 1,
+                        org.jf.dexlib2.Opcode.SUB_INT, 0, 0, 1,
                     ),
                     org.jf.dexlib2.immutable.instruction.ImmutableInstruction11n(
                         org.jf.dexlib2.Opcode.CONST_4, 1, 0,
                     ),
-                    org.jf.dexlib2.immutable.instruction.ImmutableInstruction51l(
-                        org.jf.dexlib2.Opcode.INVOKE_STATIC, 0, 0, 2, mathMax,
+                    org.jf.dexlib2.immutable.instruction.ImmutableInstruction3rc(
+                        org.jf.dexlib2.Opcode.INVOKE_STATIC_RANGE, 0, 2, mathMax,
+                    ),
+                    org.jf.dexlib2.immutable.instruction.ImmutableInstruction11x(
+                        org.jf.dexlib2.Opcode.MOVE_RESULT, 0,
                     ),
                     org.jf.dexlib2.immutable.instruction.ImmutableInstruction22c(
                         org.jf.dexlib2.Opcode.IPUT, 0, 2, field,
@@ -156,17 +162,20 @@ class DexStructuralDiscoveryTest {
             org.jf.dexlib2.immutable.ImmutableMethodImplementation(
                 3,
                 listOf(
-                    org.jf.dexlib2.immutable.instruction.ImmutableInstruction51l(
-                        org.jf.dexlib2.Opcode.INVOKE_VIRTUAL, 0, 2, 3, getHealth,
+                    org.jf.dexlib2.immutable.instruction.ImmutableInstruction35c(
+                        org.jf.dexlib2.Opcode.INVOKE_VIRTUAL, 1, 2, 0, 0, 0, 0, getHealth,
+                    ),
+                    org.jf.dexlib2.immutable.instruction.ImmutableInstruction11x(
+                        org.jf.dexlib2.Opcode.MOVE_RESULT, 0,
                     ),
                     org.jf.dexlib2.immutable.instruction.ImmutableInstruction21t(
-                        org.jf.dexlib2.Opcode.IF_GTZ, 0, 6,
+                        org.jf.dexlib2.Opcode.IF_GTZ, 0, 4,
                     ),
                     org.jf.dexlib2.immutable.instruction.ImmutableInstruction11n(
                         org.jf.dexlib2.Opcode.CONST_4, 0, 1,
                     ),
                     org.jf.dexlib2.immutable.instruction.ImmutableInstruction10t(
-                        org.jf.dexlib2.Opcode.GOTO, 4,
+                        org.jf.dexlib2.Opcode.GOTO, 2,
                     ),
                     org.jf.dexlib2.immutable.instruction.ImmutableInstruction11n(
                         org.jf.dexlib2.Opcode.CONST_4, 0, 0,

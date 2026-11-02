@@ -15,9 +15,10 @@ import org.jf.dexlib2.immutable.instruction.ImmutableInstruction11n
 import org.jf.dexlib2.immutable.instruction.ImmutableInstruction11x
 import org.jf.dexlib2.immutable.instruction.ImmutableInstruction21t
 import org.jf.dexlib2.immutable.instruction.ImmutableInstruction22c
-import org.jf.dexlib2.immutable.instruction.ImmutableInstruction22s
+import org.jf.dexlib2.immutable.instruction.ImmutableInstruction22b
 import org.jf.dexlib2.immutable.instruction.ImmutableInstruction23x
-import org.jf.dexlib2.immutable.instruction.ImmutableInstruction51l
+import org.jf.dexlib2.immutable.instruction.ImmutableInstruction35c
+import org.jf.dexlib2.immutable.instruction.ImmutableInstruction3rc
 import org.jf.dexlib2.immutable.reference.ImmutableFieldReference
 import org.jf.dexlib2.immutable.reference.ImmutableMethodReference
 import org.jf.dexlib2.writer.pool.DexPool
@@ -47,9 +48,9 @@ object ObfuscatedFixtureDex {
 
     fun build(): ByteArray {
         val fields = listOf(
-            ImmutableField(OWNER, "a", "I", AccessFlags.PRIVATE.value),
-            ImmutableField(OWNER, "b", "I", AccessFlags.PRIVATE.value),
-            ImmutableField(OWNER, "c", "I", AccessFlags.PRIVATE.value),
+            ImmutableField(OWNER, "a", "I", AccessFlags.PRIVATE.value, null, emptySet(), emptySet()),
+            ImmutableField(OWNER, "b", "I", AccessFlags.PRIVATE.value, null, emptySet(), emptySet()),
+            ImmutableField(OWNER, "c", "I", AccessFlags.PRIVATE.value, null, emptySet(), emptySet()),
         )
         val methods = listOf(
             getter("d", fieldA),
@@ -109,11 +110,13 @@ object ObfuscatedFixtureDex {
         ImmutableMethodImplementation(
             3,
             listOf(
-                ImmutableInstruction51l(Opcode.INVOKE_VIRTUAL, 0, 2, 3, getterRef),
-                ImmutableInstruction11n(Opcode.CONST_4, 1, amount),
-                ImmutableInstruction23x(Opcode.ISUB_INT, 0, 0, 1),
+                ImmutableInstruction35c(Opcode.INVOKE_VIRTUAL, 1, 2, 0, 0, 0, 0, getterRef),
+                ImmutableInstruction11x(Opcode.MOVE_RESULT, 0),
+                // D8 lowers `value - amount` into ADD_INT_LIT8 with a negative literal.
+                ImmutableInstruction22b(Opcode.ADD_INT_LIT8, 0, 0, -amount),
                 ImmutableInstruction11n(Opcode.CONST_4, 1, 0),
-                ImmutableInstruction51l(Opcode.INVOKE_STATIC, 0, 0, 2, mathMax),
+                ImmutableInstruction3rc(Opcode.INVOKE_STATIC_RANGE, 0, 2, mathMax),
+                ImmutableInstruction11x(Opcode.MOVE_RESULT, 0),
                 ImmutableInstruction22c(Opcode.IPUT, 0, 2, field),
                 ImmutableInstruction10x(Opcode.RETURN_VOID),
             ),
@@ -128,10 +131,11 @@ object ObfuscatedFixtureDex {
             ImmutableMethodImplementation(
                 3,
                 listOf(
-                    ImmutableInstruction51l(Opcode.INVOKE_VIRTUAL, 0, 2, 3, getterRef),
-                    ImmutableInstruction21t(Opcode.IF_GTZ, 0, 6),
+                    ImmutableInstruction35c(Opcode.INVOKE_VIRTUAL, 1, 2, 0, 0, 0, 0, getterRef),
+                ImmutableInstruction11x(Opcode.MOVE_RESULT, 0),
+                    ImmutableInstruction21t(Opcode.IF_GTZ, 0, 4),
                     ImmutableInstruction11n(Opcode.CONST_4, 0, 1),
-                    ImmutableInstruction10t(Opcode.GOTO, 4),
+                    ImmutableInstruction10t(Opcode.GOTO, 2),
                     ImmutableInstruction11n(Opcode.CONST_4, 0, 0),
                     ImmutableInstruction11x(Opcode.RETURN, 0),
                 ),
@@ -149,9 +153,9 @@ object ObfuscatedFixtureDex {
             3,
             listOf(
                 ImmutableInstruction22c(Opcode.IGET, 0, 2, field),
-                ImmutableInstruction21t(Opcode.IF_LEZ, 0, 6),
+                ImmutableInstruction21t(Opcode.IF_LEZ, 0, 4),
                 ImmutableInstruction11n(Opcode.CONST_4, 0, 1),
-                ImmutableInstruction10t(Opcode.GOTO, 4),
+                ImmutableInstruction10t(Opcode.GOTO, 2),
                 ImmutableInstruction11n(Opcode.CONST_4, 0, 0),
                 ImmutableInstruction11x(Opcode.RETURN, 0),
             ),
@@ -171,16 +175,18 @@ object ObfuscatedFixtureDex {
         ImmutableMethodImplementation(
             4,
             listOf(
-                ImmutableInstruction51l(Opcode.INVOKE_VIRTUAL, 0, 3, 4, gateRef),
+                ImmutableInstruction35c(Opcode.INVOKE_VIRTUAL, 1, 3, 0, 0, 0, 0, gateRef),
+                ImmutableInstruction11x(Opcode.MOVE_RESULT, 0),
                 ImmutableInstruction21t(Opcode.IF_EQZ, 0, 20),
                 ImmutableInstruction22c(Opcode.IGET, 0, 3, counter),
-                ImmutableInstruction22s(Opcode.IADD_INT_LIT8, 0, 0, 1),
+                ImmutableInstruction22b(Opcode.ADD_INT_LIT8, 0, 0, 1),
                 ImmutableInstruction22c(Opcode.IPUT, 0, 3, counter),
                 ImmutableInstruction22c(Opcode.IGET, 0, 3, resource),
-                ImmutableInstruction11n(Opcode.CONST_4, 1, amount),
-                ImmutableInstruction23x(Opcode.ISUB_INT, 0, 0, 1),
+                // D8 lowers `value - amount` into ADD_INT_LIT8 with a negative literal.
+                ImmutableInstruction22b(Opcode.ADD_INT_LIT8, 0, 0, -amount),
                 ImmutableInstruction11n(Opcode.CONST_4, 1, 0),
-                ImmutableInstruction51l(Opcode.INVOKE_STATIC, 0, 0, 2, mathMax),
+                ImmutableInstruction3rc(Opcode.INVOKE_STATIC_RANGE, 0, 2, mathMax),
+                ImmutableInstruction11x(Opcode.MOVE_RESULT, 0),
                 ImmutableInstruction22c(Opcode.IPUT, 0, 3, resource),
                 ImmutableInstruction10x(Opcode.RETURN_VOID),
             ),

@@ -1,7 +1,9 @@
 package io.github.ffenuss.modkit.patch
 
 import io.github.ffenuss.modkit.analysis.CancellationSignal
+import org.jf.dexlib2.Opcode
 import org.jf.dexlib2.Opcodes
+import org.jf.dexlib2.iface.instruction.NarrowLiteralInstruction
 import org.jf.dexlib2.dexbacked.DexBackedDexFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -31,7 +33,7 @@ class DexBehavioralAnalyzerTest {
                 owner + "->e()I" to owner + "->b:I",
                 owner + "->j()I" to owner + "->c:I",
             ),
-            model.provenGetters.toSet(),
+            model.provenGetters.toList().toSet(),
         )
     }
 
@@ -46,6 +48,22 @@ class DexBehavioralAnalyzerTest {
             setOf(owner + "->a:I" to owner + "->f()V", owner + "->b:I" to owner + "->i()V"),
             damage.map { it.field to it.method }.toSet(),
         )
+    }
+
+    @Test
+    fun recognizesCompilerStyleNegativeAddLiteralAsDamage() {
+        val dex = DexBackedDexFile(Opcodes.getDefault(), ObfuscatedFixtureDex.build())
+        val damage = dex.classes.single().methods.first { it.name == "f" }
+        val negativeAdd = damage.implementation!!.instructions.first {
+            it.opcode == Opcode.ADD_INT_LIT8
+        }
+        assertEquals(-7, (negativeAdd as NarrowLiteralInstruction).narrowLiteral)
+        val model = DexBehavioralAnalyzer.analyze(dex, signal)
+        assertTrue(model.patterns.any {
+            it.type == DexBehavioralPatternType.DAMAGE_WRITE_BACK &&
+                it.field == ObfuscatedFixtureDex.OWNER + "->a:I" &&
+                it.method == ObfuscatedFixtureDex.OWNER + "->f()V"
+        })
     }
 
     @Test
@@ -99,7 +117,7 @@ class DexBehavioralAnalyzerTest {
             model.fieldWriters[owner + "->a:I"],
         )
         assertEquals(
-            setOf(owner + "->h()Z", owner + "->i()V"),
+            setOf(owner + "->e()I", owner + "->h()Z", owner + "->i()V"),
             model.fieldReaders[owner + "->b:I"],
         )
         assertFalse(model.fieldWriters.containsKey(owner + "->d()I"))
