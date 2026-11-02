@@ -38,6 +38,7 @@ enum class DexLocalCategory(val label: String, val rank: Int) {
     EXPERIENCE("Опыт / уровень", 6),
     INVENTORY("Размер инвентаря", 7),
     DEBUG_UI("Отладочный интерфейс своей программы", 8),
+    CURRENCY("Локальная игровая валюта / ресурсы", 9),
 }
 
 enum class DexLocalAction(val label: String) {

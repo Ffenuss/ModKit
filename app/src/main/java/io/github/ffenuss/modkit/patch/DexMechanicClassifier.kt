@@ -67,9 +67,20 @@ object DexMechanicClassifier {
             val patternTypes = patterns.map { it.type }.toSet()
             val thresholdActions = patterns.mapNotNull { it.thresholdAction }.toSet()
             val hasDamage = patternTypes.contains(DexBehavioralPatternType.DAMAGE_WRITE_BACK)
+            val hasIncrement = patternTypes.contains(DexBehavioralPatternType.CLAMPED_INCREMENT)
             val hasZeroFalse = thresholdActions.contains(DexLocalAction.FALSE) &&
                 patternTypes.contains(DexBehavioralPatternType.ZERO_THRESHOLD_CHECK)
-            val structMechanic = structuralMechanic(patternTypes, thresholdActions)
+            // A balance that can both increase and decrease is NOT health simply
+            // because it also has an empty/zero check. Currency and regenerating
+            // health can have identical instruction shapes: require a field/getter
+            // semantic anchor before confirming local currency.
+            val currencyAnchor = hasDamage && hasIncrement &&
+                hasCurrencyNameAnchor(field, gettersByField[field].orEmpty())
+            val structMechanic = when {
+                currencyAnchor -> GameMechanic.CURRENCY
+                hasDamage && hasIncrement -> GameMechanic.UNKNOWN
+                else -> structuralMechanic(patternTypes, thresholdActions)
+            }
 
             val touching = ArrayList<Method>()
             gettersByField[field]?.let { touching += it }
@@ -81,13 +92,14 @@ object DexMechanicClassifier {
                 category?.let { nameMechanics += mechanicFromCategory(it) }
             }
             nameMechanics.remove(GameMechanic.UNKNOWN)
+            if (currencyAnchor) nameMechanics += GameMechanic.CURRENCY
 
             val distinctPatterns = patternTypes.size
             val nameMatchesStruct = structMechanic != GameMechanic.UNKNOWN &&
                 nameMechanics.contains(structMechanic)
 
             val confidence: MechanicConfidence? = when {
-                structMechanic == GameMechanic.HEALTH && hasDamage && hasZeroFalse ->
+                structMechanic == GameMechanic.HEALTH && hasDamage && !hasIncrement && hasZeroFalse ->
                     MechanicConfidence.CONFIRMED
                 structMechanic != GameMechanic.UNKNOWN && nameMatchesStruct ->
                     MechanicConfidence.CONFIRMED
@@ -145,6 +157,31 @@ object DexMechanicClassifier {
         }
 
         return DexMechanicClassification(hypotheses, candidates.distinctBy { it.method })
+    }
+
+    /**
+     * The exact identifier only disambiguates two proven write-back patterns.
+     * A name alone is never a selectable currency recipe. Avoid generic words
+     * like tokens, points, balance, premium or credits, which often describe
+     * authentication, UI or network state rather than owned offline currency.
+     */
+    private fun hasCurrencyNameAnchor(field: String, getters: List<Method>): Boolean {
+        val names = setOf(
+            "coins", "coinbalance", "walletcoins",
+            "gamemoney", "playermoney", "walletmoney",
+            "gamecash", "walletcash", "goldcoins",
+            "gamecurrency", "softcurrency", "hardcurrency",
+        )
+        val property = field.substringAfter("->").substringBefore(':')
+            .lowercase().filter(Char::isLetterOrDigit)
+        if (property in names) return true
+        val getterNames = setOf(
+            "getcoins", "getcoinbalance", "getwalletcoins",
+            "getgamemoney", "getplayermoney", "getwalletmoney",
+            "getgamecash", "getwalletcash", "getgoldcoins",
+            "getgamecurrency", "getsoftcurrency", "gethardcurrency",
+        )
+        return getters.any { it.name.lowercase().filter(Char::isLetterOrDigit) in getterNames }
     }
 
     private fun emitCandidates(
@@ -206,6 +243,7 @@ object DexMechanicClassifier {
         GameMechanic.HEALTH -> DexLocalCategory.HEALTH
         GameMechanic.STAMINA -> DexLocalCategory.STAMINA
         GameMechanic.AMMO -> DexLocalCategory.AMMO
+        GameMechanic.CURRENCY -> DexLocalCategory.CURRENCY
         GameMechanic.SPEED -> DexLocalCategory.MOVEMENT
         else -> null
     }

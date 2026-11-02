@@ -73,6 +73,31 @@ class AutoModDeviceTest {
         device.waitForIdle()
     }
 
+    /** The fixture scrolls on smaller emulators; no UI test assumes a fixed viewport. */
+    private fun fixtureText(label: String): androidx.test.uiautomator.UiObject2 {
+        // Android's default Button style applies all-caps text transformation.
+        // Match the visible accessibility text rather than Java setText casing.
+        val selector = By.text(Pattern.compile(Pattern.quote(label), Pattern.CASE_INSENSITIVE))
+        var control = device.wait(Until.findObject(selector), 1000)
+        if (control != null) return control
+        val center = device.displayWidth / 2
+        val top = device.displayHeight / 5
+        val bottom = device.displayHeight * 4 / 5
+        repeat(4) {
+            device.swipe(center, bottom, center, top, 25)
+            control = device.wait(Until.findObject(selector), 750)
+            if (control != null) return requireNotNull(control)
+        }
+        repeat(4) {
+            device.swipe(center, top, center, bottom, 25)
+            control = device.wait(Until.findObject(selector), 750)
+            if (control != null) return requireNotNull(control)
+        }
+        evidence("fixture-control-missing.png") { device.takeScreenshot(it) }
+        evidence("fixture-control-missing-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+        throw AssertionError("Fixture UI element not reachable: $label; screenshot and hierarchy were saved")
+    }
+
     private fun launchGame() {
         context.startActivity(requireNotNull(context.packageManager.getLaunchIntentForPackage(fixturePackage))
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
@@ -216,8 +241,17 @@ class AutoModDeviceTest {
         // The original certificate conflict was checked in b. The app produced by a
         // uses the same persistent ModKit key and can now update our owned fixture.
         assertTrue(context.packageManager.canRequestPackageInstalls())
-        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        val installButton = device.wait(Until.findObject(By.text("Установить")), 15_000)
+        // Android 35 may reject a background-context activity start while the
+        // fixture game owns the foreground task. Use the test shell (never
+        // production code) to deterministically bring our own launcher forward.
+        val launcherComponent =
+            android.content.ComponentName(context, MainActivity::class.java).flattenToShortString()
+        val foreground = device.executeShellCommand(
+            "am start -W -n $launcherComponent -f 0x14000000",
+        )
+        assertTrue("ModKit launcher must be foreground: $foreground",
+            device.wait(Until.hasObject(By.pkg(context.packageName)), 15_000))
+        val installButton = device.wait(Until.findObject(By.text("Установить")), 30_000)
         if (installButton == null) {
             // Preserve the actual foreground screen before failing: a previously
             // completed UI build may not have been restored after a new Activity.
@@ -372,4 +406,96 @@ class AutoModDeviceTest {
             device.hasObject(By.text("OBF ALIVE | Obf HP: 9999")))
         evidence("obfuscated-structural-mod.png") { device.takeScreenshot(it) }
     }
+
+    /**
+     * Local-currency discovery with evidence from real D8 instructions:
+     * two-way coin write-back + exact field name -> a modifiable getter.
+     * Confirm an actual increase in successful purchases, not just the HUD.
+     */
+    @Test fun e_localCoinBalanceAllowsMoreFixturePurchases() = runBlocking {
+        launchGame()
+        fixtureText("Coins: 20 | Purchases: 0")
+        repeat(3) {
+            fixtureText("Buy coins item").click()
+            device.waitForIdle()
+        }
+        assertTrue(
+            "Baseline should allow only two purchases from twenty coins",
+            fixtureText("Coins: 0 | Purchases: 2") != null,
+        )
+
+        val installed = io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(fixturePackage)!!
+        val target = AnalysisTargetDescriptor.InstalledPackage(fixturePackage, "ModKit Test Game")
+        val analysis = FastArtifactIndexer.index(installed.apkFiles, signal, progress)
+        val scan = DexAutoModCoordinator.scan(context, target, analysis, signal, progress)
+        val wallets = scan.opportunities.filter {
+            it.matchedByStructure && it.className.endsWith("/WalletStats;") &&
+                it.methodName == "getCoins" && it.category == DexLocalCategory.CURRENCY
+        }
+        assertEquals(
+            "Expected exactly one confirmed local coin getter; hypotheses=${scan.mechanicHypotheses}",
+            1, wallets.size,
+        )
+        val coins = wallets.single()
+        assertEquals(MechanicConfidence.CONFIRMED, coins.confidence)
+        assertEquals(DexLocalAction.INT_9999, coins.action)
+        assertTrue(coins.selectable)
+        val recipe = DexRecipeCatalog.create(scan).single {
+            it.selectable && it.dex.any { d -> d.id == coins.id }
+        }
+        val preparation = PatchPreparationPlan(
+            analysis.index.artifactSha256, true,
+            System.currentTimeMillis(), emptyList(), emptyList(),
+        )
+        val built = AutoModBuildCoordinator.build(
+            context, target, analysis, preparation,
+            listOf(recipe), signal, progress,
+        )
+        assertEquals(installed.apkFiles.size, built.files.size)
+        assertTrue(built.files.all { it.signature.verified })
+        assertTrue(built.mutationDiffVerification.verified)
+
+        val plan = RepackedRuntimeInstallPlanner.plan(built, signal)
+        device.executeShellCommand("appops set ${context.packageName} REQUEST_INSTALL_PACKAGES allow")
+        // Only our disposable fixture. Production never uninstalls user apps.
+        device.executeShellCommand("pm uninstall $fixturePackage")
+        context.startActivity(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        device.waitForIdle()
+        val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+        val deadline = System.currentTimeMillis() + 45_000
+        while (System.currentTimeMillis() < deadline) {
+            val status = RepackedRuntimeInstallStatusStore.status.value
+            if (status.kind == RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED) {
+                instrumentation.runOnMainSync {
+                    RepackedRuntimeInstallConfirmationStore.open(context, submission.sessionId)
+                }
+                val systemInstall =
+                    device.findObject(By.res("com.android.packageinstaller", "ok_button"))
+                        ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
+                        ?: device.findObject(By.text("Install"))
+                        ?: device.findObject(By.text("INSTALL"))
+                        ?: device.findObject(By.text("Update"))
+                systemInstall?.click()
+            }
+            if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) break
+            assertNotEquals(status.message, RepackedRuntimeInstallStatusKind.FAILURE, status.kind)
+            device.waitForIdle(500)
+        }
+        assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, RepackedRuntimeInstallStatusStore.status.value.kind)
+
+        launchGame()
+        fixtureText("Coins: 9999 | Purchases: 0")
+        repeat(3) {
+            fixtureText("Buy coins item").click()
+            device.waitForIdle()
+        }
+        assertTrue(
+            "Patched getter must allow a third real transaction",
+            fixtureText("Coins: 9999 | Purchases: 3") != null,
+        )
+        evidence("currency-structural-mod.png") { device.takeScreenshot(it) }
+    }
+
 }
