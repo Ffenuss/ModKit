@@ -31,7 +31,7 @@ class DexBehavioralAnalyzerTest {
                 owner + "->e()I" to owner + "->b:I",
                 owner + "->j()I" to owner + "->c:I",
             ),
-            model.provenGetters.toSet(),
+            model.provenGetters.toList().toSet(),
         )
     }
 
