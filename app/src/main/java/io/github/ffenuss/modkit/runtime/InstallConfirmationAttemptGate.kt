@@ -22,6 +22,9 @@ internal class InstallConfirmationAttemptGate {
     }
 
     @Synchronized
+    fun available(sessionId: Int): Boolean = currentSession == sessionId && !claimed
+
+    @Synchronized
     fun claim(sessionId: Int): Boolean {
         if (currentSession != sessionId || claimed) return false
         claimed = true
