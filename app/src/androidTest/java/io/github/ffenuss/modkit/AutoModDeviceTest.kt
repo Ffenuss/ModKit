@@ -372,4 +372,96 @@ class AutoModDeviceTest {
             device.hasObject(By.text("OBF ALIVE | Obf HP: 9999")))
         evidence("obfuscated-structural-mod.png") { device.takeScreenshot(it) }
     }
+
+    /**
+     * Local-currency discovery with evidence from real D8 instructions:
+     * two-way coin write-back + exact field name -> a modifiable getter.
+     * Confirm an actual increase in successful purchases, not just the HUD.
+     */
+    @Test fun e_localCoinBalanceAllowsMoreFixturePurchases() = runBlocking {
+        launchGame()
+        assertTrue(device.hasObject(By.text("Coins: 20 | Purchases: 0")))
+        repeat(3) {
+            requireNotNull(device.findObject(By.text("Buy coins item"))).click()
+            device.waitForIdle()
+        }
+        assertTrue(
+            "Baseline should allow only two purchases from twenty coins",
+            device.hasObject(By.text("Coins: 0 | Purchases: 2")),
+        )
+
+        val installed = io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(fixturePackage)!!
+        val target = AnalysisTargetDescriptor.InstalledPackage(fixturePackage, "ModKit Test Game")
+        val analysis = FastArtifactIndexer.index(installed.apkFiles, signal, progress)
+        val scan = DexAutoModCoordinator.scan(context, target, analysis, signal, progress)
+        val wallets = scan.opportunities.filter {
+            it.matchedByStructure && it.className.endsWith("/WalletStats;") &&
+                it.methodName == "getCoins" && it.category == DexLocalCategory.CURRENCY
+        }
+        assertEquals(
+            "Expected exactly one confirmed local coin getter; hypotheses=${scan.mechanicHypotheses}",
+            1, wallets.size,
+        )
+        val coins = wallets.single()
+        assertEquals(MechanicConfidence.CONFIRMED, coins.confidence)
+        assertEquals(DexLocalAction.INT_9999, coins.action)
+        assertTrue(coins.selectable)
+        val recipe = DexRecipeCatalog.create(scan).single {
+            it.selectable && it.dex.any { d -> d.id == coins.id }
+        }
+        val preparation = PatchPreparationPlan(
+            analysis.index.artifactSha256, true,
+            System.currentTimeMillis(), emptyList(), emptyList(),
+        )
+        val built = AutoModBuildCoordinator.build(
+            context, target, analysis, preparation,
+            listOf(recipe), signal, progress,
+        )
+        assertEquals(installed.apkFiles.size, built.files.size)
+        assertTrue(built.files.all { it.signature.verified })
+        assertTrue(built.mutationDiffVerification.verified)
+
+        val plan = RepackedRuntimeInstallPlanner.plan(built, signal)
+        device.executeShellCommand("appops set ${context.packageName} REQUEST_INSTALL_PACKAGES allow")
+        // Only our disposable fixture. Production never uninstalls user apps.
+        device.executeShellCommand("pm uninstall $fixturePackage")
+        context.startActivity(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        device.waitForIdle()
+        val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+        val deadline = System.currentTimeMillis() + 45_000
+        while (System.currentTimeMillis() < deadline) {
+            val status = RepackedRuntimeInstallStatusStore.status.value
+            if (status.kind == RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED) {
+                instrumentation.runOnMainSync {
+                    RepackedRuntimeInstallConfirmationStore.open(context, submission.sessionId)
+                }
+                val systemInstall =
+                    device.findObject(By.res("com.android.packageinstaller", "ok_button"))
+                        ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
+                        ?: device.findObject(By.text("Install"))
+                        ?: device.findObject(By.text("INSTALL"))
+                        ?: device.findObject(By.text("Update"))
+                systemInstall?.click()
+            }
+            if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) break
+            assertNotEquals(status.message, RepackedRuntimeInstallStatusKind.FAILURE, status.kind)
+            device.waitForIdle(500)
+        }
+        assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, RepackedRuntimeInstallStatusStore.status.value.kind)
+
+        launchGame()
+        assertTrue(device.hasObject(By.text("Coins: 9999 | Purchases: 0")))
+        repeat(3) {
+            requireNotNull(device.findObject(By.text("Buy coins item"))).click()
+            device.waitForIdle()
+        }
+        assertTrue(
+            "Patched getter must allow a third real transaction",
+            device.hasObject(By.text("Coins: 9999 | Purchases: 3")),
+        )
+        evidence("currency-structural-mod.png") { device.takeScreenshot(it) }
+    }
+
 }
