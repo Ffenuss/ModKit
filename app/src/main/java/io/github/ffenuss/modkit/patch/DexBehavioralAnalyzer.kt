@@ -10,7 +10,8 @@ import org.jf.dexlib2.iface.instruction.Instruction
 import org.jf.dexlib2.iface.instruction.NarrowLiteralInstruction
 import org.jf.dexlib2.iface.instruction.OneRegisterInstruction
 import org.jf.dexlib2.iface.instruction.ReferenceInstruction
-import org.jf.dexlib2.iface.instruction.ThreeAddressRangeInstruction
+import org.jf.dexlib2.iface.instruction.FiveRegisterInstruction
+import org.jf.dexlib2.iface.instruction.RegisterRangeInstruction
 import org.jf.dexlib2.iface.instruction.ThreeRegisterInstruction
 import org.jf.dexlib2.iface.instruction.TwoRegisterInstruction
 import org.jf.dexlib2.iface.reference.FieldReference
@@ -108,7 +109,8 @@ object DexBehavioralAnalyzer {
                 skipped++
                 continue
             }
-            val facts = scanMethod(method, code, provenGetters) ?: run {
+            val facts = scanMethod(method, code, provenGetters)
+            if (facts == null) {
                 skipped++
                 continue
             }
@@ -192,9 +194,18 @@ object DexBehavioralAnalyzer {
         val derivedFrom = IntArray(registerCount) { -1 }
         val constInt = HashMap<Int, Int>()
         val isStatic = AccessFlags.STATIC.isSet(method.accessFlags)
+        // This bounded pass currently reasons only about methods without explicit parameters.
+        // For other signatures, do not guess the position of the receiver register.
+        if (method.parameters.isNotEmpty()) return null
         val thisReg = if (isStatic) -1 else registerCount - 1
+        var pendingResultField: Int? = null
 
         for (instruction in code) {
+            // A pending invoke result is valid only for an immediately following move-result.
+            if (instruction.opcode != Opcode.MOVE_RESULT &&
+                instruction.opcode !in INVOKE_OPS) {
+                pendingResultField = null
+            }
             val op = instruction.opcode
             when {
                 op == Opcode.IGET -> {
@@ -238,59 +249,49 @@ object DexBehavioralAnalyzer {
                     val ref = (instruction as? ReferenceInstruction)?.reference as? MethodReference
                         ?: return null
                     facts.calleeIds += methodIdOf(ref)
-                    // Non-range invokes return into registerA; range invokes
-                    // (35c/3rc/51l/52l) also expose the destination through
-                    // registerA (for 35c it is the first range register).
-                    val range = instruction as? ThreeAddressRangeInstruction
-                    val dest = when (instruction) {
-                        is OneRegisterInstruction -> instruction.registerA
-                        is ThreeAddressRangeInstruction -> instruction.registerA
-                        else -> null
+                    // Invoke instructions never specify the result register. Read their
+                    // ordered argument registers (35c or 3rc); the result is assigned
+                    // only by the immediately following move-result instruction.
+                    val arguments = when (instruction) {
+                        is FiveRegisterInstruction ->
+                            listOf(instruction.registerC, instruction.registerD,
+                                instruction.registerE, instruction.registerF,
+                                instruction.registerG).take(instruction.registerCount)
+                        is RegisterRangeInstruction ->
+                            (instruction.startRegister until
+                                instruction.startRegister + instruction.registerCount).toList()
+                        else -> return null
                     }
-                    if (dest == null || dest !in 0 until registerCount) {
-                        derivedFrom.fill(-1)
-                        continue
+                    var expectedWords = if (op in STATIC_INVOKE_OPS) 0 else 1
+                    for (param in ref.parameterTypes) {
+                        expectedWords += if (param.toString() in setOf("J", "D")) 2 else 1
                     }
+                    if (arguments.size != expectedWords ||
+                        arguments.any { it !in 0 until registerCount }) return null
+
                     val getterField = provenGetters[methodIdOf(ref)]
-                    val three = instruction as? ThreeRegisterInstruction
-                    val two = instruction as? TwoRegisterInstruction
-                    when {
-                        getterField != null ->
-                            derivedFrom[dest] = facts.fieldIndex(getterField)
-                        isMathClamp(ref) -> {
-                            // A clamp keeps the field-derived argument alive.
-                            var bound = -1
-                            val argRegs = when {
-                                three != null -> listOf(three.registerB, three.registerC)
-                                two != null -> listOf(two.registerB)
-                                range != null -> (range.registerC until range.registerD).toList()
-                                else -> emptyList()
-                            }
-                            for (r in argRegs) {
-                                if (r in 0 until registerCount && derivedFrom[r] >= 0) {
-                                    bound = derivedFrom[r]
-                                    break
-                                }
-                            }
-                            if (bound < 0 && derivedFrom[dest] >= 0) bound = derivedFrom[dest]
-                            derivedFrom[dest] = bound
+                    pendingResultField = when {
+                        getterField != null && ref.definingClass == method.definingClass &&
+                            ((op in STATIC_INVOKE_OPS && arguments.isEmpty()) ||
+                                (op !in STATIC_INVOKE_OPS && arguments.size == 1 &&
+                                    arguments[0] == thisReg)) ->
+                            facts.fieldIndex(getterField)
+                        isMathClamp(ref) && ref.parameterTypes.map { it.toString() } ==
+                            listOf("I", "I") && ref.returnType == "I" &&
+                            arguments.size == 2 ->
+                            arguments.map { derivedFrom[it] }.firstOrNull { it >= 0 }
+                        else -> {
+                            // Unknown calls could invalidate an earlier field value.
+                            derivedFrom.fill(-1)
+                            null
                         }
-                        else -> derivedFrom[dest] = -1
                     }
-                    // The remaining argument registers are consumed; the
-                    // destination itself is never cleared.
-                    when {
-                        range != null ->
-                            for (r in range.registerC until range.registerD)
-                                if (r != dest && r in derivedFrom.indices) derivedFrom[r] = -1
-                        three != null ->
-                            for (r in three.registerB..three.registerC)
-                                if (r != dest && r in derivedFrom.indices) derivedFrom[r] = -1
-                        two != null ->
-                            if (two.registerB != dest && two.registerB in derivedFrom.indices)
-                                derivedFrom[two.registerB] = -1
-                        else -> Unit
-                    }
+                }
+                op == Opcode.MOVE_RESULT -> {
+                    val one = instruction as? OneRegisterInstruction ?: return null
+                    derivedFrom[one.registerA] = pendingResultField ?: -1
+                    constInt.remove(one.registerA)
+                    pendingResultField = null
                 }
                 op in SUB_OPS -> {
                     val dest = destRegister(instruction, registerCount) ?: return null
@@ -300,6 +301,7 @@ object DexBehavioralAnalyzer {
                         facts.subtractions[facts.fields[fieldIdx]] = constValue
                     }
                     derivedFrom[dest] = fieldIdx
+                    constInt.remove(dest)
                 }
                 op in ADD_OPS -> {
                     val dest = destRegister(instruction, registerCount) ?: return null
@@ -309,6 +311,7 @@ object DexBehavioralAnalyzer {
                         facts.increments[facts.fields[fieldIdx]] = constValue
                     }
                     derivedFrom[dest] = fieldIdx
+                    constInt.remove(dest)
                 }
                 op in IFZ_OPS -> {
                     val one = instruction as? OneRegisterInstruction ?: return null
@@ -331,6 +334,9 @@ object DexBehavioralAnalyzer {
                 op == Opcode.MOVE -> {
                     val two = instruction as? TwoRegisterInstruction ?: return null
                     derivedFrom[two.registerA] = derivedFrom[two.registerB]
+                    val value = constInt[two.registerB]
+                    if (value == null) constInt.remove(two.registerA)
+                    else constInt[two.registerA] = value
                 }
                 op == Opcode.GOTO || op == Opcode.GOTO_16 || op == Opcode.GOTO_32 ->
                     derivedFrom.fill(-1)
@@ -445,11 +451,15 @@ object DexBehavioralAnalyzer {
         Opcode.INVOKE_VIRTUAL_RANGE, Opcode.INVOKE_STATIC_RANGE,
         Opcode.INVOKE_SUPER_RANGE, Opcode.INVOKE_DIRECT_RANGE, Opcode.INVOKE_INTERFACE_RANGE,
     )
+    private val STATIC_INVOKE_OPS = setOf(
+        Opcode.INVOKE_STATIC, Opcode.INVOKE_STATIC_RANGE,
+    )
     private val SUB_OPS = setOf(
-        Opcode.ISUB_INT, Opcode.ISUB_INT_2ADDR, Opcode.ISUB_INT_LIT8,
+        Opcode.SUB_INT, Opcode.SUB_INT_2ADDR,
     )
     private val ADD_OPS = setOf(
-        Opcode.IADD_INT, Opcode.IADD_INT_2ADDR, Opcode.IADD_INT_LIT8,
+        Opcode.ADD_INT, Opcode.ADD_INT_2ADDR,
+        Opcode.ADD_INT_LIT8, Opcode.ADD_INT_LIT16,
     )
     private val IFZ_OPS = setOf(
         Opcode.IF_EQZ, Opcode.IF_NEZ, Opcode.IF_LTZ,
