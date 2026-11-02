@@ -241,8 +241,15 @@ class AutoModDeviceTest {
         // The original certificate conflict was checked in b. The app produced by a
         // uses the same persistent ModKit key and can now update our owned fixture.
         assertTrue(context.packageManager.canRequestPackageInstalls())
-        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        val installButton = device.wait(Until.findObject(By.text("Установить")), 15_000)
+        // Android 35 may reject a background-context activity start while the
+        // fixture game owns the foreground task. Use the test shell (never
+        // production code) to deterministically bring our own launcher forward.
+        val foreground = device.executeShellCommand(
+            "am start -W -n ${context.packageName}/.MainActivity -f 0x14000000",
+        )
+        assertTrue("ModKit launcher must be foreground: $foreground",
+            device.wait(Until.hasObject(By.pkg(context.packageName)), 15_000))
+        val installButton = device.wait(Until.findObject(By.text("Установить")), 30_000)
         if (installButton == null) {
             // Preserve the actual foreground screen before failing: a previously
             // completed UI build may not have been restored after a new Activity.
