@@ -75,7 +75,9 @@ class AutoModDeviceTest {
 
     /** The fixture scrolls on smaller emulators; no UI test assumes a fixed viewport. */
     private fun fixtureText(label: String): androidx.test.uiautomator.UiObject2 {
-        val selector = By.text(label)
+        // Android's default Button style applies all-caps text transformation.
+        // Match the visible accessibility text rather than Java setText casing.
+        val selector = By.text(Pattern.compile(Pattern.quote(label), Pattern.CASE_INSENSITIVE))
         var control = device.wait(Until.findObject(selector), 1000)
         if (control != null) return control
         val center = device.displayWidth / 2
