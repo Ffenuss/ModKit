@@ -82,7 +82,7 @@ Static code never claims the top two levels without proof.
 - An unanchored generic counter and a one-way increment remain non-selectable; no result is claimed for real online economies.
 - Device instrumentation uses a case-insensitive accessibility selector for Android's all-caps buttons. The prior retained-install fixture test now launches the debug-suffixed APK by the full `ComponentName`.
 
-## Local cooldown prototype (pending device verification)
+## Local cooldown — device verified on owned offline fixture
 
 - A local integer field must have a proven decrement-and-write-back method and
   a proven read-only boolean predicate over that same field. A narrow cooldown
@@ -98,6 +98,7 @@ Static code never claims the top two levels without proof.
   treating a field write as local-state evidence.
 - Scope is offline DEX only. Native engines, server-authoritative cooldowns,
   and loops/complex control-flow are not covered by these checks.
+- **Device validation:** [GitHub Actions run 41414958037, attempt 2](https://github.com/Ffenuss/ModKit/actions/runs/41414958037/attempts/2) passed build/JVM/lint, Android API29 single-APK and Android API35 split-APK. The sixth device test confirms that the owned fixture can execute a skill three times after the cooldown predicate rewrite, versus none before. The initial API29 attempt failed to boot its emulator; retry succeeded without source changes.
 
 ## Limitations (honest list)
 
