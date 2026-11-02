@@ -218,6 +218,12 @@ class AutoModDeviceTest {
         assertTrue(context.packageManager.canRequestPackageInstalls())
         context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         val installButton = device.wait(Until.findObject(By.text("Установить")), 15_000)
+        if (installButton == null) {
+            // Preserve the actual foreground screen before failing: a previously
+            // completed UI build may not have been restored after a new Activity.
+            evidence("missing-retained-install-screen.png") { device.takeScreenshot(it) }
+            evidence("missing-retained-install-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+        }
         assertNotNull("Retained UI build must remain installable", installButton)
         val attemptedAt = System.currentTimeMillis()
         installButton.click()
