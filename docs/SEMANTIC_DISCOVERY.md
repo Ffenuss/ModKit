@@ -75,6 +75,13 @@ Static code never claims the top two levels without proof.
 - The owned fixture confirms obfuscated-health discovery and an in-game effect after applying a static DEX recipe. This is **not** proof of general compatibility or server-side modifications.
 - An occasional system installer confirmation failure was observed in earlier emulator runs; continued hardening and repeatability testing are still relevant.
 
+## Confirmed local currency device evidence (2026-11-02)
+
+- GitHub Actions [run 41398619990](https://github.com/Ffenuss/ModKit/actions/runs/41398619990) passed JVM tests/lint/build plus Android API 29 single-APK and API 35 split-APK device suites.
+- The owned offline `WalletStats` fixture begins with 20 coins, permits two purchases without the patch, and three purchases after the proven `getCoins()` replacement. An actual incrementing purchases counter is asserted, not just the visible coin number.
+- An unanchored generic counter and a one-way increment remain non-selectable; no result is claimed for real online economies.
+- Device instrumentation uses a case-insensitive accessibility selector for Android's all-caps buttons. The prior retained-install fixture test now launches the debug-suffixed APK by the full `ComponentName`.
+
 ## Limitations (honest list)
 
 - **Method-local, linear dataflow.** Loops, complex CFGs, and more than one level of
