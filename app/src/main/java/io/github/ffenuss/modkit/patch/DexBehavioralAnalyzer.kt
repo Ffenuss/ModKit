@@ -92,7 +92,7 @@ object DexBehavioralAnalyzer {
         }
 
         val patterns = ArrayList<DexBehavioralPattern>()
-        val calls = HashMap<String, HashSet<String>>()
+        val calls = HashMap<String, Set<String>>()
         val fieldReaders = HashMap<String, HashSet<String>>()
         val fieldWriters = HashMap<String, HashSet<String>>()
         var analyzed = 0
