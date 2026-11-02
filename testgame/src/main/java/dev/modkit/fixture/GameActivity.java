@@ -5,6 +5,7 @@ import android.os.Bundle;
 import android.view.Gravity;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 public final class GameActivity extends Activity {
@@ -64,7 +65,10 @@ public final class GameActivity extends Activity {
         reset.setText("Reset");
         reset.setOnClickListener(v -> { player = new PlayerStats(); obf = new ObfuscatedStats(); wallet = new WalletStats(); showState(); });
         layout.addView(reset);
-        setContentView(layout);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.addView(layout);
+        setContentView(scroll);
         showState();
     }
     private void showState() {
