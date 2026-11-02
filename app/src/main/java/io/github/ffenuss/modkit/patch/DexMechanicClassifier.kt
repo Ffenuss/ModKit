@@ -85,6 +85,10 @@ object DexMechanicClassifier {
             val structMechanic = when {
                 currencyAnchor -> GameMechanic.CURRENCY
                 cooldownAnchor -> GameMechanic.COOLDOWN
+                // A known cooldown field with an inverted or unsupported
+                // predicate is not evidence of health, even if its zero check
+                // superficially resembles a death check.
+                isCooldownField(field) && hasDamage -> GameMechanic.UNKNOWN
                 hasDamage && hasIncrement -> GameMechanic.UNKNOWN
                 else -> structuralMechanic(patternTypes, thresholdActions)
             }
@@ -195,17 +199,19 @@ object DexMechanicClassifier {
         "isoncooldown", "getisoncooldown", "iscooldownactive",
     )
 
+    private fun isCooldownField(field: String): Boolean =
+        field.substringAfter("->").substringBefore(':')
+            .lowercase().filter(Char::isLetterOrDigit) in setOf(
+                "cooldown", "cooldownticks", "cooldownframes",
+                "cooldownremaining", "remainingcooldown",
+            )
+
     private fun hasCooldownAnchor(
         field: String,
         patterns: List<DexBehavioralPattern>,
         methodsById: Map<String, Method>,
     ): Boolean {
-        val normalizedField = field.substringAfter("->").substringBefore(':')
-            .lowercase().filter(Char::isLetterOrDigit)
-        if (normalizedField !in setOf(
-                "cooldown", "cooldownticks", "cooldownframes",
-                "cooldownremaining", "remainingcooldown",
-            )) return false
+        if (!isCooldownField(field)) return false
         return patterns.any { pattern ->
             if (pattern.type != DexBehavioralPatternType.ZERO_THRESHOLD_CHECK ||
                 pattern.thresholdAction != DexLocalAction.TRUE) return@any false
