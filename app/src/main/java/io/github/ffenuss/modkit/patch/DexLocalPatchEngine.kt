@@ -354,7 +354,27 @@ object DexLocalPatchEngine {
         var structuralAdded = 0
         for (spec in classification.candidates) {
             val id = stableId(apkIndex, dexEntry, spec.method)
-            if (!existingIds.add(id)) continue
+            if (!existingIds.add(id)) {
+                // Name-based cooldown predicates already exist in the catalog;
+                // upgrade their proof only when the SAME exact method, category,
+                // and replacement are independently confirmed by dataflow.
+                // Other historical name-based ordering stays unchanged.
+                if (spec.category == DexLocalCategory.COOLDOWN) {
+                    val index = candidates.indexOfFirst {
+                        it.id == id && it.category == spec.category && it.action == spec.action
+                    }
+                    if (index >= 0) {
+                        candidates[index] = candidates[index].copy(
+                            fieldIdentity = spec.field,
+                            matchedByStructure = true,
+                            confidence = spec.confidence,
+                            reason = spec.reason,
+                        )
+                        structuralAdded++
+                    }
+                }
+                continue
+            }
             val body = DexMethodBodyInspector.inspect(spec.method)
             candidates += DexLocalOpportunity(
                 id = id,
