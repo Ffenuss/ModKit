@@ -470,23 +470,35 @@ object AndroidRepackedRuntimeInstaller {
 object RepackedRuntimeInstallConfirmationStore {
     @Volatile private var pendingSession: Int? = null
     @Volatile private var pendingIntent: Intent? = null
+    private val manualLaunch = InstallConfirmationAttemptGate()
 
     fun remember(sessionId: Int?, confirmation: Intent) {
+        manualLaunch.remember(sessionId)
         pendingSession = sessionId
         pendingIntent = Intent(confirmation)
     }
 
     fun open(context: Context, sessionId: Int): Boolean {
         val intent = pendingIntent ?: return false
-        if (pendingSession != sessionId) return false
-        context.startActivity(
-            Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
-        return true
+        if (pendingSession != sessionId || !manualLaunch.claim(sessionId)) return false
+        try {
+            // A completed session no longer owns its staging APK; reopening its
+            // old confirmation Intent otherwise shows "problem parsing package".
+            if (context.packageManager.packageInstaller.getSessionInfo(sessionId) == null) {
+                clear(sessionId)
+                return false
+            }
+            context.startActivity(Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return true
+        } catch (failure: Exception) {
+            manualLaunch.releaseAfterFailedLaunch(sessionId)
+            throw failure
+        }
     }
 
     fun clear(sessionId: Int?) {
         if (pendingSession == sessionId) {
+            manualLaunch.clear(sessionId)
             pendingIntent = null
             pendingSession = null
         }
@@ -494,7 +506,7 @@ object RepackedRuntimeInstallConfirmationStore {
 
     fun availableFor(sessionId: Int?): Boolean =
         sessionId != null && pendingSession == sessionId &&
-            pendingIntent != null
+            pendingIntent != null && manualLaunch.available(sessionId)
 }
 
 object RepackedRuntimeInstallStatusHandler {
