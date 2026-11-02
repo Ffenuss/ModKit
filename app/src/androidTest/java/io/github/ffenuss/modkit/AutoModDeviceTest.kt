@@ -244,8 +244,10 @@ class AutoModDeviceTest {
         // Android 35 may reject a background-context activity start while the
         // fixture game owns the foreground task. Use the test shell (never
         // production code) to deterministically bring our own launcher forward.
+        val launcherComponent =
+            android.content.ComponentName(context, MainActivity::class.java).flattenToShortString()
         val foreground = device.executeShellCommand(
-            "am start -W -n ${context.packageName}/.MainActivity -f 0x14000000",
+            "am start -W -n $launcherComponent -f 0x14000000",
         )
         assertTrue("ModKit launcher must be foreground: $foreground",
             device.wait(Until.hasObject(By.pkg(context.packageName)), 15_000))
