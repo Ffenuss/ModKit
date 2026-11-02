@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [ main, 'feature/semantic-cooldown-20261102' ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
