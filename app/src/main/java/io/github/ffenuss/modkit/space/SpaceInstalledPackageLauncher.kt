@@ -5,18 +5,23 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import io.github.ffenuss.modkit.ui.AutoModBuildRecord
+import java.io.File
 import java.security.MessageDigest
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class SpaceInstalledIdentity(
     val packageName: String,
     val currentSignerSha256: Set<String>,
     val hasLauncher: Boolean,
+    val installedApkSha256: List<String> = emptyList(),
 )
 
 enum class SpaceLaunchStatus {
     NOT_INSTALLED,
     DIFFERENT_SIGNATURE,
     NO_LAUNCHER,
+    APK_CONTENT_MISMATCH,
     READY,
 }
 
@@ -31,8 +36,11 @@ object SpaceLaunchIdentityPolicy {
         if (expected.isEmpty() || actual != expected) {
             return SpaceLaunchStatus.DIFFERENT_SIGNATURE
         }
-        return if (installed.hasLauncher) SpaceLaunchStatus.READY
-        else SpaceLaunchStatus.NO_LAUNCHER
+        if (!installed.hasLauncher) return SpaceLaunchStatus.NO_LAUNCHER
+        val expectedApks = record.plan.apks.map { it.expectedSha256.lowercase() }.sorted()
+        val actualApks = installed.installedApkSha256.map(String::lowercase).sorted()
+        return if (expectedApks == actualApks) SpaceLaunchStatus.READY
+        else SpaceLaunchStatus.APK_CONTENT_MISMATCH
     }
 }
 
@@ -44,7 +52,11 @@ object SpaceLaunchIdentityPolicy {
  */
 object SpaceInstalledPackageLauncher {
     @Suppress("DEPRECATION")
-    private fun identity(context: Context, packageName: String): SpaceInstalledIdentity? {
+    private fun identity(
+        context: Context,
+        packageName: String,
+        expectedSigners: Set<String>,
+    ): SpaceInstalledIdentity? {
         val pm = context.packageManager
         val info = try {
             if (Build.VERSION.SDK_INT >= 33) {
@@ -70,18 +82,45 @@ object SpaceInstalledPackageLauncher {
             bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
         }.toSet()
         val launcher = pm.getLaunchIntentForPackage(packageName)
+        // Hash APK bytes only after the signer check. This is potentially
+        // expensive and is called from a background dispatcher.
+        val matchingSigner = hashes.map(String::lowercase).toSet() ==
+            expectedSigners.map(String::lowercase).toSet()
+        val installedHashes = if (matchingSigner) {
+            val appInfo = info.applicationInfo
+            val paths = listOfNotNull(appInfo?.sourceDir) + appInfo?.splitSourceDirs.orEmpty()
+            runCatching {
+                paths.map { path ->
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    File(path).inputStream().buffered(128 * 1024).use { input ->
+                        val buffer = ByteArray(128 * 1024)
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            if (count > 0) digest.update(buffer, 0, count)
+                        }
+                    }
+                    digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+                }
+            }.getOrDefault(emptyList())
+        } else emptyList()
         return SpaceInstalledIdentity(
             packageName = packageName,
             currentSignerSha256 = hashes,
             hasLauncher = launcher?.component?.packageName == packageName,
+            installedApkSha256 = installedHashes,
         )
     }
 
+    /** Call on a background dispatcher: installed APKs can be several gigabytes. */
     fun status(context: Context, record: AutoModBuildRecord): SpaceLaunchStatus =
-        SpaceLaunchIdentityPolicy.evaluate(record, identity(context, record.plan.packageName))
+        SpaceLaunchIdentityPolicy.evaluate(
+            record,
+            identity(context, record.plan.packageName, record.plan.signerCertificateSha256),
+        )
 
-    fun launch(context: Context, record: AutoModBuildRecord) {
-        check(status(context, record) == SpaceLaunchStatus.READY) {
+    suspend fun launch(context: Context, record: AutoModBuildRecord) {
+        check(withContext(Dispatchers.IO) { status(context, record) } == SpaceLaunchStatus.READY) {
             "Установленная игра не совпадает с проверенной сборкой или не запускается."
         }
         val name = record.plan.packageName
