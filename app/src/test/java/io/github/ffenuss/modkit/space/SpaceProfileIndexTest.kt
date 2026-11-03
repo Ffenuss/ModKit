@@ -91,7 +91,9 @@ class SpaceLaunchIdentityPolicyTest {
 
     @Test
     fun allowsOnlyExactPackageAndCurrentSignerWithLauncher() {
-        val installed = SpaceInstalledIdentity("dev.modkit.fixture", setOf(signer.uppercase()), true)
+        val installed = SpaceInstalledIdentity(
+            "dev.modkit.fixture", setOf(signer.uppercase()), true, listOf(sha),
+        )
         assertEquals(SpaceLaunchStatus.READY, SpaceLaunchIdentityPolicy.evaluate(record, installed))
         assertEquals(SpaceLaunchStatus.NOT_INSTALLED, SpaceLaunchIdentityPolicy.evaluate(record, null))
         assertEquals(
@@ -105,6 +107,31 @@ class SpaceLaunchIdentityPolicyTest {
         assertEquals(
             SpaceLaunchStatus.NO_LAUNCHER,
             SpaceLaunchIdentityPolicy.evaluate(record, installed.copy(hasLauncher = false)),
+        )
+        assertEquals(
+            SpaceLaunchStatus.APK_CONTENT_MISMATCH,
+            SpaceLaunchIdentityPolicy.evaluate(
+                record, installed.copy(installedApkSha256 = listOf("f".repeat(64))),
+            ),
+        )
+    }
+
+    @Test
+    fun splitApkHashComparisonIsOrderIndependentButExact() {
+        val split = "f".repeat(64)
+        val two = record.copy(plan = record.plan.copy(
+            apks = record.plan.apks + RepackedRuntimeInstallApk(
+                "config.arm64.apk", "/unused/config.arm64.apk", split, 2L,
+            ),
+            totalBytes = 3L,
+        ))
+        val installed = SpaceInstalledIdentity(
+            "dev.modkit.fixture", setOf(signer), true, listOf(split, sha),
+        )
+        assertEquals(SpaceLaunchStatus.READY, SpaceLaunchIdentityPolicy.evaluate(two, installed))
+        assertEquals(
+            SpaceLaunchStatus.APK_CONTENT_MISMATCH,
+            SpaceLaunchIdentityPolicy.evaluate(two, installed.copy(installedApkSha256 = listOf(sha))),
         )
     }
 
