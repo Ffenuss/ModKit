@@ -100,7 +100,7 @@ Static code never claims the top two levels without proof.
   and loops/complex control-flow are not covered by these checks.
 - **Device validation:** [GitHub Actions run 41414958037, attempt 2](https://github.com/Ffenuss/ModKit/actions/runs/41414958037/attempts/2) passed build/JVM/lint, Android API29 single-APK and Android API35 split-APK. The sixth device test confirms that the owned fixture can execute a skill three times after the cooldown predicate rewrite, versus none before. The initial API29 attempt failed to boot its emulator; retry succeeded without source changes.
 
-## Local movement / speed prototype (device verification pending)
+## Local movement / speed — verified on owned Android fixture
 
 - New `DexMovementEvidenceAnalyzer` proves a narrow, straight-line data flow:
   a side-effect-free `float` field getter (even with an obfuscated method name)
@@ -119,6 +119,7 @@ Static code never claims the top two levels without proof.
 - A successful result here proves only the owned DEX fixture and this exact
   additive movement model. It does not establish general movement support
   across engines, rendering pipelines or networked games.
+- **CI evidence (2026-11-03):** [GitHub Actions #41601678722](https://github.com/Ffenuss/ModKit/actions/runs/41601678722) passed JVM tests, lint and APK assembly, plus **all seven device tests** on Android 29 (single APK) and Android 35 (split APK). The obfuscated `a()` getter is structurally discovered, the patch changes its float return value, and the owned fixture travels **6 units instead of 3** over three real steps.
 
 ## Limitations (honest list)
 
