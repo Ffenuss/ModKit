@@ -714,22 +714,11 @@ class AutoModDeviceTest {
                 context, MainActivity::class.java,
             ).flattenToShortString()
             device.executeShellCommand("am start -W -n $component -f 0x14008000")
-            val open = device.wait(
-                Until.findObject(By.text("Профили моих игр")), 15_000,
-            )
-            assertNotNull("Space entry must exist on the home screen", open)
-            open!!.click()
-            assertNotNull(
-                device.wait(Until.findObject(By.text("Space · игровые профили")), 10_000),
-            )
-            assertNotNull(
-                device.wait(Until.findObject(By.text(fixturePackage)), 10_000),
-            )
-            val launch = device.wait(
-                Until.findObject(By.text("Запустить установленную игру")), 10_000,
-            )
-            assertNotNull("Launch button must be visible", launch)
-            assertFalse("Different installed signer must block launch", launch!!.isEnabled)
+            fixtureText("Профили моих игр").click()
+            fixtureText("Space · игровые профили")
+            fixtureText(fixturePackage)
+            val launch = fixtureText("Запустить установленную игру")
+            assertFalse("Different installed signer must block launch", launch.isEnabled)
             evidence("space-signature-guard.png") { device.takeScreenshot(it) }
         } finally {
             recordFile.delete()
