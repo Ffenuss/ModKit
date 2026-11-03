@@ -678,4 +678,63 @@ class AutoModDeviceTest {
         evidence("movement-structural-mod.png") { device.takeScreenshot(it) }
     }
 
+    /**
+     * Space hub must list a previously verified build profile without falsely
+     * enabling a launch for an APK signed by a different certificate.
+     * This uses only a disposable, local test record; no user's app is touched.
+     */
+    @Test fun h_spaceListsPerGameBuildButBlocksUntrustedLaunch() {
+        val artifact = "d".repeat(64)
+        val saved = File(context.filesDir, "space-test-build.apk")
+        saved.writeBytes(byteArrayOf(1, 2, 3, 4))
+        val recordFile = File(context.filesDir, "build-history/$artifact.json")
+        try {
+            val installPlan = RepackedRuntimeInstallPlan(
+                artifactSha256 = artifact,
+                packageName = fixturePackage,
+                signerCertificateSha256 = setOf("e".repeat(64)),
+                apks = listOf(
+                    RepackedRuntimeInstallApk(
+                        "base.apk", saved.absolutePath, "f".repeat(64), saved.length(),
+                    ),
+                ),
+                totalBytes = saved.length(),
+                blockers = emptyList(),
+            )
+            io.github.ffenuss.modkit.ui.AutoModBuildRecord(
+                installPlan,
+                System.currentTimeMillis() + 120_000L,
+                listOf("Test-only local profile"),
+                "",
+            ).save(context)
+            io.github.ffenuss.modkit.ui.AutoModSessionStore(context).clear()
+            AnalysisManager.clearTerminalState()
+
+            val component = android.content.ComponentName(
+                context, MainActivity::class.java,
+            ).flattenToShortString()
+            device.executeShellCommand("am start -W -n $component -f 0x14008000")
+            val open = device.wait(
+                Until.findObject(By.text("Профили моих игр")), 15_000,
+            )
+            assertNotNull("Space entry must exist on the home screen", open)
+            open!!.click()
+            assertNotNull(
+                device.wait(Until.findObject(By.text("Space · игровые профили")), 10_000),
+            )
+            assertNotNull(
+                device.wait(Until.findObject(By.text(fixturePackage)), 10_000),
+            )
+            val launch = device.wait(
+                Until.findObject(By.text("Запустить установленную игру")), 10_000,
+            )
+            assertNotNull("Launch button must be visible", launch)
+            assertFalse("Different installed signer must block launch", launch!!.isEnabled)
+            evidence("space-signature-guard.png") { device.takeScreenshot(it) }
+        } finally {
+            recordFile.delete()
+            saved.delete()
+        }
+    }
+
 }
