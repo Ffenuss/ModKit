@@ -100,6 +100,26 @@ Static code never claims the top two levels without proof.
   and loops/complex control-flow are not covered by these checks.
 - **Device validation:** [GitHub Actions run 41414958037, attempt 2](https://github.com/Ffenuss/ModKit/actions/runs/41414958037/attempts/2) passed build/JVM/lint, Android API29 single-APK and Android API35 split-APK. The sixth device test confirms that the owned fixture can execute a skill three times after the cooldown predicate rewrite, versus none before. The initial API29 attempt failed to boot its emulator; retry succeeded without source changes.
 
+## Local movement / speed prototype (device verification pending)
+
+- New `DexMovementEvidenceAnalyzer` proves a narrow, straight-line data flow:
+  a side-effect-free `float` field getter (even with an obfuscated method name)
+  is invoked on `this`, its return value participates in a floating-point
+  addition with a local displacement field, and the sum is written back to
+  that same displacement field on `this`.
+- Exact speed-field and displacement-field identifiers are corroborating
+  semantic anchors; the method name alone does not confirm this recipe.
+  Ordinary HUD speed labels, arbitrary score floats, branches, unknown calls,
+  external object writes and unsupported calculations fail closed.
+- The patch replaces only the read-only float getter with `2.0f`;
+  it does not directly modify physics or server-authoritative positions.
+- The owned `MovementStats` testgame fixture uses the obfuscated getter
+  `a()`, an offline displacement accumulator and a separate distance readout.
+  Its device test requires 3 units after 3 steps before patching and 6 after.
+- A successful result here proves only the owned DEX fixture and this exact
+  additive movement model. It does not establish general movement support
+  across engines, rendering pipelines or networked games.
+
 ## Limitations (honest list)
 
 - **Method-local, linear dataflow.** Loops, complex CFGs, and more than one level of
