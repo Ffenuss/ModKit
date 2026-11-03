@@ -10,7 +10,7 @@ import androidx.compose.ui.unit.dp
 import io.github.ffenuss.modkit.BuildConfig
 
 @Composable
-fun TargetSelectionScreen(onSelectGames: () -> Unit, onSelectApps: () -> Unit, onSelectFile: () -> Unit) {
+fun TargetSelectionScreen(onSelectGames: () -> Unit, onSelectApps: () -> Unit, onSelectFile: () -> Unit, onOpenSpace: () -> Unit) {
     Scaffold { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets), contentPadding = PaddingValues(24.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -39,6 +39,18 @@ fun TargetSelectionScreen(onSelectGames: () -> Unit, onSelectApps: () -> Unit, o
                         Text("02  •  Из файла", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                         Text("Открыть APK", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                         Text("Выберите установочный файл на устройстве.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            item {
+                OutlinedCard(onClick = onOpenSpace, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("03  •  Space", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary)
+                        Text("Профили моих игр", style = MaterialTheme.typography.titleLarge)
+                        Text("Последние проверенные APK-сборки для каждой игры. " +
+                            "Запуск — после проверки подписи установленного пакета.",
+                            style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
