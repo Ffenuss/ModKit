@@ -22,6 +22,7 @@ import io.github.ffenuss.modkit.data.InstalledAppTarget
 import io.github.ffenuss.modkit.dump.InstalledPackageDumper
 import io.github.ffenuss.modkit.ui.screens.SimpleAnalysisScreen
 import io.github.ffenuss.modkit.ui.screens.SimpleAutoModScreen
+import io.github.ffenuss.modkit.ui.screens.SpaceProfilesScreen
 import io.github.ffenuss.modkit.ui.screens.InstalledAppsScreen
 import io.github.ffenuss.modkit.ui.screens.InstalledTargetKind
 import io.github.ffenuss.modkit.ui.screens.RecoveryScreen
@@ -36,6 +37,7 @@ private enum class Screen {
     TARGET,
     INSTALLED_APPS,
     AUTOMOD,
+    SPACE,
 }
 
 @Composable
@@ -406,7 +408,11 @@ fun ModKitApp() {
                                 ),
                             )
                         },
+                        onOpenSpace = { screen = Screen.SPACE },
                     )
+
+                Screen.SPACE ->
+                    SpaceProfilesScreen(onBack = { screen = Screen.TARGET })
 
                 Screen.INSTALLED_APPS ->
                     InstalledAppsScreen(
