@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -35,6 +36,7 @@ import io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher
 import io.github.ffenuss.modkit.space.SpaceLaunchStatus
 import io.github.ffenuss.modkit.ui.AutoModBuildRecord
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private data class SpaceProfileRow(
@@ -45,6 +47,7 @@ private data class SpaceProfileRow(
 @Composable
 fun SpaceProfilesScreen(onBack: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var refresh by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(true) }
     var profiles by remember { mutableStateOf<List<SpaceProfileRow>>(emptyList()) }
@@ -129,13 +132,15 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                         Text(
                             when (row.status) {
                                 SpaceLaunchStatus.READY ->
-                                    "Подпись совпадает · установленную сборку можно запустить"
+                                    "Подпись и SHA-256 установленного APK совпадают со сборкой"
                                 SpaceLaunchStatus.NOT_INSTALLED ->
                                     "Сборка не установлена. Установите её через ModKit."
                                 SpaceLaunchStatus.DIFFERENT_SIGNATURE ->
                                     "На устройстве другая подпись. Запуск этого профиля заблокирован."
                                 SpaceLaunchStatus.NO_LAUNCHER ->
                                     "Установленный пакет не содержит доступной Activity запуска."
+                                SpaceLaunchStatus.APK_CONTENT_MISMATCH ->
+                                    "Содержимое установленного APK отличается от сохранённой сборки."
                             },
                             color = if (row.status == SpaceLaunchStatus.READY)
                                 MaterialTheme.colorScheme.primary
@@ -143,9 +148,14 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                         )
                         Button(
                             onClick = {
-                                runCatching {
-                                    SpaceInstalledPackageLauncher.launch(context, record)
-                                }.onFailure { error = it.message ?: "Не удалось запустить игру." }
+                                scope.launch {
+                                    runCatching {
+                                        SpaceInstalledPackageLauncher.launch(context, record)
+                                    }.onFailure {
+                                        error = it.message ?: "Не удалось запустить игру."
+                                        refresh++
+                                    }
+                                }
                             },
                             enabled = row.status == SpaceLaunchStatus.READY,
                             modifier = Modifier.fillMaxWidth(),
