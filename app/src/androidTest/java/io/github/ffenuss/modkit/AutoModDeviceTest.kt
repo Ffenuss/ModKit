@@ -707,6 +707,16 @@ class AutoModDeviceTest {
                 listOf("Test-only local profile"),
                 "",
             ).save(context)
+            val selectedProfile = io.github.ffenuss.modkit.space.SpaceBuildProfileIndex
+                .load(context).single { it.plan.packageName == fixturePackage }
+            assertEquals("The test profile must be the active package entry",
+                artifact, selectedProfile.plan.artifactSha256)
+            val safety = io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher
+                .status(context, selectedProfile)
+            assertNotEquals(
+                "A fabricated APK must never be launchable",
+                io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY, safety,
+            )
             io.github.ffenuss.modkit.ui.AutoModSessionStore(context).clear()
             AnalysisManager.clearTerminalState()
 
@@ -718,8 +728,16 @@ class AutoModDeviceTest {
             fixtureText("Space · игровые профили")
             fixtureText(fixturePackage)
             val launch = fixtureText("Запустить установленную игру")
-            assertFalse("Different installed signer must block launch", launch.isEnabled)
             evidence("space-signature-guard.png") { device.takeScreenshot(it) }
+            evidence("space-signature-guard-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+            // UiAutomator can expose an enabled Text child even when its
+            // Compose Button ancestor is disabled. Verify the actual action.
+            launch.click()
+            device.waitForIdle()
+            assertTrue(
+                "A mismatched APK must not leave Space or launch the game: $safety",
+                device.hasObject(By.text("Space · игровые профили")),
+            )
         } finally {
             recordFile.delete()
             saved.delete()
