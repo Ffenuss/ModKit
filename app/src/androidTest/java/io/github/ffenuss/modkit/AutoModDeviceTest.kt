@@ -590,4 +590,92 @@ class AutoModDeviceTest {
         evidence("cooldown-structural-mod.png") { device.takeScreenshot(it) }
     }
 
+    /**
+     * Speed evidence is the live displacement delta, not a matching name.
+     * The float getter is deliberately named 'a' in the owned test fixture.
+     */
+    @Test fun g_obfuscatedSpeedGetterDoublesRealMovementDistance() = runBlocking {
+        launchGame()
+        fixtureText("Movement distance: 0")
+        repeat(3) {
+            fixtureText("Move step").click()
+            device.waitForIdle()
+        }
+        fixtureText("Movement distance: 3")
+
+        val installed = io.github.ffenuss.modkit.data.InstalledAppRepository(context)
+            .find(fixturePackage)!!
+        val target = AnalysisTargetDescriptor.InstalledPackage(fixturePackage, "ModKit Test Game")
+        val analysis = FastArtifactIndexer.index(installed.apkFiles, signal, progress)
+        val scan = DexAutoModCoordinator.scan(context, target, analysis, signal, progress)
+        val matches = scan.opportunities.filter {
+            it.matchedByStructure && it.className.endsWith("/MovementStats;") &&
+                it.methodName == "a" && it.category == DexLocalCategory.MOVEMENT
+        }
+        assertEquals(
+            "One confirmed obfuscated speed getter expected; hypotheses=${scan.mechanicHypotheses}",
+            1, matches.size,
+        )
+        val speed = matches.single()
+        assertEquals(MechanicConfidence.CONFIRMED, speed.confidence)
+        assertEquals(DexLocalAction.FLOAT_2, speed.action)
+        assertTrue(speed.selectable)
+        val recipe = DexRecipeCatalog.create(scan).single {
+            it.selectable && it.dex.any { d -> d.id == speed.id }
+        }
+        val preparation = PatchPreparationPlan(
+            analysis.index.artifactSha256, true,
+            System.currentTimeMillis(), emptyList(), emptyList(),
+        )
+        val built = AutoModBuildCoordinator.build(
+            context, target, analysis, preparation,
+            listOf(recipe), signal, progress,
+        )
+        assertEquals(installed.apkFiles.size, built.files.size)
+        assertTrue(built.files.all { it.signature.verified })
+        assertTrue(built.mutationDiffVerification.verified)
+
+        val plan = RepackedRuntimeInstallPlanner.plan(built, signal)
+        device.executeShellCommand("appops set ${context.packageName} REQUEST_INSTALL_PACKAGES allow")
+        // The device test may remove only its own disposable fixture.
+        device.executeShellCommand("pm uninstall $fixturePackage")
+        context.startActivity(
+            Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        device.waitForIdle()
+        val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+        val deadline = System.currentTimeMillis() + 45_000
+        while (System.currentTimeMillis() < deadline) {
+            val status = RepackedRuntimeInstallStatusStore.status.value
+            if (status.kind == RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED) {
+                instrumentation.runOnMainSync {
+                    RepackedRuntimeInstallConfirmationStore.open(context, submission.sessionId)
+                }
+                val systemInstall =
+                    device.findObject(By.res("com.android.packageinstaller", "ok_button"))
+                        ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
+                        ?: device.findObject(By.text("Install"))
+                        ?: device.findObject(By.text("INSTALL"))
+                        ?: device.findObject(By.text("Update"))
+                systemInstall?.click()
+            }
+            if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) break
+            assertNotEquals(status.message, RepackedRuntimeInstallStatusKind.FAILURE, status.kind)
+            device.waitForIdle(500)
+        }
+        assertEquals(
+            RepackedRuntimeInstallStatusKind.SUCCESS,
+            RepackedRuntimeInstallStatusStore.status.value.kind,
+        )
+
+        launchGame()
+        fixtureText("Movement distance: 0")
+        repeat(3) {
+            fixtureText("Move step").click()
+            device.waitForIdle()
+        }
+        fixtureText("Movement distance: 6")
+        evidence("movement-structural-mod.png") { device.takeScreenshot(it) }
+    }
+
 }
