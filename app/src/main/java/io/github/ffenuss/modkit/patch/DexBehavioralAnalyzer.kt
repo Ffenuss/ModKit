@@ -26,6 +26,7 @@ enum class DexBehavioralPatternType(val label: String) {
     ZERO_THRESHOLD_CHECK("Булево сравнение поля с нулём"),
     GUARDED_CONSUMPTION("Расход поля под нулевым условием в том же методе"),
     CLAMPED_INCREMENT("Повышение поля на константу с записью результата обратно"),
+    MOVEMENT_DELTA_WRITE_BACK("Локальная дистанция увеличивается на возвращаемую скорость"),
 }
 
 data class DexBehavioralPattern(
@@ -154,6 +155,7 @@ object DexBehavioralAnalyzer {
                 }
             }
         }
+        patterns += DexMovementEvidenceAnalyzer.find(dex, provenGetters, cancellation)
         return DexBehavioralModel(
             patterns = patterns,
             provenGetters = provenGetters,
