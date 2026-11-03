@@ -13,17 +13,20 @@ public final class GameActivity extends Activity {
     private ObfuscatedStats obf;
     private WalletStats wallet;
     private CooldownStats cooldown;
+    private MovementStats movement;
     private TextView state;
     private TextView distance;
     private TextView obfState;
     private TextView walletState;
     private TextView cooldownState;
+    private TextView movementState;
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         player = new PlayerStats();
         obf = new ObfuscatedStats();
         wallet = new WalletStats();
         cooldown = new CooldownStats();
+        movement = new MovementStats();
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setGravity(Gravity.TOP | Gravity.CENTER_HORIZONTAL);
@@ -75,9 +78,16 @@ public final class GameActivity extends Activity {
         tickCooldown.setText("Tick cooldown");
         tickCooldown.setOnClickListener(v -> { cooldown.tick(); showState(); });
         layout.addView(tickCooldown);
+        Button moveStep = new Button(this);
+        moveStep.setText("Move step");
+        moveStep.setOnClickListener(v -> { movement.step(); showState(); });
+        layout.addView(moveStep);
+        movementState = new TextView(this);
+        movementState.setTextSize(19);
+        layout.addView(movementState);
         Button reset = new Button(this);
         reset.setText("Reset");
-        reset.setOnClickListener(v -> { player = new PlayerStats(); obf = new ObfuscatedStats(); wallet = new WalletStats(); cooldown = new CooldownStats(); showState(); });
+        reset.setOnClickListener(v -> { player = new PlayerStats(); obf = new ObfuscatedStats(); wallet = new WalletStats(); cooldown = new CooldownStats(); movement = new MovementStats(); showState(); });
         layout.addView(reset);
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
@@ -91,5 +101,6 @@ public final class GameActivity extends Activity {
         obfState.setText((obf.g() ? "OBF DEAD" : "OBF ALIVE") + " | Obf HP: " + obf.d());
         walletState.setText("Coins: " + wallet.getCoins() + " | Purchases: " + wallet.purchases());
         cooldownState.setText("Cooldown: " + cooldown.remaining() + " | Actions: " + cooldown.actions());
+        movementState.setText("Movement distance: " + movement.traveled());
     }
 }
