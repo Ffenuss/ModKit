@@ -76,6 +76,11 @@ object DexMechanicClassifier {
             // semantic anchor before confirming local currency.
             val currencyAnchor = hasDamage && hasIncrement &&
                 hasCurrencyNameAnchor(field, gettersByField[field].orEmpty())
+            // Only emitted after a proven scalar float getter is consumed by an
+            // actual position/distance field write-back, not merely rendered.
+            val speedEvidence = patternTypes.contains(
+                DexBehavioralPatternType.MOVEMENT_DELTA_WRITE_BACK,
+            ) && gettersByField[field].orEmpty().any { it.returnType == "F" }
             // A cooldown requires a local countdown write-back AND an actual
             // positive "currently cooling down" predicate on the same field.
             // A generic stamina/retry counter or a named boolean alone is insufficient.
@@ -85,6 +90,7 @@ object DexMechanicClassifier {
             val structMechanic = when {
                 currencyAnchor -> GameMechanic.CURRENCY
                 cooldownAnchor -> GameMechanic.COOLDOWN
+                speedEvidence -> GameMechanic.SPEED
                 // A known cooldown field with an inverted or unsupported
                 // predicate is not evidence of health, even if its zero check
                 // superficially resembles a death check.
@@ -104,6 +110,7 @@ object DexMechanicClassifier {
             }
             nameMechanics.remove(GameMechanic.UNKNOWN)
             if (currencyAnchor) nameMechanics += GameMechanic.CURRENCY
+            if (speedEvidence) nameMechanics += GameMechanic.SPEED
 
             val distinctPatterns = patternTypes.size
             val nameMatchesStruct = structMechanic != GameMechanic.UNKNOWN &&
