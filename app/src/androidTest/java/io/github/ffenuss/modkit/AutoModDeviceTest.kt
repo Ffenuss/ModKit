@@ -1185,14 +1185,14 @@ class AutoModDeviceTest {
         assertNotNull(device.wait(Until.findObject(By.text("MK")), 25_000))
 
         fixtureText("Reset").click()
-        fun health(): Int = requireNotNull(device.wait(
-            Until.findObject(By.textContains("| Health: ")), 10_000))
-            .text.substringAfter("Health: ").trim().toInt()
+        fun damageCalls(): Int = requireNotNull(device.wait(
+            Until.findObject(By.textContains("Damage calls:")), 10_000))
+            .text.substringAfter("Damage calls:").trim().toInt()
         fun movement(): Int = requireNotNull(device.wait(
             Until.findObject(By.textContains("Movement distance:")), 10_000))
             .text.substringAfter("Movement distance:").trim().toInt()
-        val baselineHealth = health()
-        assertTrue("Game fixture needs positive initial health", baselineHealth > 7)
+        val baselineDamageCalls = damageCalls()
+        assertEquals("Reset must clear the real damage-handler counter", 0, baselineDamageCalls)
         val first = movement()
         fixtureText("Move step").click()
         val normalStep = movement() - first
@@ -1214,8 +1214,8 @@ class AutoModDeviceTest {
 
         requireNotNull(device.findObject(By.text("MK"))).click()
         fixtureText("Take damage").click()
-        assertEquals("Shield ON must protect actual in-game health",
-            baselineHealth, health())
+        assertEquals("Shield ON must prevent the actual damage handler from running",
+            baselineDamageCalls, damageCalls())
         val beforeDouble = movement()
         fixtureText("Move step").click()
         assertEquals("Movement ON must produce two gameplay writes",
@@ -1229,8 +1229,8 @@ class AutoModDeviceTest {
             device.findObject(By.text("Движение ×2: включено")))
         requireNotNull(device.findObject(By.text("MK"))).click()
         fixtureText("Take damage").click()
-        assertTrue("Shield OFF must restore damage calculation",
-            health() < baselineHealth)
+        assertEquals("Shield OFF must restore the actual damage handler",
+            baselineDamageCalls + 1, damageCalls())
 
         requireNotNull(device.findObject(By.text("MK"))).click()
         fixtureText("Защита здоровья: выключено").click()
@@ -1239,10 +1239,10 @@ class AutoModDeviceTest {
         fixtureText("Закрыть меню").click()
         assertTrue("Closing overlay must remove bubble",
             device.wait(Until.gone(By.text("MK")), 15_000))
-        val afterCloseHealth = health()
+        val afterCloseDamageCalls = damageCalls()
         fixtureText("Take damage").click()
-        assertTrue("Closing overlay must revoke health shield",
-            health() < afterCloseHealth)
+        assertEquals("Closing overlay must revoke shield and restore damage handler",
+            afterCloseDamageCalls + 1, damageCalls())
         val afterCloseMovement = movement()
         fixtureText("Move step").click()
         assertEquals("Closing overlay must revoke movement multiplier",
