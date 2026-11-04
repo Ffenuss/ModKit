@@ -48,7 +48,10 @@ public final class GameActivity extends Activity {
         layout.addView(cooldownState);
         Button hit = new Button(this);
         hit.setText("Take damage");
-        hit.setOnClickListener(v -> { player.hit(); showState(); });
+        hit.setOnClickListener(v -> {
+            if (!RuntimeLiveState.isDamageShieldEnabled()) player.hit();
+            showState();
+        });
         layout.addView(hit);
         Button sprint = new Button(this);
         sprint.setText("Sprint");
