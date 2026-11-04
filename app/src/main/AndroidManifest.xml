@@ -23,6 +23,13 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.ModKit">
+        <!-- Legacy Space host can read only the active, signer/APK-verified,
+             inventory-only menu. Caller UID and host signing pins are enforced. -->
+        <provider
+            android:name=".space.SpaceReadOnlyMenuProvider"
+            android:authorities="${applicationId}.space-menu"
+            android:exported="true"
+            android:grantUriPermissions="false" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"
