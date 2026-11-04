@@ -237,3 +237,18 @@ CI grants the overlay app-op using ADB solely for this test; real users must
 grant Android's own permission in Settings. Android 14+ uses the
 `specialUse` foreground service type; commercial store distribution would
 also require a review of platform and Google Play declaration policies.
+
+### Overlay verification evidence
+
+**GitHub Actions #41890594720 (2026-11-04): PASS.** JVM unit tests,
+Android Lint, both debug APK assemblies and signed APK checks passed. Device
+tests on Android API 29 (single owned APK) and Android API 35 (split owned
+APK) passed, including the `m_spaceOverlayShellFollowsVerifiedFixture`
+scenario. That scenario used a disposable emulator with an explicitly
+granted draw-over-apps app-op and checked the real floating MK bubble,
+its non-executable panel, closure, and continued fixture process.
+
+These results demonstrate **the overlay shell and cross-app handoff** only.
+They are not proof of sandboxed game execution, in-game memory modification
+or third-party compatibility. The normal production consent flow must be
+completed by the device owner.
