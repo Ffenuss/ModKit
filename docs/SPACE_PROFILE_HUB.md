@@ -196,3 +196,15 @@ Several games can be listed in the same Companion, with independent
 verification and no automatic fallback to another version. On-device
 verification does not create a virtual Android user, provide Play Services,
 insert an overlay into a game process, or apply reversible runtime mods.
+
+### Multi-game catalog validation
+
+**CI passed (2026-11-04):** [Android CI #41834338518](https://github.com/Ffenuss/ModKit/actions/runs/41834338518).
+JVM tests, Android Lint, both APK builds and signature checks, Android API 29
+single-APK instrumentation and Android API 35 split-APK instrumentation all
+succeeded. The device tests include the independent catalog when no legacy
+active profile is selected and a verified regular Android launch of the owned
+fixture from the Companion catalog button.
+
+This does **not** constitute virtualization, in-game overlay execution, or
+support for untested third-party games.
