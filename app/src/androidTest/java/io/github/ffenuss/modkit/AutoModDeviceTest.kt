@@ -1034,4 +1034,53 @@ class AutoModDeviceTest {
         )
     }
 
+    /**
+     * The opt-in overlay is an actual Android TYPE_APPLICATION_OVERLAY window
+     * over the owned fixture, never an executable mod or virtual guest.
+     * CI grants the special app-op explicitly for this disposable emulator.
+     */
+    @Test fun m_spaceOverlayShellFollowsVerifiedFixture() = runBlocking {
+        val saved = io.github.ffenuss.modkit.space.SpaceBuildProfileIndex.load(context)
+            .single { it.plan.packageName == fixturePackage }
+        assertEquals(
+            io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY,
+            io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher.status(context, saved),
+        )
+        val hostPackage = io.github.ffenuss.modkit.space.SpaceTrustedHost.COMPANION_PACKAGE
+        assertTrue(
+            "CI must explicitly grant overlay app-op on the disposable emulator",
+            device.executeShellCommand("appops get $hostPackage SYSTEM_ALERT_WINDOW")
+                .contains("allow"),
+        )
+        assertTrue(
+            "The companion must be signed with the same test key",
+            io.github.ffenuss.modkit.space.SpaceTrustedHost.companionInstalled(context),
+        )
+        io.github.ffenuss.modkit.space.SpaceTrustedHost.open(context)
+        val launch = fixtureText("Оверлей и запуск: $fixturePackage")
+        launch.click()
+        assertNotNull(
+            "The ordinary fixture must run beneath the overlay",
+            device.wait(Until.findObject(By.textContains("Movement distance:")), 25_000),
+        )
+        val bubble = device.wait(Until.findObject(By.text("MK")), 25_000)
+        assertNotNull("Real system overlay bubble must be visible", bubble)
+        requireNotNull(bubble).click()
+        assertNotNull(
+            "The overlay must not advertise non-executable static recipes",
+            device.wait(Until.findObject(
+                By.text("Только сведения об игре — модификации не активны")
+            ), 20_000),
+        )
+        fixtureText("Закрыть меню").click()
+        assertTrue(
+            "Stopping the overlay must remove the bubble",
+            device.wait(Until.gone(By.text("MK")), 12_000),
+        )
+        assertTrue(
+            "Closing overlay must not close the host game's normal process",
+            device.hasObject(By.textContains("Movement distance:")),
+        )
+    }
+
 }
