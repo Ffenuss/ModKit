@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [ main, 'feature/space-verified-profiles-20261103' ]
+    branches: [ main, 'feature/space-active-selection-20261104' ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
