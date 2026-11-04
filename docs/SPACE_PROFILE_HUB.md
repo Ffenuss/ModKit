@@ -161,6 +161,8 @@ or patch the unavailable proprietary legacy virtual host binary.
   **not virtualization**, root capabilities, in-guest overlays, Google Play,
   or reversible runtime recipe execution.
 
+- **Verified CI (2026-11-04):** [GitHub Actions #41817035604](https://github.com/Ffenuss/ModKit/actions/runs/41817035604) passed JVM tests, lint, both APK assemblies and signed APK verification, Android API 29 single-APK and Android API 35 split-APK device tests including Companion handoff and selection withdrawal. The initial run exposed a crash registering a ContentObserver for an uninstalled ModKit authority; Companion now checks installed matching signers and skips absent authorities.
+
 The companion is an intentional, replaceable integration checkpoint. Real
 non-root virtualization requires its own supported container and guest process
 lifecycle, with independent game/runtime evidence before enabling toggles.
