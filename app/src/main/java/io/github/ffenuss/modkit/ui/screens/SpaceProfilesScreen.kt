@@ -138,8 +138,9 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                                     SpaceTrustedHost.open(context)
                                     error = null
                                 } catch (failure: Exception) {
+                                    // Keep the actionable error visible; a refresh
+                                    // would overwrite it with a successful load.
                                     error = failure.message ?: "Не удалось открыть проверенный Space."
-                                    refresh++
                                 }
                             }
                         },
