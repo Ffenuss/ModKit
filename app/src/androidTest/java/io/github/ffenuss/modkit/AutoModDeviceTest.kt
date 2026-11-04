@@ -684,6 +684,7 @@ class AutoModDeviceTest {
      * This uses only a disposable, local test record; no user's app is touched.
      */
     @Test fun h_spaceListsPerGameBuildButBlocksUntrustedLaunch() {
+        io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
         val artifact = "d".repeat(64)
         val saved = File(context.filesDir, "space-test-build.apk")
         saved.writeBytes(byteArrayOf(1, 2, 3, 4))
@@ -727,6 +728,13 @@ class AutoModDeviceTest {
             fixtureText("Профили моих игр").click()
             fixtureText("Space · игровые профили")
             fixtureText(fixturePackage)
+            val choose = fixtureText("Выбрать активной игрой")
+            choose.click()
+            device.waitForIdle()
+            assertNull(
+                "Untrusted installed APK must never become the active Space profile",
+                io.github.ffenuss.modkit.space.SpaceActiveProfileStore.read(context),
+            )
             val launch = fixtureText("Запустить установленную игру")
             evidence("space-signature-guard.png") { device.takeScreenshot(it) }
             evidence("space-signature-guard-hierarchy.xml") { device.dumpWindowHierarchy(it) }
@@ -739,6 +747,7 @@ class AutoModDeviceTest {
                 device.hasObject(By.text("Space · игровые профили")),
             )
         } finally {
+            io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
             recordFile.delete()
             saved.delete()
         }
