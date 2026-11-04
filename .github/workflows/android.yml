@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [ main, fix/space-selection-provider-sync-20261104 ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
