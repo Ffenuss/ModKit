@@ -7,6 +7,11 @@
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
+    <!-- Runtime-confirmed, user-granted draw-over-apps permission. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <queries>
         <package android:name="io.github.ffenuss.modkit" />
         <package android:name="io.github.ffenuss.modkit.test" />
@@ -16,6 +21,14 @@
         android:label="ModKit Space Companion"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <service
+            android:name=".SpaceOverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Explicit user-started draggable information menu over a separately installed game; no interception or guest code modification" />
+        </service>
         <activity
             android:name=".SpaceCompanionActivity"
             android:exported="true">
