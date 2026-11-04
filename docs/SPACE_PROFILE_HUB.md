@@ -135,3 +135,32 @@ preference is committed. Clearing the active profile also announces the empty
 index. These notifications are hints for a listening host; the host still
 must re-read the provider and verify guest identities. Notification delivery
 does not revoke or delete profiles previously cached by the legacy host.
+
+## Independently buildable Space Companion (proof of cross-app identity)
+
+The new `:spacecompanion` module builds a separate Android app with package
+`io.github.ffenuss.modkit.spacecompanion`. It deliberately does **not** reuse
+or patch the unavailable proprietary legacy virtual host binary.
+
+- ModKit exposes its existing read-only `schema=1`, `backend=none` profile
+  only if the companion is signed with the *same certificate* as the installed
+  ModKit APK. Legacy QA host certificate pins remain separate.
+- The companion verifies the publisher package's Android signature before
+  reading any provider data. It rechecks profile SHA-256 against the index,
+  accepts a single active, non-executable profile and verifies the **complete**
+  installed base/split APK hash-and-size set.
+- The companion reads no APK contents from ModKit, saves no cached executable
+  profiles, and re-reads/re-hashes before offering an **ordinary Android launch**.
+  It responds to provider change notifications and clears the view when
+  ModKit withdraws the active game.
+- Build and install both apps with the same signing certificate. Debug builds
+  from the same Gradle/Android environment normally share its debug key;
+  unrelated signatures fail closed.
+- The CI-owned fixture validates successful cross-app sync and revocation on
+  Android API 29 and 35. These tests establish cross-app trust and APK identity,
+  **not virtualization**, root capabilities, in-guest overlays, Google Play,
+  or reversible runtime recipe execution.
+
+The companion is an intentional, replaceable integration checkpoint. Real
+non-root virtualization requires its own supported container and guest process
+lifecycle, with independent game/runtime evidence before enabling toggles.
