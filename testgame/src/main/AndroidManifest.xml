@@ -1,4 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <queries>
+        <package android:name="io.github.ffenuss.modkit.spacecompanion" />
+        <package android:name="io.github.ffenuss.modkit.test" />
+        <package android:name="io.github.ffenuss.modkit" />
+    </queries>
     <application android:appCategory="game" android:label="ModKit Test Game" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
         <!-- Owned cooperative test channel; no generic third-party runtime hooks. -->
         <provider

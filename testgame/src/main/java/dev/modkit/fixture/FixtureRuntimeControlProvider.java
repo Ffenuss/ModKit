@@ -30,9 +30,21 @@ public final class FixtureRuntimeControlProvider extends ContentProvider {
         if (context == null) throw new SecurityException("Missing fixture context");
         int uid = Binder.getCallingUid();
         String[] packages = context.getPackageManager().getPackagesForUid(uid);
-        if (packages == null ||
-                !Arrays.asList(packages).contains("io.github.ffenuss.modkit.spacecompanion")) {
+        String companion = "io.github.ffenuss.modkit.spacecompanion";
+        PackageManager pm = context.getPackageManager();
+        if (packages == null || !Arrays.asList(packages).contains(companion)) {
             throw new SecurityException("Only the installed ModKit Space Companion may control fixture");
+        }
+        // The caller's UID owns the exact installed companion package AND
+        // its certificate must match the currently installed ModKit publisher.
+        // The fixture's separate disposable split-signing key is irrelevant.
+        boolean trustedPublisher =
+                pm.checkSignatures(companion, "io.github.ffenuss.modkit.test")
+                        == PackageManager.SIGNATURE_MATCH ||
+                pm.checkSignatures(companion, "io.github.ffenuss.modkit")
+                        == PackageManager.SIGNATURE_MATCH;
+        if (!trustedPublisher) {
+            throw new SecurityException("Companion signer does not match ModKit");
         }
     }
 
