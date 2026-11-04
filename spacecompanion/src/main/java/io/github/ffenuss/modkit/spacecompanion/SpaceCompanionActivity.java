@@ -64,9 +64,18 @@ public final class SpaceCompanionActivity extends Activity {
         };
         for (String publisher : new String[]{
                 "io.github.ffenuss.modkit.test", "io.github.ffenuss.modkit"}) {
-            getContentResolver().registerContentObserver(
-                    Uri.parse("content://" + publisher + ".space-menu"),
-                    true, updates);
+            // Android 10 may throw SecurityException when observing a missing
+            // authority. Never crash just because release ModKit is absent
+            // while a valid debug ModKit is installed (or vice versa).
+            if (getPackageManager().checkSignatures(getPackageName(), publisher) !=
+                    android.content.pm.PackageManager.SIGNATURE_MATCH) continue;
+            try {
+                getContentResolver().registerContentObserver(
+                        Uri.parse("content://" + publisher + ".space-menu"),
+                        true, updates);
+            } catch (SecurityException | IllegalArgumentException unavailable) {
+                // onResume still performs a fresh authenticated read.
+            }
         }
     }
 
