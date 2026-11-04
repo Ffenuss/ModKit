@@ -69,6 +69,13 @@ files, or replacing the game prevents launching from that saved profile.
   installed packages, duplicate records and malformed signatures.
 - Android instrumentation opens the profile screen with a deliberately
   untrusted saved APK. Neither Launch nor Select may activate it.
+- The same suite saves the **actual verified build** of the owned movement
+  fixture, installs it, selects it in Space and reads back the exact saved
+  package/SHA identity. A newer build with the same package must not resolve
+  against that old selection.
+- **Verified CI (2026-11-04):** [GitHub Actions #41795225279](https://github.com/Ffenuss/ModKit/actions/runs/41795225279)
+  passed JVM tests, lint, APK assembly, Android API 29 single APK and Android
+  API 35 split APK. This validates ModKit-side selection, not a virtual host.
 - The selection is **local ModKit metadata only**. The legacy Space host does
   not consume this preference yet; authenticating that handoff is a separate
   feature and requires its own device tests.
