@@ -1,6 +1,7 @@
 package io.github.ffenuss.modkit.spacecompanion;
 
 import android.app.Activity;
+import android.provider.Settings;
 import android.content.Intent;
 import android.database.ContentObserver;
 import android.net.Uri;
@@ -43,7 +44,7 @@ public final class SpaceCompanionActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         TextView explanation = new TextView(this);
         explanation.setText("Проверка профиля ModKit и установленного APK. " +
-                "Это обычный запуск Android: виртуализация и мод-меню пока недоступны.");
+                "Это обычный запуск Android. Доступно плавающее информационное меню; виртуализация и работающие моды пока отсутствуют.");
         root.addView(explanation);
         status = new TextView(this);
         status.setTextSize(17);
@@ -121,15 +122,32 @@ public final class SpaceCompanionActivity extends Activity {
                     Button game = new Button(this);
                     game.setText("Проверить и запустить: " + entry.packageName);
                     game.setAllCaps(false);
-                    game.setOnClickListener(v -> launchCatalogEntry(entry));
+                    game.setOnClickListener(v -> launchCatalogEntry(entry, false));
                     catalogRows.addView(game);
+                    Button overlay = new Button(this);
+                    overlay.setText("Оверлей и запуск: " + entry.packageName);
+                    overlay.setAllCaps(false);
+                    overlay.setOnClickListener(v -> launchCatalogEntry(entry, true));
+                    catalogRows.addView(overlay);
                 }
             });
         });
     }
 
-    private void launchCatalogEntry(SpaceCatalogReader.Entry selected) {
+    private void launchCatalogEntry(
+            SpaceCatalogReader.Entry selected, boolean withOverlay) {
         if (selected == null) return;
+        if (withOverlay && !Settings.canDrawOverlays(this)) {
+            status.setText("Разрешите показывать окно поверх других приложений. " +
+                    "После возврата нажмите кнопку запуска ещё раз.");
+            try {
+                startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:" + getPackageName())));
+            } catch (RuntimeException unavailable) {
+                status.setText("Настройка разрешения оверлея недоступна.");
+            }
+            return;
+        }
         final int version = generation.incrementAndGet();
         start.setEnabled(false);
         status.setText("Проверка подписи и APK: " + selected.packageName);
@@ -149,10 +167,17 @@ public final class SpaceCompanionActivity extends Activity {
                     status.setText("Экран запуска игры больше недоступен.");
                     return;
                 }
+                Intent serviceIntent = new Intent(this, SpaceOverlayService.class)
+                        .setAction(SpaceOverlayService.ACTION_START)
+                        .putExtra(SpaceOverlayService.EXTRA_PACKAGE, selected.packageName)
+                        .putExtra(SpaceOverlayService.EXTRA_ARTIFACT, selected.artifactSha256)
+                        .putExtra(SpaceOverlayService.EXTRA_PUBLISHER, selected.publisher);
                 try {
+                    if (withOverlay) startForegroundService(serviceIntent);
                     startActivity(new Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
                 } catch (RuntimeException failure) {
-                    status.setText("Не удалось запустить проверенную игру.");
+                    if (withOverlay) stopService(serviceIntent);
+                    status.setText("Не удалось открыть проверенную игру или меню.");
                 } finally {
                     refresh();
                 }

@@ -208,3 +208,47 @@ fixture from the Companion catalog button.
 
 This does **not** constitute virtualization, in-game overlay execution, or
 support for untested third-party games.
+
+## Opt-in system overlay shell (Android, non-root)
+
+The independent Space Companion now declares the Android overlay permission
+(`SYSTEM_ALERT_WINDOW`) and a user-initiated `specialUse` foreground service,
+with a visible notification and explicit Stop action. Each catalog game has
+an **"Оверлей и запуск"** button distinct from the normal launch button.
+If draw-over-apps permission is absent, Companion opens the system consent
+screen and requires the user to tap launch again after granting it.
+
+When the user chooses the overlay launch, Companion **first checks** the
+signed ModKit catalog, installed certificate(s) and complete APK identity.
+Only then it starts its own non-exported foreground service and launches
+the installed game normally. The service revalidates the selected profile
+independently before adding a draggable `TYPE_APPLICATION_OVERLAY` window,
+which offers a compact MK bubble, a non-executable identity panel,
+re-verification and an explicit close action. The window is removed on
+service shutdown, mismatched build identity or revoked publisher catalog.
+
+**Deliberately not implemented:** writable guest memory, overlay-controlled
+game modifications, root runtime patching, Play Services hosting, cloned
+user profiles or an isolated guest process. The overlay has no pretend
+on/off mod switches and does not inject into any other package.
+
+Validation uses only `dev.modkit.fixture` on disposable emulator devices.
+CI grants the overlay app-op using ADB solely for this test; real users must
+grant Android's own permission in Settings. Android 14+ uses the
+`specialUse` foreground service type; commercial store distribution would
+also require a review of platform and Google Play declaration policies.
+
+### Overlay verification evidence
+
+**GitHub Actions #41890594720 (2026-11-04): PASS.** JVM unit tests,
+Android Lint, both debug APK assemblies and signed APK checks passed. Device
+tests on Android API 29 (single owned APK) and Android API 35 (split owned
+APK) passed, including the `m_spaceOverlayShellFollowsVerifiedFixture`
+scenario. That scenario used a disposable emulator with an explicitly
+granted draw-over-apps app-op and checked the real floating MK bubble,
+its non-executable panel, closure, and continued fixture process.
+
+These results demonstrate **the overlay shell and cross-app handoff** only.
+They are not proof of sandboxed game execution, in-game memory modification
+or third-party compatibility. The normal production consent flow must be
+completed by the device owner.
