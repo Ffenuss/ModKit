@@ -145,8 +145,10 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
             }
             items(profiles, key = { it.record.plan.packageName }) { row ->
                 val record = row.record
-                val isActive = selectedRecord?.plan?.packageName == record.plan.packageName &&
-                    selectedRecord.plan.artifactSha256 == record.plan.artifactSha256
+                val isActive = selectedRecord?.let { selected ->
+                    selected.plan.packageName == record.plan.packageName &&
+                        selected.plan.artifactSha256 == record.plan.artifactSha256
+                } ?: false
                 Card(Modifier.fillMaxWidth()) {
                     Column(
                         Modifier.padding(18.dp),
