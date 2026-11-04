@@ -3,6 +3,8 @@ package io.github.ffenuss.modkit.spacecompanion;
 import android.content.Context;
 import android.net.Uri;
 import android.os.Bundle;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * No code injection: only a specific cooperating repository-owned fixture
@@ -64,6 +66,99 @@ public final class RuntimeControlBridge {
         Bundle request = new Bundle();
         request.putBoolean(KEY_ENABLED, false);
         perform(context, "set_double_movement", request);
+    }
+
+    public static final class RecipeSnapshot {
+        public final boolean reachable;
+        public final boolean active;
+        public final List<VerifiedRecipeContract.Recipe> recipes;
+        public final String message;
+
+        RecipeSnapshot(boolean reachable, boolean active,
+                List<VerifiedRecipeContract.Recipe> recipes, String message) {
+            this.reachable = reachable;
+            this.active = active;
+            this.recipes = recipes;
+            this.message = message;
+        }
+
+        public VerifiedRecipeContract.Recipe find(String id) {
+            for (VerifiedRecipeContract.Recipe recipe : recipes)
+                if (recipe.id.equals(id)) return recipe;
+            return null;
+        }
+    }
+
+    /** Discover actual executable capabilities in a known, verified build. */
+    public static RecipeSnapshot discoverRecipes(
+            Context context, SpaceCatalogReader.Entry entry) {
+        if (!supports(entry)) return unavailableRecipes("Неподдерживаемая игра");
+        return performRecipeCall(context, "recipes_v2", null);
+    }
+
+    /** Rehash the installed game and re-read the catalog before every write. */
+    public static RecipeSnapshot setRecipe(
+            Context context, SpaceCatalogReader.Entry entry,
+            String id, boolean enabled) {
+        if (!supports(entry) || VerifiedRecipeContract.labelFor(id) == null)
+            return unavailableRecipes("Неизвестный исполняемый рецепт");
+        SpaceCatalogReader.Verification proof = SpaceCatalogReader.verify(context, entry);
+        if (!proof.ready) return unavailableRecipes(proof.message);
+        // Read a valid capability snapshot first: never issue set against a
+        // missing/changed/incompatible provider that merely shares an authority.
+        RecipeSnapshot before = discoverRecipes(context, entry);
+        if (!before.reachable || !before.active || before.find(id) == null)
+            return unavailableRecipes("Проверенная игровая сессия недоступна");
+        Bundle request = new Bundle();
+        request.putString("recipeId", id);
+        request.putBoolean(KEY_ENABLED, enabled);
+        RecipeSnapshot after = performRecipeCall(context, "set_recipe_v2", request);
+        VerifiedRecipeContract.Recipe acknowledged = after.find(id);
+        if (!after.reachable || !after.active ||
+                acknowledged == null || acknowledged.enabled != enabled)
+            return unavailableRecipes("Игра не подтвердила изменение рецепта");
+        return after;
+    }
+
+    /** Always-safe OFF for both approved controls, even if profile was revoked. */
+    public static void disableAllRecipesForCleanup(
+            Context context, SpaceCatalogReader.Entry entry) {
+        if (!supports(entry)) return;
+        for (String id : new String[]{
+                VerifiedRecipeContract.MOVEMENT, VerifiedRecipeContract.SHIELD}) {
+            Bundle off = new Bundle();
+            off.putString("recipeId", id);
+            off.putBoolean(KEY_ENABLED, false);
+            performRecipeCall(context, "set_recipe_v2", off);
+        }
+    }
+
+    private static RecipeSnapshot unavailableRecipes(String message) {
+        return new RecipeSnapshot(false, false, Collections.emptyList(), message);
+    }
+
+    private static RecipeSnapshot performRecipeCall(
+            Context context, String operation, Bundle args) {
+        try {
+            Bundle result = context.getContentResolver().call(
+                    Uri.parse(URI_TEXT), operation, null, args);
+            if (result == null || !result.containsKey(KEY_ACTIVE))
+                return unavailableRecipes("Рантайм не сообщил состояние");
+            boolean active = result.getBoolean(KEY_ACTIVE);
+            List<VerifiedRecipeContract.Recipe> recipes =
+                    VerifiedRecipeContract.accept(
+                            result.getString("contract"), active,
+                            result.getStringArray("ids"),
+                            result.getStringArray("labels"),
+                            result.getBooleanArray("enabledStates"));
+            if (recipes == null)
+                return unavailableRecipes("Несовместимый список исполняемых рецептов");
+            return new RecipeSnapshot(true, active, recipes,
+                    active ? "Рецепты доступны" : "Игровая сессия не активна");
+        } catch (RuntimeException failure) {
+            return unavailableRecipes("Рантайм недоступен: " +
+                    failure.getClass().getSimpleName());
+        }
     }
 
     private static State unsupported() {

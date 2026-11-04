@@ -1167,4 +1167,86 @@ class AutoModDeviceTest {
             standard, afterClose - restored)
     }
 
+    /**
+     * v2 proof: the overlay discovers TWO independently executable recipes.
+     * Both must change real owned-game behavior, acknowledge state separately,
+     * and return to normal when disabled or when the overlay closes.
+     */
+    @Test fun o_spaceTwoLiveRecipesAreIndependentAndReversible() = runBlocking {
+        val saved = io.github.ffenuss.modkit.space.SpaceBuildProfileIndex.load(context)
+            .single { it.plan.packageName == fixturePackage }
+        assertEquals(
+            io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY,
+            io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher.status(context, saved),
+        )
+        io.github.ffenuss.modkit.space.SpaceTrustedHost.open(context)
+        fixtureText("Оверлей и запуск: $fixturePackage").click()
+        assertNotNull(device.wait(Until.findObject(By.textContains("Movement distance:")), 25_000))
+        assertNotNull(device.wait(Until.findObject(By.text("MK")), 25_000))
+
+        fixtureText("Reset").click()
+        fun damageCalls(): Int = requireNotNull(device.wait(
+            Until.findObject(By.textContains("Damage calls:")), 10_000))
+            .text.substringAfter("Damage calls:").trim().toInt()
+        fun movement(): Int = requireNotNull(device.wait(
+            Until.findObject(By.textContains("Movement distance:")), 10_000))
+            .text.substringAfter("Movement distance:").trim().toInt()
+        val baselineDamageCalls = damageCalls()
+        assertEquals("Reset must clear the real damage-handler counter", 0, baselineDamageCalls)
+        val first = movement()
+        fixtureText("Move step").click()
+        val normalStep = movement() - first
+        assertTrue(normalStep > 0)
+
+        requireNotNull(device.findObject(By.text("MK"))).click()
+        assertNotNull("Movement recipe must be discovered",
+            device.wait(Until.findObject(By.text("Движение ×2: выключено")), 20_000))
+        assertNotNull("Health shield recipe must be separately discovered",
+            device.wait(Until.findObject(By.text("Защита здоровья: выключено")), 20_000))
+        fixtureText("Защита здоровья: выключено").click()
+        assertNotNull(device.wait(Until.findObject(
+            By.text("Защита здоровья: включено")), 20_000))
+        fixtureText("Движение ×2: выключено").click()
+        assertNotNull(device.wait(Until.findObject(
+            By.text("Движение ×2: включено")), 20_000))
+        assertNotNull("Enabling movement must not turn the shield off",
+            device.findObject(By.text("Защита здоровья: включено")))
+
+        requireNotNull(device.findObject(By.text("MK"))).click()
+        fixtureText("Take damage").click()
+        assertEquals("Shield ON must prevent the actual damage handler from running",
+            baselineDamageCalls, damageCalls())
+        val beforeDouble = movement()
+        fixtureText("Move step").click()
+        assertEquals("Movement ON must produce two gameplay writes",
+            normalStep * 2, movement() - beforeDouble)
+
+        requireNotNull(device.findObject(By.text("MK"))).click()
+        fixtureText("Защита здоровья: включено").click()
+        assertNotNull(device.wait(Until.findObject(
+            By.text("Защита здоровья: выключено")), 20_000))
+        assertNotNull("Disabling shield must not disable movement",
+            device.findObject(By.text("Движение ×2: включено")))
+        requireNotNull(device.findObject(By.text("MK"))).click()
+        fixtureText("Take damage").click()
+        assertEquals("Shield OFF must restore the actual damage handler",
+            baselineDamageCalls + 1, damageCalls())
+
+        requireNotNull(device.findObject(By.text("MK"))).click()
+        fixtureText("Защита здоровья: выключено").click()
+        assertNotNull(device.wait(Until.findObject(
+            By.text("Защита здоровья: включено")), 20_000))
+        fixtureText("Закрыть меню").click()
+        assertTrue("Closing overlay must remove bubble",
+            device.wait(Until.gone(By.text("MK")), 15_000))
+        val afterCloseDamageCalls = damageCalls()
+        fixtureText("Take damage").click()
+        assertEquals("Closing overlay must revoke shield and restore damage handler",
+            afterCloseDamageCalls + 1, damageCalls())
+        val afterCloseMovement = movement()
+        fixtureText("Move step").click()
+        assertEquals("Closing overlay must revoke movement multiplier",
+            normalStep, movement() - afterCloseMovement)
+    }
+
 }

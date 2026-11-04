@@ -23,6 +23,19 @@ public final class FixtureRuntimeControlProvider extends ContentProvider {
     public static final String KEY_ENABLED = "enabled";
     public static final String KEY_ACTIVE = "active";
 
+    /** Versioned recipe contract. No addresses, executable blobs or arbitrary
+     * method names are accepted from a client. Exact IDs are implemented by
+     * the owned in-process fixture and acknowledged after mutation. */
+    public static final String CONTRACT_V2 = "owned_fixture_recipe_v2";
+    public static final String METHOD_RECIPES = "recipes_v2";
+    public static final String METHOD_SET_RECIPE = "set_recipe_v2";
+    public static final String KEY_RECIPE_ID = "recipeId";
+    public static final String RECIPE_MOVEMENT = "movement_x2";
+    public static final String RECIPE_SHIELD = "damage_shield";
+    private static final String[] RECIPE_IDS = {RECIPE_MOVEMENT, RECIPE_SHIELD};
+    private static final String[] RECIPE_LABELS = {"Движение ×2", "Защита здоровья"};
+
+
     @Override public boolean onCreate() { return true; }
 
     private void authorize() {
@@ -50,6 +63,30 @@ public final class FixtureRuntimeControlProvider extends ContentProvider {
 
     @Override public Bundle call(String method, String arg, Bundle extras) {
         authorize();
+        if (METHOD_RECIPES.equals(method) || METHOD_SET_RECIPE.equals(method)) {
+            if (METHOD_SET_RECIPE.equals(method)) {
+                if (extras == null || !extras.containsKey(KEY_ENABLED))
+                    throw new IllegalArgumentException("Explicit ON/OFF state required");
+                String id = extras.getString(KEY_RECIPE_ID);
+                if (RECIPE_MOVEMENT.equals(id)) {
+                    RuntimeLiveState.setDoubleMovement(extras.getBoolean(KEY_ENABLED));
+                } else if (RECIPE_SHIELD.equals(id)) {
+                    RuntimeLiveState.setDamageShield(extras.getBoolean(KEY_ENABLED));
+                } else {
+                    throw new IllegalArgumentException("Unknown runtime recipe identifier");
+                }
+            }
+            Bundle result = new Bundle();
+            result.putString("contract", CONTRACT_V2);
+            result.putBoolean(KEY_ACTIVE, RuntimeLiveState.isResumed());
+            result.putStringArray("ids", RECIPE_IDS.clone());
+            result.putStringArray("labels", RECIPE_LABELS.clone());
+            result.putBooleanArray("enabledStates", new boolean[] {
+                    RuntimeLiveState.isDoubleMovementEnabled(),
+                    RuntimeLiveState.isDamageShieldEnabled(),
+            });
+            return result;
+        }
         if (!METHOD_STATUS.equals(method) && !METHOD_SET.equals(method))
             throw new IllegalArgumentException("Unsupported fixture runtime operation");
         if (METHOD_SET.equals(method)) {

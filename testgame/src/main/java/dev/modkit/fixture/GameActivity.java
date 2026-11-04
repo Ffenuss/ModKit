@@ -20,6 +20,7 @@ public final class GameActivity extends Activity {
     private TextView walletState;
     private TextView cooldownState;
     private TextView movementState;
+    private TextView damageEvidence;
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         player = new PlayerStats();
@@ -34,6 +35,9 @@ public final class GameActivity extends Activity {
         state = new TextView(this);
         state.setTextSize(19);
         layout.addView(state);
+        damageEvidence = new TextView(this);
+        damageEvidence.setTextSize(16);
+        layout.addView(damageEvidence);
         distance = new TextView(this);
         distance.setTextSize(19);
         layout.addView(distance);
@@ -48,7 +52,10 @@ public final class GameActivity extends Activity {
         layout.addView(cooldownState);
         Button hit = new Button(this);
         hit.setText("Take damage");
-        hit.setOnClickListener(v -> { player.hit(); showState(); });
+        hit.setOnClickListener(v -> {
+            if (!RuntimeLiveState.isDamageShieldEnabled()) player.hit();
+            showState();
+        });
         layout.addView(hit);
         Button sprint = new Button(this);
         sprint.setText("Sprint");
@@ -114,6 +121,7 @@ public final class GameActivity extends Activity {
 
     private void showState() {
         state.setText((player.isDead() ? "GAME OVER" : "ALIVE") + " | Health: " + player.getHealth());
+        damageEvidence.setText("Damage calls: " + player.q0());
         distance.setText("Distance: " + player.distance());
         obfState.setText((obf.g() ? "OBF DEAD" : "OBF ALIVE") + " | Obf HP: " + obf.d());
         walletState.setText("Coins: " + wallet.getCoins() + " | Purchases: " + wallet.purchases());

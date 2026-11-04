@@ -301,3 +301,48 @@ installer test was stabilized against short-lived UiAutomator buttons.
 The explicitly cooperative `dev.modkit.fixture` runtime is the only supported
 live recipe target. This check is **not** evidence for unowned Android games,
 multiple engine runtime backends, or non-root virtualization.
+
+## Runtime recipe contract v2 (two verified independent effects)
+
+`dev.modkit.fixture` now implements the opt-in
+`owned_fixture_recipe_v2` contract. The fixture provider returns a bounded,
+versioned catalog of **executable** recipe IDs, human labels, and authoritative
+live enabled states. It supports exactly two allowed operations:
+`movement_x2` (a second movement write-back per player step) and
+`damage_shield` (the real player-damage branch is not taken while enabled).
+
+The Companion recognizes the **specific owned fixture adapter** only; it
+rejects any unknown ID, duplicate, mismatched label, malformed array,
+wrong version, or suspended game claiming enabled states. It constructs
+overlay controls from the verified adapter's acknowledged catalog rather
+than a static list of speculative game features. Every user ON/OFF
+rechecks the publisher catalog, installed game certificate, exact
+base/split APK hashes and the active runtime, then requires an explicit
+state acknowledgement. The controls have separate state and can operate
+concurrently. Shutdown and selection revocation send safe OFF for **both**
+recipes; Activity.onPause independently disables both in the game.
+
+On-device validation exercises both recipe switches, in-game actual
+health and movement, independence, per-recipe OFF and cleanup when
+closing the floating menu. This is **not** a generic recipe execution
+protocol for APKs that were not deliberately prepared to support it.
+The existing runtimeprobe payload remains a separate in-app/native
+probe and is not automatically treated as a v2 executor.
+
+### Recipe contract v2 verification (2026-11-04)
+
+[GitHub Actions #41901298315](https://github.com/Ffenuss/ModKit/actions/runs/41901298315)
+**finished SUCCESS (attempt 2)**. JVM tests, lint and both debug APK
+assemblies were green on the original attempt; Android API 29 single APK
+instrumentation and Android API 35 split APK instrumentation both passed all
+15 device tests. A first API 35 attempt suffered an unrelated emulator/system
+ANR ("Pixel Launcher isn't responding"), confirmed by the saved UI hierarchy
+and device logs. Only the failed API 35 job was rerun, successfully, without
+any source changes. The independent fixture damage-handler counter prevents
+pre-existing static health getter modifications from masking the observed
+behavior of the new shield recipe. The `o_spaceTwoLiveRecipesAreIndependentAndReversible`
+scenario proves two concurrent effects, independent OFF for shield, actual
+movement write-back and both controls returned OFF on overlay shutdown.
+
+This evidence applies to the **cooperating owned fixture only**. No general
+DEX/native live executor or Android guest virtualization was introduced.

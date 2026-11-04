@@ -8,16 +8,19 @@ package dev.modkit.fixture;
 final class RuntimeLiveState {
     private static volatile boolean activityResumed;
     private static volatile boolean doubleMovement;
+    private static volatile boolean damageShield;
 
     private RuntimeLiveState() {}
 
     static synchronized void resume() {
         activityResumed = true;
         doubleMovement = false;
+        damageShield = false;
     }
 
     static synchronized void pause() {
         doubleMovement = false;
+        damageShield = false;
         activityResumed = false;
     }
 
@@ -28,6 +31,19 @@ final class RuntimeLiveState {
         }
         doubleMovement = enabled;
         return true;
+    }
+
+    static synchronized boolean setDamageShield(boolean enabled) {
+        if (!activityResumed) {
+            damageShield = false;
+            return false;
+        }
+        damageShield = enabled;
+        return true;
+    }
+
+    static boolean isDamageShieldEnabled() {
+        return activityResumed && damageShield;
     }
 
     static boolean isResumed() {
