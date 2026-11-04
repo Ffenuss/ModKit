@@ -342,11 +342,10 @@ public final class SpaceOverlayService extends Service {
                     requestStop();
                     return;
                 }
-                if (liveMoveButton != null) {
-                    refreshLiveControl();
-                } else {
-                    summary.setText("Только сведения об игре — модификации не активны");
-                }
+                summary.setText(liveMoveEnabled ?
+                        "Применено в тестовой игре: движение ×2" :
+                        "Только сведения об игре — модификации не активны");
+                if (liveMoveButton != null) refreshLiveControl();
             });
         });
     }
