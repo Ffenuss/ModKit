@@ -31,6 +31,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import io.github.ffenuss.modkit.space.SpaceActiveProfileSelection
+import io.github.ffenuss.modkit.space.SpaceActiveProfileStore
 import io.github.ffenuss.modkit.space.SpaceBuildProfileIndex
 import io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher
 import io.github.ffenuss.modkit.space.SpaceLaunchStatus
@@ -52,6 +54,8 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
     var loading by remember { mutableStateOf(true) }
     var profiles by remember { mutableStateOf<List<SpaceProfileRow>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
+    var selectedKey by remember { mutableStateOf(SpaceActiveProfileStore.read(context)) }
+    var selecting by remember { mutableStateOf(false) }
     BackHandler(onBack = onBack)
 
     LaunchedEffect(refresh) {
@@ -67,9 +71,14 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
             }
         }
         profiles = loaded.getOrDefault(emptyList())
+        selectedKey = SpaceActiveProfileStore.read(context)
         error = loaded.exceptionOrNull()?.message
         loading = false
     }
+
+    val selectedRecord = SpaceActiveProfileSelection.resolve(
+        selectedKey, profiles.map { it.record to it.status },
+    )
 
     Scaffold { insets ->
         LazyColumn(
@@ -91,6 +100,27 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(12.dp))
+                Text(
+                    when {
+                        selectedRecord != null ->
+                            "Активный профиль: ${selectedRecord.plan.packageName}"
+                        selectedKey != null ->
+                            "Ранее выбранная сборка недоступна или изменилась. Выберите проверенную версию заново."
+                        else -> "Активная игра пока не выбрана."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    "Выбор сохраняется только в ModKit; передача управления в отдельный Space-хост ещё не подключена.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (selectedKey != null) {
+                    TextButton(onClick = {
+                        SpaceActiveProfileStore.clear(context)
+                        selectedKey = null
+                    }) { Text("Снять выбор") }
+                }
                 OutlinedButton(
                     onClick = { refresh++ },
                     enabled = !loading,
@@ -115,6 +145,10 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
             }
             items(profiles, key = { it.record.plan.packageName }) { row ->
                 val record = row.record
+                val isActive = selectedRecord?.let { selected ->
+                    selected.plan.packageName == record.plan.packageName &&
+                        selected.plan.artifactSha256 == record.plan.artifactSha256
+                } ?: false
                 Card(Modifier.fillMaxWidth()) {
                     Column(
                         Modifier.padding(18.dp),
@@ -146,6 +180,24 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                                 MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        OutlinedButton(
+                            onClick = {
+                                scope.launch {
+                                    selecting = true
+                                    try {
+                                        selectedKey = SpaceActiveProfileStore.activate(context, record)
+                                        error = null
+                                    } catch (failure: Exception) {
+                                        error = failure.message ?: "Не удалось выбрать профиль."
+                                        refresh++
+                                    } finally {
+                                        selecting = false
+                                    }
+                                }
+                            },
+                            enabled = row.status == SpaceLaunchStatus.READY && !isActive && !selecting,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(if (isActive) "Активная игра" else "Выбрать активной игрой") }
                         Button(
                             onClick = {
                                 scope.launch {

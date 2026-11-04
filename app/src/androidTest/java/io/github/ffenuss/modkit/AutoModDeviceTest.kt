@@ -667,6 +667,13 @@ class AutoModDeviceTest {
             RepackedRuntimeInstallStatusKind.SUCCESS,
             RepackedRuntimeInstallStatusStore.status.value.kind,
         )
+        // Keep the genuinely signed build for a later positive Space selection
+        // test. Do not synthesize a signer/hash from a random installed package.
+        io.github.ffenuss.modkit.ui.AutoModBuildRecord(
+            plan, built.builtAtEpochMs,
+            listOf("Owned fixture: verified movement step"),
+            built.reportFile.absolutePath,
+        ).save(context)
 
         launchGame()
         fixtureText("Movement distance: 0")
@@ -684,6 +691,7 @@ class AutoModDeviceTest {
      * This uses only a disposable, local test record; no user's app is touched.
      */
     @Test fun h_spaceListsPerGameBuildButBlocksUntrustedLaunch() {
+        io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
         val artifact = "d".repeat(64)
         val saved = File(context.filesDir, "space-test-build.apk")
         saved.writeBytes(byteArrayOf(1, 2, 3, 4))
@@ -727,6 +735,13 @@ class AutoModDeviceTest {
             fixtureText("Профили моих игр").click()
             fixtureText("Space · игровые профили")
             fixtureText(fixturePackage)
+            val choose = fixtureText("Выбрать активной игрой")
+            choose.click()
+            device.waitForIdle()
+            assertNull(
+                "Untrusted installed APK must never become the active Space profile",
+                io.github.ffenuss.modkit.space.SpaceActiveProfileStore.read(context),
+            )
             val launch = fixtureText("Запустить установленную игру")
             evidence("space-signature-guard.png") { device.takeScreenshot(it) }
             evidence("space-signature-guard-hierarchy.xml") { device.dumpWindowHierarchy(it) }
@@ -739,8 +754,58 @@ class AutoModDeviceTest {
                 device.hasObject(By.text("Space · игровые профили")),
             )
         } finally {
+            io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
             recordFile.delete()
             saved.delete()
+        }
+    }
+
+    /**
+     * Positive counterpart of h_: the actual signer- and SHA-verified APK
+     * from g_ can be selected in Space, and the choice remains exact after
+     * navigating away and back. Only the disposable owned fixture is used.
+     */
+    @Test fun i_spaceSelectsAndPersistsOnlyTheVerifiedFixtureBuild() = runBlocking {
+        val saved = io.github.ffenuss.modkit.space.SpaceBuildProfileIndex.load(context)
+            .single { it.plan.packageName == fixturePackage }
+        assertEquals(
+            io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY,
+            io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher.status(context, saved),
+        )
+        io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
+        try {
+            io.github.ffenuss.modkit.ui.AutoModSessionStore(context).clear()
+            AnalysisManager.clearTerminalState()
+            val component = android.content.ComponentName(
+                context, MainActivity::class.java,
+            ).flattenToShortString()
+            device.executeShellCommand("am start -W -n $component -f 0x14008000")
+            fixtureText("Профили моих игр").click()
+            fixtureText("Space · игровые профили")
+            fixtureText("Выбрать активной игрой").click()
+            device.waitForIdle()
+            fixtureText("Активный профиль: $fixturePackage")
+            val chosen = io.github.ffenuss.modkit.space.SpaceActiveProfileStore.read(context)
+            assertEquals(io.github.ffenuss.modkit.space.SpaceActiveProfileKey.of(saved), chosen)
+            assertEquals(
+                saved,
+                io.github.ffenuss.modkit.space.SpaceActiveProfileSelection.resolve(
+                    chosen,
+                    listOf(saved to io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY),
+                ),
+            )
+            // A different version of the same package must never be selected.
+            assertNull(
+                io.github.ffenuss.modkit.space.SpaceActiveProfileSelection.resolve(
+                    chosen, listOf(
+                        saved.copy(plan = saved.plan.copy(artifactSha256 = "f".repeat(64))) to
+                            io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY,
+                    ),
+                ),
+            )
+            evidence("space-verified-active-game.png") { device.takeScreenshot(it) }
+        } finally {
+            io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
         }
     }
 
