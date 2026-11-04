@@ -271,7 +271,12 @@ class AutoModDeviceTest {
                     evidence("ui-install-failure-hierarchy.xml") { device.dumpWindowHierarchy(it) }
                     throw AssertionError("Installer reported failure: ${status.message} (session=${status.sessionId})")
                 }
-                device.findObject(By.text("Подтвердить установку"))?.click()
+                try {
+                    device.findObject(By.text("Подтвердить установку"))?.click()
+                } catch (_: androidx.test.uiautomator.StaleObjectException) {
+                    // The install UI can be recomposed between lookup and tap.
+                    // Retry on the next device polling iteration.
+                }
                 val systemInstall = device.findObject(By.res("com.android.packageinstaller", "ok_button"))
                     ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
                     ?: device.findObject(By.text("Install"))
@@ -281,7 +286,12 @@ class AutoModDeviceTest {
                 if (systemInstall != null) {
                     evidence("ui-install-confirmation-screen.png") { device.takeScreenshot(it) }
                     evidence("ui-install-confirmation-hierarchy.xml") { device.dumpWindowHierarchy(it) }
-                    systemInstall.click()
+                    try {
+                        systemInstall.click()
+                    } catch (_: androidx.test.uiautomator.StaleObjectException) {
+                        // System PackageInstaller often replaces its button
+                        // during state transition; the loop will look up anew.
+                    }
                 }
             }
             device.wait(Until.hasObject(By.text("Приложение установлено")), 500)
@@ -1119,7 +1129,12 @@ class AutoModDeviceTest {
                 Until.findObject(By.textContains("Movement distance:")), 10_000))
             return label.text.substringAfter("Movement distance:").trim().toInt()
         }
-        val standard = stepAndRead()
+        fun readDistance(): Int = requireNotNull(device.wait(
+            Until.findObject(By.textContains("Movement distance:")), 10_000))
+            .text.substringAfter("Movement distance:").trim().toInt()
+        val initial = readDistance()
+        val first = stepAndRead()
+        val standard = first - initial
         assertTrue("Baseline movement must advance", standard > 0)
 
         requireNotNull(device.findObject(By.text("MK"))).click()
@@ -1129,7 +1144,7 @@ class AutoModDeviceTest {
         requireNotNull(device.findObject(By.text("MK"))).click()
         val doubled = stepAndRead()
         assertEquals("ON must perform two real movement writes",
-            standard * 3, doubled)
+            standard * 2, doubled - first)
 
         requireNotNull(device.findObject(By.text("MK"))).click()
         fixtureText("Движение ×2: включено").click()
@@ -1138,7 +1153,7 @@ class AutoModDeviceTest {
         requireNotNull(device.findObject(By.text("MK"))).click()
         val restored = stepAndRead()
         assertEquals("OFF must return to baseline movement",
-            standard * 4, restored)
+            standard, restored - doubled)
 
         requireNotNull(device.findObject(By.text("MK"))).click()
         fixtureText("Движение ×2: выключено").click()
@@ -1149,7 +1164,7 @@ class AutoModDeviceTest {
             device.wait(Until.gone(By.text("MK")), 15_000))
         val afterClose = stepAndRead()
         assertEquals("Closing the overlay must revoke live movement effects",
-            standard * 5, afterClose)
+            standard, afterClose - restored)
     }
 
 }
