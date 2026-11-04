@@ -281,3 +281,23 @@ universal game modification system:
 **Not supported:** executing this recipe on other games without an
 explicitly implemented and confirmed compatible runtime adapter, virtual
 guest execution, root-only memory modifications or universal live injection.
+
+### Verified live ON/OFF runtime effect (2026-11-04)
+
+[GitHub Actions #41897137536](https://github.com/Ffenuss/ModKit/actions/runs/41897137536)
+**completed successfully**: JVM unit tests, Android Lint, both APK builds
+and verification; Android API 29 (single APK) and Android API 35 (split APK)
+device suites each passed all 14 tests.
+
+New instrumentation `n_spaceOwnedFixtureLiveToggleChangesActualMovement`
+confirms: (1) other app UID cannot operate the owned fixture provider,
+(2) ordinary baseline step, (3) two movement writes while the live toggle is
+ON, (4) one movement write again after OFF, and (5) one movement write after
+closing the overlay, including safe state cleanup. Distances are verified by
+**deltas**, not presumed initial cumulative values, so they work even after
+existing static movement recipe tests. The existing Android 35 package
+installer test was stabilized against short-lived UiAutomator buttons.
+
+The explicitly cooperative `dev.modkit.fixture` runtime is the only supported
+live recipe target. This check is **not** evidence for unowned Android games,
+multiple engine runtime backends, or non-root virtualization.
