@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Local sideloaded development host: needs to verify the exact installed
+         base/split APK set of the user-selected game. No APK modification. -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+    <queries>
+        <package android:name="io.github.ffenuss.modkit" />
+        <package android:name="io.github.ffenuss.modkit.test" />
+    </queries>
+    <application
+        android:allowBackup="false"
+        android:label="ModKit Space Companion"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity
+            android:name=".SpaceCompanionActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
