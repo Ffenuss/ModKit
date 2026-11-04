@@ -67,6 +67,19 @@ internal object SpaceLegacyProfileContract {
 /** The legacy host's two explicitly approved QA certificate SHA-256 pins. */
 internal object SpaceTrustedHost {
     const val PACKAGE = "com.dualspace.multispace.androidx"
+    const val COMPANION_PACKAGE = "io.github.ffenuss.modkit.spacecompanion"
+
+    /** The independently built companion is trusted only when ModKit and the
+     * companion are signed with the identical Android certificate. */
+    fun companionInstalled(context: Context): Boolean = runCatching {
+        context.packageManager.checkSignatures(context.packageName, COMPANION_PACKAGE) ==
+            PackageManager.SIGNATURE_MATCH
+    }.getOrDefault(false)
+
+    fun callerAllowed(context: Context, packages: Collection<String>): Boolean =
+        (COMPANION_PACKAGE in packages && companionInstalled(context)) ||
+            (PACKAGE in packages && legacyInstalled(context))
+
     private val CERTIFICATE_PINS = setOf(
         "03498720af5c326fc3a399d7c96aed5fdea2f378ec1799580bb119e1bcbc4b5f",
         "b44a6c2b53689c16cb08da3ca22e4aba20d9d0d1ecbc26df13e15c04b6665073",
@@ -76,7 +89,10 @@ internal object SpaceTrustedHost {
         signers.size == 1 && signers.single().lowercase(Locale.ROOT) in CERTIFICATE_PINS
 
     @Suppress("DEPRECATION")
-    fun installed(context: Context): Boolean = runCatching {
+    fun installed(context: Context): Boolean =
+        companionInstalled(context) || legacyInstalled(context)
+
+    fun legacyInstalled(context: Context): Boolean = runCatching {
         val pm = context.packageManager
         val info = if (Build.VERSION.SDK_INT >= 33)
             pm.getPackageInfo(PACKAGE, PackageManager.PackageInfoFlags.of(
@@ -90,14 +106,16 @@ internal object SpaceTrustedHost {
     }.getOrDefault(false)
 
     fun open(context: Context) {
-        check(installed(context)) {
-            "Проверенное пространство ModKit не установлено или имеет другую подпись."
+        val hostPackage = when {
+            companionInstalled(context) -> COMPANION_PACKAGE
+            legacyInstalled(context) -> PACKAGE
+            else -> error("Проверенный Space Companion или legacy-хост не установлен.")
         }
-        val launcher = requireNotNull(context.packageManager.getLaunchIntentForPackage(PACKAGE)) {
+        val launcher = requireNotNull(context.packageManager.getLaunchIntentForPackage(hostPackage)) {
             "У проверенного пространства нет доступного экрана запуска."
         }
         val component = requireNotNull(launcher.component) { "Недоступный компонент пространства." }
-        check(component.packageName == PACKAGE) { "Неверный пакет пространства." }
+        check(component.packageName == hostPackage) { "Неверный пакет пространства." }
         @Suppress("DEPRECATION")
         val info = context.packageManager.getActivityInfo(component, 0)
         check(info.exported && info.enabled && info.applicationInfo.enabled) {
@@ -153,7 +171,7 @@ class SpaceReadOnlyMenuProvider : ContentProvider() {
         val uid = Binder.getCallingUid()
         if (uid == app.applicationInfo.uid) return
         val packages = app.packageManager.getPackagesForUid(uid).orEmpty()
-        if (SpaceTrustedHost.PACKAGE !in packages || !SpaceTrustedHost.installed(app))
+        if (!SpaceTrustedHost.callerAllowed(app, packages.toList()))
             throw SecurityException("Only an authenticated ModKit Space host may read profiles")
     }
 

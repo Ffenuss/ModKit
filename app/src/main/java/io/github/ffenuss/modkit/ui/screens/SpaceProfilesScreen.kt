@@ -113,7 +113,7 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
-                    "Выбранная установленная сборка может передать в проверенный Space-хост только сведения об APK. Исполняемые моды и виртуальный запуск пока не передаются.",
+                    "Space Companion проверяет подпись ModKit и SHA-256 полного набора APK, затем может запустить игру обычным способом. Виртуализация и переключатели модов пока не реализованы.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
