@@ -75,6 +75,7 @@ object SpaceActiveProfileStore {
                 .putString(KEY_ARTIFACT, key.artifactSha256).commit()) {
                 "Не удалось сохранить выбор активной игры."
             }
+            SpaceLegacyMenuBridge.announce(appContext)
             key
         }
     }
@@ -82,5 +83,6 @@ object SpaceActiveProfileStore {
     fun clear(context: Context) {
         context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
             .edit().clear().apply()
+        SpaceLegacyMenuBridge.announce(context)
     }
 }
