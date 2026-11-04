@@ -121,7 +121,6 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                     TextButton(onClick = {
                         SpaceActiveProfileStore.clear(context)
                         selectedKey = null
-                        SpaceLegacyMenuBridge.announce(context)
                     }) { Text("Снять выбор") }
                 }
                 if (selectedRecord != null) {
