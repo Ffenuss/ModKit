@@ -76,6 +76,12 @@ APK-content-verified build through the **existing** legacy host protocol:
   The old host must independently verify that its virtual guest **exactly
   matches** the exported source-set; otherwise the menu remains unavailable.
   An original, unchanged APK is not inferred from a repacked build.
+- The old host retains its own cache and virtual-user selection. Clearing the
+  active game in ModKit stops future publication but **does not delete old
+  profiles cached by the host**, remotely revoke permissions, or automatically
+  select a guest inside the host. The user still chooses the original guest
+  and virtual user in that host. Removing host-cached profiles is a separate
+  verified feature, not an implied part of this bridge.
 
 **Build limits:** the proprietary reference host binary and its original
 signing credentials are not in the current repository. The provider and
