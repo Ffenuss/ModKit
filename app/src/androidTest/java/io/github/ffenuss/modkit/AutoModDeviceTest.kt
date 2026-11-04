@@ -1083,4 +1083,73 @@ class AutoModDeviceTest {
         )
     }
 
+    /**
+     * Runtime capability is offered only by the explicitly cooperating owned
+     * fixture. Its real in-process movement write-back changes while toggled
+     * and reverts on OFF and overlay shutdown. The ordinary ModKit UID must
+     * never be able to invoke the Companion-only fixture provider directly.
+     */
+    @Test fun n_spaceOwnedFixtureLiveToggleChangesActualMovement() = runBlocking {
+        val saved = io.github.ffenuss.modkit.space.SpaceBuildProfileIndex.load(context)
+            .single { it.plan.packageName == fixturePackage }
+        assertEquals(
+            io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY,
+            io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher.status(context, saved),
+        )
+        val control = android.net.Uri.parse("content://dev.modkit.fixture.modkit-runtime")
+        assertTrue(
+            "Other application UIDs must not call the fixture controller",
+            runCatching {
+                context.contentResolver.call(control, "set_double_movement", null,
+                    android.os.Bundle().apply { putBoolean("enabled", true) })
+            }.isFailure,
+        )
+        io.github.ffenuss.modkit.space.SpaceTrustedHost.open(context)
+        fixtureText("Оверлей и запуск: $fixturePackage").click()
+        assertNotNull(
+            "Owned game must run under the overlay",
+            device.wait(Until.findObject(By.textContains("Movement distance:")), 25_000),
+        )
+        assertNotNull("Overlay MK bubble expected",
+            device.wait(Until.findObject(By.text("MK")), 25_000))
+        fun stepAndRead(): Int {
+            fixtureText("Move step").click()
+            device.waitForIdle()
+            val label = requireNotNull(device.wait(
+                Until.findObject(By.textContains("Movement distance:")), 10_000))
+            return label.text.substringAfter("Movement distance:").trim().toInt()
+        }
+        val standard = stepAndRead()
+        assertTrue("Baseline movement must advance", standard > 0)
+
+        requireNotNull(device.findObject(By.text("MK"))).click()
+        fixtureText("Движение ×2: выключено").click()
+        assertNotNull("The executor must acknowledge its actual ON state",
+            device.wait(Until.findObject(By.text("Движение ×2: включено")), 20_000))
+        requireNotNull(device.findObject(By.text("MK"))).click()
+        val doubled = stepAndRead()
+        assertEquals("ON must perform two real movement writes",
+            standard * 3, doubled)
+
+        requireNotNull(device.findObject(By.text("MK"))).click()
+        fixtureText("Движение ×2: включено").click()
+        assertNotNull("OFF must be confirmed by the running game",
+            device.wait(Until.findObject(By.text("Движение ×2: выключено")), 20_000))
+        requireNotNull(device.findObject(By.text("MK"))).click()
+        val restored = stepAndRead()
+        assertEquals("OFF must return to baseline movement",
+            standard * 4, restored)
+
+        requireNotNull(device.findObject(By.text("MK"))).click()
+        fixtureText("Движение ×2: выключено").click()
+        assertNotNull(device.wait(Until.findObject(
+            By.text("Движение ×2: включено")), 20_000))
+        fixtureText("Закрыть меню").click()
+        assertTrue("Overlay must fully disappear on close",
+            device.wait(Until.gone(By.text("MK")), 15_000))
+        val afterClose = stepAndRead()
+        assertEquals("Closing the overlay must revoke live movement effects",
+            standard * 5, afterClose)
+    }
+
 }
