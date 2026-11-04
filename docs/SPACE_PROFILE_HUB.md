@@ -301,3 +301,30 @@ installer test was stabilized against short-lived UiAutomator buttons.
 The explicitly cooperative `dev.modkit.fixture` runtime is the only supported
 live recipe target. This check is **not** evidence for unowned Android games,
 multiple engine runtime backends, or non-root virtualization.
+
+## Runtime recipe contract v2 (two verified independent effects)
+
+`dev.modkit.fixture` now implements the opt-in
+`owned_fixture_recipe_v2` contract. The fixture provider returns a bounded,
+versioned catalog of **executable** recipe IDs, human labels, and authoritative
+live enabled states. It supports exactly two allowed operations:
+`movement_x2` (a second movement write-back per player step) and
+`damage_shield` (the real player-damage branch is not taken while enabled).
+
+The Companion recognizes the **specific owned fixture adapter** only; it
+rejects any unknown ID, duplicate, mismatched label, malformed array,
+wrong version, or suspended game claiming enabled states. It constructs
+overlay controls from the verified adapter's acknowledged catalog rather
+than a static list of speculative game features. Every user ON/OFF
+rechecks the publisher catalog, installed game certificate, exact
+base/split APK hashes and the active runtime, then requires an explicit
+state acknowledgement. The controls have separate state and can operate
+concurrently. Shutdown and selection revocation send safe OFF for **both**
+recipes; Activity.onPause independently disables both in the game.
+
+On-device validation exercises both recipe switches, in-game actual
+health and movement, independence, per-recipe OFF and cleanup when
+closing the floating menu. This is **not** a generic recipe execution
+protocol for APKs that were not deliberately prepared to support it.
+The existing runtimeprobe payload remains a separate in-app/native
+probe and is not automatically treated as a v2 executor.
