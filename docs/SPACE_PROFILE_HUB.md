@@ -17,6 +17,10 @@ inject a runtime process, or expose live modification toggles.
    **actual SHA-256 of every installed base/split APK** against the saved build
    before allowing the regular Android launch. The hashes are collected from
    the installed package source on an IO dispatcher.
+8. Choose an **active game profile** for future Space handoff, or clear the
+   selection. Selection is written only after rechecking the installed APK's
+   complete signature/content identity. The selected key includes the precise
+   artifact SHA, so another game or an updated build is never silently chosen.
 
 Changing the APK's signature, uninstalling the build, deleting its local staged
 files, or replacing the game prevents launching from that saved profile.
@@ -33,8 +37,13 @@ files, or replacing the game prevents launching from that saved profile.
   legacy signatures for API 26–27; hashes certificate bytes and all installed
   base/split APK files with SHA-256. Hashing occurs off the UI thread and is
   repeated before every launch request.
-- `SpaceProfilesScreen`: displays build metadata and supported start action;
-  neither UI labels nor switches claim dynamic runtime modifications.
+- `SpaceProfilesScreen`: displays build metadata, explicit active-game selection
+  and supported regular Android start action; neither UI labels nor switches
+  claim dynamic runtime modifications.
+- `SpaceActiveProfileStore` and `SpaceActiveProfileSelection`: explicit
+  preference key (package + exact artifact SHA), repeat identity check before
+  saving, no fallback on missing packages or mismatched signers/content, and
+  never auto-select a different version of the same game.
 - The feature is intended to be compatible with a **future** authenticated
   export to the previously developed `SpaceMenuProvider` /
   `SpaceMenuHandoff` contract. Do not copy those legacy modules wholesale
@@ -53,3 +62,13 @@ files, or replacing the game prevents launching from that saved profile.
 - Saved builds do not become runtime toggles. Further work must implement a
   verified, process-bound command channel and an authenticated Space host.
 - No online purchase, server-side state or anti-cheat bypass is provided.
+
+## Selection verification
+
+- JVM tests cover two games, stale SHA after rebuilding, missing/untrusted
+  installed packages, duplicate records and malformed signatures.
+- Android instrumentation opens the profile screen with a deliberately
+  untrusted saved APK. Neither Launch nor Select may activate it.
+- The selection is **local ModKit metadata only**. The legacy Space host does
+  not consume this preference yet; authenticating that handoff is a separate
+  feature and requires its own device tests.
