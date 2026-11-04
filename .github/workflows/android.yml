@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feature/space-companion-handoff-20261104 ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
