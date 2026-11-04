@@ -12,7 +12,7 @@ import android.os.Bundle;
 public final class RuntimeControlBridge {
     public static final String OWNED_PACKAGE = "dev.modkit.fixture";
     private static final String AUTHORITY = "dev.modkit.fixture.modkit-runtime";
-    private static final Uri URI = Uri.parse("content://" + AUTHORITY);
+    private static final String URI_TEXT = "content://" + AUTHORITY;
     private static final String CONTRACT = "owned_fixture_v1";
     private static final String KEY_ENABLED = "enabled";
     private static final String KEY_ACTIVE = "active";
@@ -72,7 +72,7 @@ public final class RuntimeControlBridge {
 
     private static State perform(Context context, String method, Bundle args) {
         try {
-            Bundle result = context.getContentResolver().call(URI, method, null, args);
+            Bundle result = context.getContentResolver().call(Uri.parse(URI_TEXT), method, null, args);
             if (result == null || !CONTRACT.equals(result.getString("contract")) ||
                     !result.containsKey(KEY_ACTIVE) || !result.containsKey(KEY_ENABLED))
                 return new State(false, false, false, "Игра не поддерживает проверенный контракт");
