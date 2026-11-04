@@ -80,7 +80,13 @@ public final class GameActivity extends Activity {
         layout.addView(tickCooldown);
         Button moveStep = new Button(this);
         moveStep.setText("Move step");
-        moveStep.setOnClickListener(v -> { movement.step(); showState(); });
+        moveStep.setOnClickListener(v -> {
+            movement.step();
+            // Runtime effect is real: each enabled tap writes a second step.
+            // Existing static DEX movement recipes remain independently testable.
+            if (RuntimeLiveState.isDoubleMovementEnabled()) movement.step();
+            showState();
+        });
         layout.addView(moveStep);
         movementState = new TextView(this);
         movementState.setTextSize(19);
@@ -95,6 +101,17 @@ public final class GameActivity extends Activity {
         setContentView(scroll);
         showState();
     }
+
+    @Override protected void onResume() {
+        super.onResume();
+        RuntimeLiveState.resume();
+    }
+
+    @Override protected void onPause() {
+        RuntimeLiveState.pause();
+        super.onPause();
+    }
+
     private void showState() {
         state.setText((player.isDead() ? "GAME OVER" : "ALIVE") + " | Health: " + player.getHealth());
         distance.setText("Distance: " + player.distance());
