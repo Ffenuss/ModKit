@@ -858,4 +858,91 @@ class AutoModDeviceTest {
         }
     }
 
+    /**
+     * The legacy Space host observes the index URI. Verify that notifications
+     * follow durable preference commits, not invalid selection attempts.
+     * Only the owned, signed movement fixture from g_ is used here.
+     */
+    @Test fun j_spaceNotifiesOnlyAfterVerifiedSelectionAndClear() = runBlocking {
+        val saved = io.github.ffenuss.modkit.space.SpaceBuildProfileIndex.load(context)
+            .single { it.plan.packageName == fixturePackage }
+        assertEquals(
+            io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY,
+            io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher.status(context, saved),
+        )
+        io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
+        val indexUri = android.net.Uri.parse(
+            "content://${context.packageName}.space-menu/index",
+        )
+        val delivered = java.util.concurrent.atomic.AtomicInteger()
+        val activated = java.util.concurrent.CountDownLatch(1)
+        val cleared = java.util.concurrent.CountDownLatch(1)
+        val observer = object : android.database.ContentObserver(null) {
+            override fun onChange(selfChange: Boolean, uri: android.net.Uri?) {
+                if (uri != indexUri) return
+                when (delivered.incrementAndGet()) {
+                    1 -> activated.countDown()
+                    2 -> cleared.countDown()
+                }
+            }
+        }
+        context.contentResolver.registerContentObserver(indexUri, false, observer)
+        try {
+            val invalid = saved.copy(
+                plan = saved.plan.copy(signerCertificateSha256 = setOf("f".repeat(64))),
+            )
+            assertTrue(
+                "Changing the signer must prevent activation",
+                runCatching {
+                    io.github.ffenuss.modkit.space.SpaceActiveProfileStore.activate(
+                        context, invalid,
+                    )
+                }.isFailure,
+            )
+            assertNull(io.github.ffenuss.modkit.space.SpaceActiveProfileStore.read(context))
+            assertEquals("Rejected selection must not notify the host", 0, delivered.get())
+
+            val selected = io.github.ffenuss.modkit.space.SpaceActiveProfileStore
+                .activate(context, saved)
+            assertEquals(
+                io.github.ffenuss.modkit.space.SpaceActiveProfileKey.of(saved),
+                selected,
+            )
+            assertTrue(
+                "A committed selection must notify the host",
+                activated.await(10, java.util.concurrent.TimeUnit.SECONDS),
+            )
+            val active = JSONObject(
+                requireNotNull(context.contentResolver.openInputStream(indexUri))
+                    .bufferedReader().use { it.readText() },
+            )
+            assertEquals(1, active.getJSONArray("profiles").length())
+            val name = active.getJSONArray("profiles").getJSONObject(0).getString("file")
+            val oldProfileUri = android.net.Uri.parse(
+                "content://${context.packageName}.space-menu/profile/$name",
+            )
+
+            io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
+            assertTrue(
+                "A committed clear must notify the host",
+                cleared.await(10, java.util.concurrent.TimeUnit.SECONDS),
+            )
+            assertNull(io.github.ffenuss.modkit.space.SpaceActiveProfileStore.read(context))
+            val empty = JSONObject(
+                requireNotNull(context.contentResolver.openInputStream(indexUri))
+                    .bufferedReader().use { it.readText() },
+            )
+            assertEquals(0, empty.getJSONArray("profiles").length())
+            assertTrue(
+                "Cleared profiles must not remain readable via the provider",
+                runCatching {
+                    context.contentResolver.openInputStream(oldProfileUri)?.use { it.readBytes() }
+                }.isFailure,
+            )
+        } finally {
+            context.contentResolver.unregisterContentObserver(observer)
+            io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
+        }
+    }
+
 }
