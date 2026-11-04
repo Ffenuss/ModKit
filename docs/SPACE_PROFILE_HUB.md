@@ -49,6 +49,47 @@ files, or replacing the game prevents launching from that saved profile.
   `SpaceMenuHandoff` contract. Do not copy those legacy modules wholesale
   without verifying their current build and permission model.
 
+## Read-only synchronization with legacy `spacehost`
+
+The second integration layer exposes one explicit active, signer- and
+APK-content-verified build through the **existing** legacy host protocol:
+
+- `content://<ModKit applicationId>.space-menu/index` returns JSON
+  `{"schema":1,"profiles":[{"file":"...json","sha256":"..."}]}`;
+  if nothing is selected, or the installed package has changed, the list is empty.
+- `/profile/<file>` contains legacy `MenuProfile` **schema 1**,
+  `backend="none"`, exact package, build artifact hash and the **installed
+  signed APK-set** SHA-256 and sizes in `sources`.
+- `items=[]`, `engines=[]`. No DEX/static recipe is represented as a
+  live toggle; the host must separately match its own guest source files,
+  signer and virtual user. This transfer confers **no execution capability**.
+- Reads are allowed only to the ModKit app's UID or the host package
+  `com.dualspace.multispace.androidx` with one of the two pinned QA signing
+  certificates previously allowed by the legacy host bridge. No wildcard
+  packages, alternate signers, unsigned hosts, or permission-free APK access.
+  All insert/update/delete operations are rejected.
+- The explicit **"Открыть Space · только сведения об игре"** action rechecks
+  the active installed build, notifies the provider, then starts only a
+  signer-authenticated, exported host launcher Activity. An absent or
+  differently signed host produces a visible error.
+- A repacked static ModKit APK may have bytes different from the original game.
+  The old host must independently verify that its virtual guest **exactly
+  matches** the exported source-set; otherwise the menu remains unavailable.
+  An original, unchanged APK is not inferred from a repacked build.
+- The old host retains its own cache and virtual-user selection. Clearing the
+  active game in ModKit stops future publication but **does not delete old
+  profiles cached by the host**, remotely revoke permissions, or automatically
+  select a guest inside the host. The user still chooses the original guest
+  and virtual user in that host. Removing host-cached profiles is a separate
+  verified feature, not an implied part of this bridge.
+
+**Build limits:** the proprietary reference host binary and its original
+signing credentials are not in the current repository. The provider and
+schema can be tested locally in ModKit, but a successful end-to-end host
+bootstrap, virtual Google Play, overlay attachment or reversible live recipe
+requires an independently built and signed host pair and phone testing.
+Do not merge the legacy Space host modules blindly into the main app.
+
 ## Explicit limitations
 
 - This is a **catalog + standard Android launcher**, not containerization,

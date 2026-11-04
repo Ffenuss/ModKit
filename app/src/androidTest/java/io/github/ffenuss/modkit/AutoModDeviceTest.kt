@@ -742,6 +742,14 @@ class AutoModDeviceTest {
                 "Untrusted installed APK must never become the active Space profile",
                 io.github.ffenuss.modkit.space.SpaceActiveProfileStore.read(context),
             )
+            val emptyIndex = android.net.Uri.parse(
+                "content://${context.packageName}.space-menu/index",
+            )
+            val untrustedIndex = JSONObject(
+                requireNotNull(context.contentResolver.openInputStream(emptyIndex))
+                    .bufferedReader().use { it.readText() },
+            )
+            assertEquals(0, untrustedIndex.getJSONArray("profiles").length())
             val launch = fixtureText("Запустить установленную игру")
             evidence("space-signature-guard.png") { device.takeScreenshot(it) }
             evidence("space-signature-guard-hierarchy.xml") { device.dumpWindowHierarchy(it) }
@@ -803,9 +811,50 @@ class AutoModDeviceTest {
                     ),
                 ),
             )
+            // The old host's exact /index and /profile contract accepts this
+            // read-only inventory. No static recipe is published as runtime.
+            val indexUri = android.net.Uri.parse(
+                "content://${context.packageName}.space-menu/index",
+            )
+            val index = JSONObject(
+                requireNotNull(context.contentResolver.openInputStream(indexUri))
+                    .bufferedReader().use { it.readText() },
+            )
+            assertEquals(1, index.getInt("schema"))
+            val entries = index.getJSONArray("profiles")
+            assertEquals(1, entries.length())
+            val entry = entries.getJSONObject(0)
+            val profileUri = android.net.Uri.parse(
+                "content://${context.packageName}.space-menu/profile/${entry.getString("file")}",
+            )
+            val profileBytes = requireNotNull(context.contentResolver.openInputStream(profileUri))
+                .use { it.readBytes() }
+            val actualHash = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(profileBytes).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+            assertEquals(entry.getString("sha256"), actualHash)
+            val profile = JSONObject(String(profileBytes, Charsets.UTF_8))
+            assertEquals(1, profile.getInt("schema"))
+            assertEquals("none", profile.getString("backend"))
+            assertEquals(fixturePackage, profile.getString("packageName"))
+            assertEquals(0, profile.getJSONArray("items").length())
+            assertEquals(saved.plan.apks.size, profile.getJSONArray("sources").length())
+            val expected = saved.plan.apks.map { it.expectedSha256.lowercase() to it.size }.toSet()
+            val actual = (0 until profile.getJSONArray("sources").length()).map {
+                val source = profile.getJSONArray("sources").getJSONObject(it)
+                source.getString("sha256") to source.getLong("size")
+            }.toSet()
+            assertEquals(expected, actual)
             evidence("space-verified-active-game.png") { device.takeScreenshot(it) }
         } finally {
             io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
+            val indexUri = android.net.Uri.parse(
+                "content://${context.packageName}.space-menu/index",
+            )
+            val cleared = JSONObject(
+                requireNotNull(context.contentResolver.openInputStream(indexUri))
+                    .bufferedReader().use { it.readText() },
+            )
+            assertEquals(0, cleared.getJSONArray("profiles").length())
         }
     }
 
