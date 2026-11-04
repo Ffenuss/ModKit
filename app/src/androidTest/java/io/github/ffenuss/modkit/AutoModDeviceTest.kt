@@ -678,4 +678,70 @@ class AutoModDeviceTest {
         evidence("movement-structural-mod.png") { device.takeScreenshot(it) }
     }
 
+    /**
+     * Space hub must list a previously verified build profile without falsely
+     * enabling a launch for an APK signed by a different certificate.
+     * This uses only a disposable, local test record; no user's app is touched.
+     */
+    @Test fun h_spaceListsPerGameBuildButBlocksUntrustedLaunch() {
+        val artifact = "d".repeat(64)
+        val saved = File(context.filesDir, "space-test-build.apk")
+        saved.writeBytes(byteArrayOf(1, 2, 3, 4))
+        val recordFile = File(context.filesDir, "build-history/$artifact.json")
+        try {
+            val installPlan = RepackedRuntimeInstallPlan(
+                artifactSha256 = artifact,
+                packageName = fixturePackage,
+                signerCertificateSha256 = setOf("e".repeat(64)),
+                apks = listOf(
+                    RepackedRuntimeInstallApk(
+                        "base.apk", saved.absolutePath, "f".repeat(64), saved.length(),
+                    ),
+                ),
+                totalBytes = saved.length(),
+                blockers = emptyList(),
+            )
+            io.github.ffenuss.modkit.ui.AutoModBuildRecord(
+                installPlan,
+                System.currentTimeMillis() + 120_000L,
+                listOf("Test-only local profile"),
+                "",
+            ).save(context)
+            val selectedProfile = io.github.ffenuss.modkit.space.SpaceBuildProfileIndex
+                .load(context).single { it.plan.packageName == fixturePackage }
+            assertEquals("The test profile must be the active package entry",
+                artifact, selectedProfile.plan.artifactSha256)
+            val safety = io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher
+                .status(context, selectedProfile)
+            assertNotEquals(
+                "A fabricated APK must never be launchable",
+                io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY, safety,
+            )
+            io.github.ffenuss.modkit.ui.AutoModSessionStore(context).clear()
+            AnalysisManager.clearTerminalState()
+
+            val component = android.content.ComponentName(
+                context, MainActivity::class.java,
+            ).flattenToShortString()
+            device.executeShellCommand("am start -W -n $component -f 0x14008000")
+            fixtureText("Профили моих игр").click()
+            fixtureText("Space · игровые профили")
+            fixtureText(fixturePackage)
+            val launch = fixtureText("Запустить установленную игру")
+            evidence("space-signature-guard.png") { device.takeScreenshot(it) }
+            evidence("space-signature-guard-hierarchy.xml") { device.dumpWindowHierarchy(it) }
+            // UiAutomator can expose an enabled Text child even when its
+            // Compose Button ancestor is disabled. Verify the actual action.
+            launch.click()
+            device.waitForIdle()
+            assertTrue(
+                "A mismatched APK must not leave Space or launch the game: $safety",
+                device.hasObject(By.text("Space · игровые профили")),
+            )
+        } finally {
+            recordFile.delete()
+            saved.delete()
+        }
+    }
+
 }
