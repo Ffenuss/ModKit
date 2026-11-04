@@ -153,8 +153,12 @@ internal object SpaceLegacyMenuBridge {
     }
 
     fun announce(context: Context) {
-        val uri = Uri.parse("content://${context.packageName}.space-menu/index")
-        context.contentResolver.notifyChange(uri, null)
+        // A changed active profile affects the legacy index. The separate
+        // multi-game catalog does not grant execution and is only a hint.
+        for (name in listOf("index", "catalog")) {
+            val uri = Uri.parse("content://${context.packageName}.space-menu/$name")
+            context.contentResolver.notifyChange(uri, null)
+        }
     }
 }
 
@@ -180,22 +184,34 @@ class SpaceReadOnlyMenuProvider : ContentProvider() {
         val app = requireNotNull(context)
         if (mode != "r" || uri.authority != "${app.packageName}.space-menu")
             throw FileNotFoundException("Read-only Space menu endpoint")
-        val menu = SpaceLegacyMenuBridge.verified(app)
-        val bytes = when {
-            uri.pathSegments == listOf("index") -> {
-                val entries = JSONArray()
-                if (menu != null) {
-                    val payload = menu.toJson()
-                    entries.put(JSONObject()
-                        .put("file", menu.fileName)
-                        .put("sha256", hexSha256(payload)))
-                }
-                JSONObject().put("schema", 1).put("profiles", entries)
-                    .toString().toByteArray(Charsets.UTF_8)
+        val bytes = if (uri.pathSegments == listOf("catalog")) {
+            // The legacy host is not authorized to enumerate all build records.
+            // Only the identically signed companion can receive the catalog.
+            val packages = app.packageManager.getPackagesForUid(Binder.getCallingUid()).orEmpty()
+            check(Binder.getCallingUid() == app.applicationInfo.uid ||
+                (SpaceTrustedHost.COMPANION_PACKAGE in packages &&
+                    SpaceTrustedHost.companionInstalled(app))) {
+                "Only signed Space Companion may read the multi-game catalog"
             }
-            uri.pathSegments.size == 2 && uri.pathSegments[0] == "profile" &&
-                menu != null && uri.pathSegments[1] == menu.fileName -> menu.toJson()
-            else -> throw FileNotFoundException("No verified active game profile")
+            SpaceCatalogContract.encode(SpaceBuildProfileIndex.load(app))
+        } else {
+            val menu = SpaceLegacyMenuBridge.verified(app)
+            when {
+                uri.pathSegments == listOf("index") -> {
+                    val entries = JSONArray()
+                    if (menu != null) {
+                        val payload = menu.toJson()
+                        entries.put(JSONObject()
+                            .put("file", menu.fileName)
+                            .put("sha256", hexSha256(payload)))
+                    }
+                    JSONObject().put("schema", 1).put("profiles", entries)
+                        .toString().toByteArray(Charsets.UTF_8)
+                }
+                uri.pathSegments.size == 2 && uri.pathSegments[0] == "profile" &&
+                    menu != null && uri.pathSegments[1] == menu.fileName -> menu.toJson()
+                else -> throw FileNotFoundException("No verified active game profile")
+            }
         }
         check(bytes.size <= 256 * 1024) { "Menu payload exceeds host contract" }
         return openPipeHelper(uri, "application/json", null, bytes) { pipe, _, _, _, data ->
