@@ -48,6 +48,9 @@ public final class SpaceOverlayService extends Service {
     private LinearLayout root;
     private LinearLayout details;
     private TextView summary;
+    private Button liveMoveButton;
+    private boolean liveMoveEnabled;
+    private boolean closing;
     private SpaceCatalogReader.Entry active;
     private ContentObserver changes;
 
@@ -60,24 +63,29 @@ public final class SpaceOverlayService extends Service {
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null || ACTION_STOP.equals(intent.getAction())) {
-            stopSelf();
+            requestStop();
             return START_NOT_STICKY;
         }
         if (!ACTION_START.equals(intent.getAction()) || !Settings.canDrawOverlays(this)) {
-            stopSelf();
+            requestStop();
             return START_NOT_STICKY;
         }
         String pkg = intent.getStringExtra(EXTRA_PACKAGE);
         String artifact = intent.getStringExtra(EXTRA_ARTIFACT);
         String publisher = intent.getStringExtra(EXTRA_PUBLISHER);
         if (!OverlaySessionPolicy.valid(pkg, artifact, publisher)) {
-            stopSelf();
+            requestStop();
             return START_NOT_STICKY;
         }
 
         // Always start in the visible foreground-activity interaction path.
         // Do not use an overlay permission to start a service from background.
         showNotification();
+        closing = false;
+        final SpaceCatalogReader.Entry previous = active;
+        if (previous != null) {
+            io.execute(() -> RuntimeControlBridge.disableForCleanup(this, previous));
+        }
         final int token = generation.incrementAndGet();
         removeOverlay();
         unregisterPublisher();
@@ -91,7 +99,7 @@ public final class SpaceOverlayService extends Service {
                 if (token != generation.get()) return;
                 if (match == null || verified == null || !verified.ready ||
                         !Settings.canDrawOverlays(this)) {
-                    stopSelf();
+                    requestStop();
                     return;
                 }
                 active = match;
@@ -99,7 +107,7 @@ public final class SpaceOverlayService extends Service {
                     addOverlay(match);
                     observePublisher(publisher);
                 } catch (RuntimeException denied) {
-                    stopSelf();
+                    requestStop();
                 }
             });
         });
@@ -142,7 +150,7 @@ public final class SpaceOverlayService extends Service {
                     SpaceCatalogReader.Verification check =
                             SpaceCatalogReader.verify(SpaceOverlayService.this, session);
                     main.post(() -> {
-                        if (generation.get() == token && !check.ready) stopSelf();
+                        if (generation.get() == token && !check.ready) requestStop();
                     });
                 });
             }
@@ -152,7 +160,7 @@ public final class SpaceOverlayService extends Service {
             getContentResolver().registerContentObserver(uri, false, changes);
         } catch (SecurityException | IllegalArgumentException unavailable) {
             changes = null;
-            stopSelf();
+            requestStop();
         }
     }
 
@@ -180,6 +188,17 @@ public final class SpaceOverlayService extends Service {
         summary.setTextColor(0xFFF1C75B);
         summary.setText("Только сведения об игре — модификации не активны");
         details.addView(summary);
+
+        if (RuntimeControlBridge.supports(selected)) {
+            // Only our explicitly cooperative game fixture has an executor.
+            // No runtime switch is rendered for unsupported third-party games.
+            liveMoveButton = new Button(this);
+            liveMoveButton.setAllCaps(false);
+            liveMoveButton.setText("Движение ×2: проверка...");
+            liveMoveButton.setEnabled(false);
+            liveMoveButton.setOnClickListener(v -> toggleLiveMovement());
+            details.addView(liveMoveButton);
+        }
         Button recheck = new Button(this);
         recheck.setText("Сверить APK");
         recheck.setAllCaps(false);
@@ -188,7 +207,7 @@ public final class SpaceOverlayService extends Service {
         Button close = new Button(this);
         close.setText("Закрыть меню");
         close.setAllCaps(false);
-        close.setOnClickListener(v -> stopSelf());
+        close.setOnClickListener(v -> requestStop());
         details.addView(close);
         details.setVisibility(View.GONE);
         root.addView(details);
@@ -238,6 +257,75 @@ public final class SpaceOverlayService extends Service {
             }
         });
         windows.addView(root, params);
+        refreshLiveControl();
+    }
+
+    private void refreshLiveControl() {
+        final SpaceCatalogReader.Entry session = active;
+        if (session == null || liveMoveButton == null || closing) return;
+        liveMoveButton.setEnabled(false);
+        liveMoveButton.setText("Движение ×2: проверка...");
+        final int token = generation.get();
+        io.execute(() -> {
+            RuntimeControlBridge.State state = RuntimeControlBridge.read(this, session);
+            main.post(() -> {
+                if (token != generation.get() || closing || liveMoveButton == null) return;
+                liveMoveEnabled = state.enabled;
+                liveMoveButton.setEnabled(state.reachable && state.active);
+                liveMoveButton.setText(state.active ?
+                        (state.enabled ? "Движение ×2: включено" : "Движение ×2: выключено") :
+                        "Движение ×2: игра не активна");
+            });
+        });
+    }
+
+    private void toggleLiveMovement() {
+        final SpaceCatalogReader.Entry session = active;
+        if (session == null || liveMoveButton == null || closing) return;
+        final boolean next = !liveMoveEnabled;
+        final int token = generation.get();
+        liveMoveButton.setEnabled(false);
+        liveMoveButton.setText("Движение ×2: применение...");
+        io.execute(() -> {
+            RuntimeControlBridge.State result = RuntimeControlBridge.set(this, session, next);
+            main.post(() -> {
+                if (token != generation.get() || closing || liveMoveButton == null) return;
+                if (!result.reachable || !result.active || result.enabled != next) {
+                    // Do not leave an ambiguous state or false-success toggle.
+                    requestStop();
+                    return;
+                }
+                liveMoveEnabled = result.enabled;
+                liveMoveButton.setEnabled(true);
+                liveMoveButton.setText(result.enabled ?
+                        "Движение ×2: включено" : "Движение ×2: выключено");
+                if (summary != null) summary.setText(result.enabled ?
+                        "Применено в тестовой игре: движение ×2" :
+                        "Только сведения об игре — модификации не активны");
+            });
+        });
+    }
+
+    /**
+     * Cleanup always sends the safe OFF command, even if ModKit has withdrawn
+     * the original catalog entry. Deleting an authorization must not leave
+     * a previously enabled fixture movement multiplier running.
+     */
+    private void requestStop() {
+        if (closing) return;
+        closing = true;
+        generation.incrementAndGet();
+        final SpaceCatalogReader.Entry session = active;
+        unregisterPublisher();
+        removeOverlay();
+        if (session == null) {
+            stopSelf();
+            return;
+        }
+        io.execute(() -> {
+            RuntimeControlBridge.disableForCleanup(this, session);
+            main.post(this::stopSelf);
+        });
     }
 
     private void recheck() {
@@ -251,10 +339,13 @@ public final class SpaceOverlayService extends Service {
             main.post(() -> {
                 if (token != generation.get() || summary == null) return;
                 if (!result.ready) {
-                    stopSelf();
+                    requestStop();
                     return;
                 }
-                summary.setText("Только сведения об игре — модификации не активны");
+                summary.setText(liveMoveEnabled ?
+                        "Применено в тестовой игре: движение ×2" :
+                        "Только сведения об игре — модификации не активны");
+                if (liveMoveButton != null) refreshLiveControl();
             });
         });
     }
@@ -277,15 +368,21 @@ public final class SpaceOverlayService extends Service {
             root = null;
             details = null;
             summary = null;
+            liveMoveButton = null;
+            liveMoveEnabled = false;
         }
         active = null;
     }
 
     @Override public void onDestroy() {
         generation.incrementAndGet();
+        final SpaceCatalogReader.Entry orphan = active;
         unregisterPublisher();
         removeOverlay();
-        io.shutdownNow();
+        if (orphan != null) {
+            io.execute(() -> RuntimeControlBridge.disableForCleanup(this, orphan));
+        }
+        io.shutdown();
         super.onDestroy();
     }
 }

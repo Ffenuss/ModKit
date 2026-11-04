@@ -252,3 +252,52 @@ These results demonstrate **the overlay shell and cross-app handoff** only.
 They are not proof of sandboxed game execution, in-game memory modification
 or third-party compatibility. The normal production consent flow must be
 completed by the device owner.
+
+## Fixture-only runtime toggle proof (cooperative, non-virtual)
+
+A first *executable* live control is now implemented for the separately owned
+`dev.modkit.fixture` test game. This is intentionally narrower than a
+universal game modification system:
+
+- The fixture exports a versioned `content://dev.modkit.fixture.modkit-runtime`
+  call endpoint that authorizes only the **actual installed UID** belonging
+  to `io.github.ffenuss.modkit.spacecompanion`.
+- The fixture process owns an ephemeral `doubleMovement` flag. A player tap
+  on **Move step** performs one normal movement write, plus a second movement
+  write only when enabled. Normal DEX recipe tests retain their existing
+  unmodified movement getter.
+- Space Companion shows the runtime ON/OFF button **only** for this explicitly
+  supported fixture package, and only after reading the live acknowledged
+  state. No generic, unauthenticated runtime patch toggle is advertised.
+- Before each ON/OFF, Companion revalidates the currently authenticated ModKit
+  catalog, installed certificate identity, and every APK/split hash.
+- The game resets the flag on `Activity.onPause`, and Companion sends a safe
+  OFF command on overlay close, service cleanup or profile revocation.
+  No live-control flag is persisted and no third-party app memory is accessed.
+- The Android instrumented regression proves baseline movement, double
+  movement while ON, baseline movement after OFF, and baseline movement after
+  closing the floating menu, including denial of an unrelated caller UID.
+
+**Not supported:** executing this recipe on other games without an
+explicitly implemented and confirmed compatible runtime adapter, virtual
+guest execution, root-only memory modifications or universal live injection.
+
+### Verified live ON/OFF runtime effect (2026-11-04)
+
+[GitHub Actions #41897137536](https://github.com/Ffenuss/ModKit/actions/runs/41897137536)
+**completed successfully**: JVM unit tests, Android Lint, both APK builds
+and verification; Android API 29 (single APK) and Android API 35 (split APK)
+device suites each passed all 14 tests.
+
+New instrumentation `n_spaceOwnedFixtureLiveToggleChangesActualMovement`
+confirms: (1) other app UID cannot operate the owned fixture provider,
+(2) ordinary baseline step, (3) two movement writes while the live toggle is
+ON, (4) one movement write again after OFF, and (5) one movement write after
+closing the overlay, including safe state cleanup. Distances are verified by
+**deltas**, not presumed initial cumulative values, so they work even after
+existing static movement recipe tests. The existing Android 35 package
+installer test was stabilized against short-lived UiAutomator buttons.
+
+The explicitly cooperative `dev.modkit.fixture` runtime is the only supported
+live recipe target. This check is **not** evidence for unowned Android games,
+multiple engine runtime backends, or non-root virtualization.
