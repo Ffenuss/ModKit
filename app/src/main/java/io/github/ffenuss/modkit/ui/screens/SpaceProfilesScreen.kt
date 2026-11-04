@@ -35,6 +35,8 @@ import io.github.ffenuss.modkit.space.SpaceActiveProfileSelection
 import io.github.ffenuss.modkit.space.SpaceActiveProfileStore
 import io.github.ffenuss.modkit.space.SpaceBuildProfileIndex
 import io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher
+import io.github.ffenuss.modkit.space.SpaceLegacyMenuBridge
+import io.github.ffenuss.modkit.space.SpaceTrustedHost
 import io.github.ffenuss.modkit.space.SpaceLaunchStatus
 import io.github.ffenuss.modkit.ui.AutoModBuildRecord
 import kotlinx.coroutines.Dispatchers
@@ -111,7 +113,7 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(
-                    "Выбор сохраняется только в ModKit; передача управления в отдельный Space-хост ещё не подключена.",
+                    "Выбранная установленная сборка может передать в проверенный Space-хост только сведения об APK. Исполняемые моды и виртуальный запуск пока не передаются.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -119,7 +121,31 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                     TextButton(onClick = {
                         SpaceActiveProfileStore.clear(context)
                         selectedKey = null
+                        SpaceLegacyMenuBridge.announce(context)
                     }) { Text("Снять выбор") }
+                }
+                if (selectedRecord != null) {
+                    Button(
+                        onClick = {
+                            scope.launch {
+                                try {
+                                    // Do not advertise a stale profile or copy
+                                    // static APK modifications into live commands.
+                                    check(withContext(Dispatchers.IO) {
+                                        SpaceLegacyMenuBridge.verified(context.applicationContext) != null
+                                    }) { "Активный APK изменился. Обновите профили." }
+                                    SpaceLegacyMenuBridge.announce(context)
+                                    SpaceTrustedHost.open(context)
+                                    error = null
+                                } catch (failure: Exception) {
+                                    error = failure.message ?: "Не удалось открыть проверенный Space."
+                                    refresh++
+                                }
+                            }
+                        },
+                        enabled = !loading && !selecting,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Открыть Space · только сведения об игре") }
                 }
                 OutlinedButton(
                     onClick = { refresh++ },
