@@ -22,6 +22,8 @@ import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -48,8 +50,9 @@ public final class SpaceOverlayService extends Service {
     private LinearLayout root;
     private LinearLayout details;
     private TextView summary;
-    private Button liveMoveButton;
-    private boolean liveMoveEnabled;
+    private LinearLayout recipeContainer;
+    private final Map<String, Button> recipeButtons = new LinkedHashMap<>();
+    private final Map<String, Boolean> recipeStates = new LinkedHashMap<>();
     private boolean closing;
     private SpaceCatalogReader.Entry active;
     private ContentObserver changes;
@@ -84,7 +87,7 @@ public final class SpaceOverlayService extends Service {
         closing = false;
         final SpaceCatalogReader.Entry previous = active;
         if (previous != null) {
-            io.execute(() -> RuntimeControlBridge.disableForCleanup(this, previous));
+            io.execute(() -> RuntimeControlBridge.disableAllRecipesForCleanup(this, previous));
         }
         final int token = generation.incrementAndGet();
         removeOverlay();
@@ -190,14 +193,11 @@ public final class SpaceOverlayService extends Service {
         details.addView(summary);
 
         if (RuntimeControlBridge.supports(selected)) {
-            // Only our explicitly cooperative game fixture has an executor.
-            // No runtime switch is rendered for unsupported third-party games.
-            liveMoveButton = new Button(this);
-            liveMoveButton.setAllCaps(false);
-            liveMoveButton.setText("Движение ×2: проверка...");
-            liveMoveButton.setEnabled(false);
-            liveMoveButton.setOnClickListener(v -> toggleLiveMovement());
-            details.addView(liveMoveButton);
+            // A supported adapter returns an explicit set of confirmed actions.
+            // Do not infer runtime support from name-based static DEX candidates.
+            recipeContainer = new LinearLayout(this);
+            recipeContainer.setOrientation(LinearLayout.VERTICAL);
+            details.addView(recipeContainer);
         }
         Button recheck = new Button(this);
         recheck.setText("Сверить APK");
@@ -262,46 +262,78 @@ public final class SpaceOverlayService extends Service {
 
     private void refreshLiveControl() {
         final SpaceCatalogReader.Entry session = active;
-        if (session == null || liveMoveButton == null || closing) return;
-        liveMoveButton.setEnabled(false);
-        liveMoveButton.setText("Движение ×2: проверка...");
+        if (session == null || recipeContainer == null || closing) return;
+        for (Button button : recipeButtons.values()) button.setEnabled(false);
         final int token = generation.get();
         io.execute(() -> {
-            RuntimeControlBridge.State state = RuntimeControlBridge.read(this, session);
+            RuntimeControlBridge.RecipeSnapshot status =
+                    RuntimeControlBridge.discoverRecipes(this, session);
             main.post(() -> {
-                if (token != generation.get() || closing || liveMoveButton == null) return;
-                liveMoveEnabled = state.enabled;
-                liveMoveButton.setEnabled(state.reachable && state.active);
-                liveMoveButton.setText(state.active ?
-                        (state.enabled ? "Движение ×2: включено" : "Движение ×2: выключено") :
-                        "Движение ×2: игра не активна");
+                if (token != generation.get() || closing || recipeContainer == null) return;
+                renderRecipes(status);
             });
         });
     }
 
-    private void toggleLiveMovement() {
+    /** Only provider-acknowledged, adapter-reviewed recipes get UI controls. */
+    private void renderRecipes(RuntimeControlBridge.RecipeSnapshot snapshot) {
+        if (recipeContainer == null) return;
+        recipeContainer.removeAllViews();
+        recipeButtons.clear();
+        recipeStates.clear();
+        if (!snapshot.reachable) {
+            TextView denied = new TextView(this);
+            denied.setTextColor(0xFFF1C75B);
+            denied.setText("Исполняемые рецепты не подтверждены");
+            recipeContainer.addView(denied);
+            return;
+        }
+        for (VerifiedRecipeContract.Recipe recipe : snapshot.recipes) {
+            Button action = new Button(this);
+            action.setAllCaps(false);
+            action.setText(recipe.label + ": " +
+                    (recipe.enabled ? "включено" : "выключено"));
+            action.setEnabled(snapshot.active);
+            action.setOnClickListener(v -> toggleRecipe(recipe.id));
+            recipeButtons.put(recipe.id, action);
+            recipeStates.put(recipe.id, recipe.enabled);
+            recipeContainer.addView(action);
+        }
+        updateRecipeSummary();
+    }
+
+    private void updateRecipeSummary() {
+        if (summary == null) return;
+        if (Boolean.TRUE.equals(recipeStates.get(VerifiedRecipeContract.MOVEMENT)) &&
+                Boolean.TRUE.equals(recipeStates.get(VerifiedRecipeContract.SHIELD))) {
+            summary.setText("В тестовой игре включены 2 проверенных рецепта");
+        } else if (Boolean.TRUE.equals(recipeStates.get(VerifiedRecipeContract.MOVEMENT))) {
+            summary.setText("Применено в тестовой игре: движение ×2");
+        } else if (Boolean.TRUE.equals(recipeStates.get(VerifiedRecipeContract.SHIELD))) {
+            summary.setText("Применено в тестовой игре: защита здоровья");
+        } else {
+            summary.setText("Только сведения об игре — модификации не активны");
+        }
+    }
+
+    private void toggleRecipe(String id) {
         final SpaceCatalogReader.Entry session = active;
-        if (session == null || liveMoveButton == null || closing) return;
-        final boolean next = !liveMoveEnabled;
+        final Boolean previous = recipeStates.get(id);
+        if (session == null || previous == null || closing) return;
+        final boolean next = !previous;
         final int token = generation.get();
-        liveMoveButton.setEnabled(false);
-        liveMoveButton.setText("Движение ×2: применение...");
+        for (Button button : recipeButtons.values()) button.setEnabled(false);
         io.execute(() -> {
-            RuntimeControlBridge.State result = RuntimeControlBridge.set(this, session, next);
+            RuntimeControlBridge.RecipeSnapshot result =
+                    RuntimeControlBridge.setRecipe(this, session, id, next);
             main.post(() -> {
-                if (token != generation.get() || closing || liveMoveButton == null) return;
-                if (!result.reachable || !result.active || result.enabled != next) {
-                    // Do not leave an ambiguous state or false-success toggle.
+                if (token != generation.get() || closing || recipeContainer == null) return;
+                if (!result.reachable || !result.active ||
+                        result.find(id) == null || result.find(id).enabled != next) {
                     requestStop();
                     return;
                 }
-                liveMoveEnabled = result.enabled;
-                liveMoveButton.setEnabled(true);
-                liveMoveButton.setText(result.enabled ?
-                        "Движение ×2: включено" : "Движение ×2: выключено");
-                if (summary != null) summary.setText(result.enabled ?
-                        "Применено в тестовой игре: движение ×2" :
-                        "Только сведения об игре — модификации не активны");
+                renderRecipes(result);
             });
         });
     }
@@ -323,7 +355,7 @@ public final class SpaceOverlayService extends Service {
             return;
         }
         io.execute(() -> {
-            RuntimeControlBridge.disableForCleanup(this, session);
+            RuntimeControlBridge.disableAllRecipesForCleanup(this, session);
             main.post(this::stopSelf);
         });
     }
@@ -342,10 +374,8 @@ public final class SpaceOverlayService extends Service {
                     requestStop();
                     return;
                 }
-                summary.setText(liveMoveEnabled ?
-                        "Применено в тестовой игре: движение ×2" :
-                        "Только сведения об игре — модификации не активны");
-                if (liveMoveButton != null) refreshLiveControl();
+                updateRecipeSummary();
+                if (recipeContainer != null) refreshLiveControl();
             });
         });
     }
@@ -368,8 +398,9 @@ public final class SpaceOverlayService extends Service {
             root = null;
             details = null;
             summary = null;
-            liveMoveButton = null;
-            liveMoveEnabled = false;
+            recipeContainer = null;
+            recipeButtons.clear();
+            recipeStates.clear();
         }
         active = null;
     }
@@ -380,7 +411,7 @@ public final class SpaceOverlayService extends Service {
         unregisterPublisher();
         removeOverlay();
         if (orphan != null) {
-            io.execute(() -> RuntimeControlBridge.disableForCleanup(this, orphan));
+            io.execute(() -> RuntimeControlBridge.disableAllRecipesForCleanup(this, orphan));
         }
         io.shutdown();
         super.onDestroy();
