@@ -2,6 +2,7 @@ package io.github.ffenuss.modkit.spacecompanion;
 
 import android.content.Context;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 
 /**
@@ -72,7 +73,10 @@ public final class RuntimeControlBridge {
 
     private static State perform(Context context, String method, Bundle args) {
         try {
-            Bundle result = context.getContentResolver().call(Uri.parse(URI_TEXT), method, null, args);
+            // The URI overload is API 29+, while Companion supports API 26.
+            Bundle result = Build.VERSION.SDK_INT >= 29 ?
+                    context.getContentResolver().call(Uri.parse(URI_TEXT), method, null, args) :
+                    context.getContentResolver().call(AUTHORITY, method, null, args);
             if (result == null || !CONTRACT.equals(result.getString("contract")) ||
                     !result.containsKey(KEY_ACTIVE) || !result.containsKey(KEY_ENABLED))
                 return new State(false, false, false, "Игра не поддерживает проверенный контракт");
