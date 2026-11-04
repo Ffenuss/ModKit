@@ -328,3 +328,21 @@ closing the floating menu. This is **not** a generic recipe execution
 protocol for APKs that were not deliberately prepared to support it.
 The existing runtimeprobe payload remains a separate in-app/native
 probe and is not automatically treated as a v2 executor.
+
+### Recipe contract v2 verification (2026-11-04)
+
+[GitHub Actions #41901298315](https://github.com/Ffenuss/ModKit/actions/runs/41901298315)
+**finished SUCCESS (attempt 2)**. JVM tests, lint and both debug APK
+assemblies were green on the original attempt; Android API 29 single APK
+instrumentation and Android API 35 split APK instrumentation both passed all
+15 device tests. A first API 35 attempt suffered an unrelated emulator/system
+ANR ("Pixel Launcher isn't responding"), confirmed by the saved UI hierarchy
+and device logs. Only the failed API 35 job was rerun, successfully, without
+any source changes. The independent fixture damage-handler counter prevents
+pre-existing static health getter modifications from masking the observed
+behavior of the new shield recipe. The `o_spaceTwoLiveRecipesAreIndependentAndReversible`
+scenario proves two concurrent effects, independent OFF for shield, actual
+movement write-back and both controls returned OFF on overlay shutdown.
+
+This evidence applies to the **cooperating owned fixture only**. No general
+DEX/native live executor or Android guest virtualization was introduced.
