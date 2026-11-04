@@ -945,4 +945,38 @@ class AutoModDeviceTest {
         }
     }
 
+    /**
+     * Companion integration: both apps are built with the same test signer.
+     * The companion must independently verify the signed fixture and observe
+     * withdrawal of the active profile without retaining an executable cache.
+     */
+    @Test fun k_spaceCompanionVerifiesAndRevokesActiveFixture() = runBlocking {
+        val saved = io.github.ffenuss.modkit.space.SpaceBuildProfileIndex.load(context)
+            .single { it.plan.packageName == fixturePackage }
+        assertEquals(
+            io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY,
+            io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher.status(context, saved),
+        )
+        assertTrue(
+            "The CI-installed companion must have the same signer as ModKit",
+            io.github.ffenuss.modkit.space.SpaceTrustedHost.companionInstalled(context),
+        )
+        io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
+        try {
+            io.github.ffenuss.modkit.space.SpaceActiveProfileStore.activate(context, saved)
+            io.github.ffenuss.modkit.space.SpaceTrustedHost.open(context)
+            assertNotNull(
+                "The independently built companion must verify the actual installed APK set",
+                device.wait(Until.findObject(By.text("Профиль подтверждён: $fixturePackage")), 20_000),
+            )
+            io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
+            assertNotNull(
+                "A cleared active game must disappear from the companion on notification",
+                device.wait(Until.findObject(By.text("Нет активного профиля в ModKit.")), 20_000),
+            )
+        } finally {
+            io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
+        }
+    }
+
 }
