@@ -123,6 +123,12 @@ Do not merge the legacy Space host modules blindly into the main app.
 
 ## Provider change notifications
 
+**Verified CI (2026-11-04):** [GitHub Actions #41813897594](https://github.com/Ffenuss/ModKit/actions/runs/41813897594)
+passed JVM tests, Android Lint, APK assembly, and full Android API 29 / 35
+instrumentation suites, including the new notification and clear regression.
+This validates the ModKit-side provider, **not** a separately signed Space host.
+
+
 Every successful active-profile activation publishes a content change notification
 on `content://<applicationId>.space-menu/index` **after** the exact-profile
 preference is committed. Clearing the active profile also announces the empty
