@@ -120,3 +120,12 @@ Do not merge the legacy Space host modules blindly into the main app.
 - The selection is **local ModKit metadata only**. The legacy Space host does
   not consume this preference yet; authenticating that handoff is a separate
   feature and requires its own device tests.
+
+## Provider change notifications
+
+Every successful active-profile activation publishes a content change notification
+on `content://<applicationId>.space-menu/index` **after** the exact-profile
+preference is committed. Clearing the active profile also announces the empty
+index. These notifications are hints for a listening host; the host still
+must re-read the provider and verify guest identities. Notification delivery
+does not revoke or delete profiles previously cached by the legacy host.

@@ -118,11 +118,25 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 if (selectedKey != null) {
-                    TextButton(onClick = {
-                        SpaceActiveProfileStore.clear(context)
-                        selectedKey = null
-                        SpaceLegacyMenuBridge.announce(context)
-                    }) { Text("Снять выбор") }
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                selecting = true
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        SpaceActiveProfileStore.clear(context.applicationContext)
+                                    }
+                                    selectedKey = null
+                                    error = null
+                                } catch (failure: Exception) {
+                                    error = failure.message ?: "Не удалось снять выбор игры."
+                                } finally {
+                                    selecting = false
+                                }
+                            }
+                        },
+                        enabled = !selecting,
+                    ) { Text("Снять выбор") }
                 }
                 if (selectedRecord != null) {
                     Button(

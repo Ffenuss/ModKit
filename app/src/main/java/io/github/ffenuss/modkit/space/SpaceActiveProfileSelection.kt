@@ -75,12 +75,18 @@ object SpaceActiveProfileStore {
                 .putString(KEY_ARTIFACT, key.artifactSha256).commit()) {
                 "Не удалось сохранить выбор активной игры."
             }
+            SpaceLegacyMenuBridge.announce(appContext)
             key
         }
     }
 
     fun clear(context: Context) {
-        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-            .edit().clear().apply()
+        val appContext = context.applicationContext
+        check(appContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+            .edit().clear().commit()) {
+            "Не удалось сохранить сброс активной игры."
+        }
+        // Announce only after the empty selection has been durably committed.
+        SpaceLegacyMenuBridge.announce(appContext)
     }
 }
