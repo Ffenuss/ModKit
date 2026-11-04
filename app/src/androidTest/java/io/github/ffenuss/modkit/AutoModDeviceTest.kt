@@ -979,4 +979,59 @@ class AutoModDeviceTest {
         }
     }
 
+    /**
+     * The new schema-2 catalog is independent of the single legacy selection.
+     * Only the repository-owned signed movement fixture is installed/launched.
+     */
+    @Test fun l_spaceCatalogWorksWithoutActiveSelection() = runBlocking {
+        val saved = io.github.ffenuss.modkit.space.SpaceBuildProfileIndex.load(context)
+            .single { it.plan.packageName == fixturePackage }
+        assertEquals(
+            io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY,
+            io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher.status(context, saved),
+        )
+        io.github.ffenuss.modkit.space.SpaceActiveProfileStore.clear(context)
+        val catalogUri = android.net.Uri.parse(
+            "content://${context.packageName}.space-menu/catalog",
+        )
+        val catalog = JSONObject(
+            requireNotNull(context.contentResolver.openInputStream(catalogUri))
+                .bufferedReader().use { it.readText() },
+        )
+        assertEquals(2, catalog.getInt("schema"))
+        assertEquals("none", catalog.getString("backend"))
+        val entries = catalog.getJSONArray("profiles")
+        assertEquals(1, entries.length())
+        val entry = entries.getJSONObject(0)
+        assertEquals(fixturePackage, entry.getString("packageName"))
+        assertEquals(saved.plan.artifactSha256, entry.getString("artifactSha256"))
+        assertEquals(saved.plan.signerCertificateSha256, (0 until
+            entry.getJSONArray("signers").length()).map {
+                entry.getJSONArray("signers").getString(it)
+            }.toSet())
+        assertEquals(saved.plan.apks.size, entry.getJSONArray("sources").length())
+
+        // No legacy active game is required to use the independent catalog.
+        val index = JSONObject(
+            requireNotNull(context.contentResolver.openInputStream(
+                android.net.Uri.parse("content://${context.packageName}.space-menu/index"),
+            )).bufferedReader().use { it.readText() },
+        )
+        assertEquals(0, index.getJSONArray("profiles").length())
+        io.github.ffenuss.modkit.space.SpaceTrustedHost.open(context)
+        assertNotNull(
+            "Companion must display the independent catalog",
+            device.wait(Until.findObject(By.text("Проверить и запустить: $fixturePackage")), 20_000),
+        )
+        assertNotNull(
+            "Legacy active selection remains empty",
+            device.wait(Until.findObject(By.text("Нет активного профиля в ModKit.")), 20_000),
+        )
+        fixtureText("Проверить и запустить: $fixturePackage").click()
+        assertNotNull(
+            "The per-game button must verify then launch only the owned fixture",
+            device.wait(Until.findObject(By.textContains("Movement distance:")), 20_000),
+        )
+    }
+
 }

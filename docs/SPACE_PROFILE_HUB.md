@@ -166,3 +166,45 @@ or patch the unavailable proprietary legacy virtual host binary.
 The companion is an intentional, replaceable integration checkpoint. Real
 non-root virtualization requires its own supported container and guest process
 lifecycle, with independent game/runtime evidence before enabling toggles.
+
+## Multi-game catalog for the independently built Companion
+
+The authenticated provider now also serves a **separate**
+`content://<ModKit applicationId>.space-menu/catalog` endpoint with
+`{"schema":2,"backend":"none","profiles":[...]}`. This contains up to 32
+latest usable build records from distinct package names. Each entry includes
+the package name, artifact SHA-256, exact certificate hashes and full APK/split
+SHA-256 + size set. There are **no executable recipes, binary paths, tokens or
+runtime toggles** in this endpoint.
+
+The old `/index` and `/profile` contract remains unchanged and continues
+to expose only the explicitly selected active, *installed-verified* game.
+The multi-game catalog is exclusively for the identically signed Companion;
+the pinned legacy host cannot enumerate it. Entries are build-time records,
+not proof of current installation. Companion treats them as untrusted until
+the user selects a game. Every per-game launch:
+
+1. Re-authenticates ModKit's signing certificate and re-reads the current
+   catalog (the selected artifact, signer and source sets must still match).
+2. Checks the installed game's **actual signer certificate set** against its
+   build record.
+3. Streams and hashes every installed base/split APK; missing, additional,
+   duplicate or modified APKs fail closed.
+4. Checks Android launch activity and only then starts the regular app.
+
+Several games can be listed in the same Companion, with independent
+verification and no automatic fallback to another version. On-device
+verification does not create a virtual Android user, provide Play Services,
+insert an overlay into a game process, or apply reversible runtime mods.
+
+### Multi-game catalog validation
+
+**CI passed (2026-11-04):** [Android CI #41834338518](https://github.com/Ffenuss/ModKit/actions/runs/41834338518).
+JVM tests, Android Lint, both APK builds and signature checks, Android API 29
+single-APK instrumentation and Android API 35 split-APK instrumentation all
+succeeded. The device tests include the independent catalog when no legacy
+active profile is selected and a verified regular Android launch of the owned
+fixture from the Companion catalog button.
+
+This does **not** constitute virtualization, in-game overlay execution, or
+support for untested third-party games.

@@ -10,6 +10,7 @@ import android.os.Looper;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -24,6 +25,8 @@ public final class SpaceCompanionActivity extends Activity {
     private final AtomicInteger generation = new AtomicInteger();
     private TextView status;
     private Button start;
+    private TextView catalogStatus;
+    private LinearLayout catalogRows;
     private ContentObserver updates;
     private SpaceProfileReader.Result current;
 
@@ -55,7 +58,19 @@ public final class SpaceCompanionActivity extends Activity {
         start.setEnabled(false);
         start.setOnClickListener(v -> launchVerified());
         root.addView(start);
-        setContentView(root);
+        TextView gamesTitle = new TextView(this);
+        gamesTitle.setTextSize(20);
+        gamesTitle.setPadding(0, padding, 0, padding / 2);
+        gamesTitle.setText("Сборки игр · отдельные профили");
+        root.addView(gamesTitle);
+        catalogStatus = new TextView(this);
+        root.addView(catalogStatus);
+        catalogRows = new LinearLayout(this);
+        catalogRows.setOrientation(LinearLayout.VERTICAL);
+        root.addView(catalogRows);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(root);
+        setContentView(scroll);
 
         updates = new ContentObserver(new Handler(Looper.getMainLooper())) {
             @Override public void onChange(boolean selfChange, Uri uri) {
@@ -89,13 +104,58 @@ public final class SpaceCompanionActivity extends Activity {
         current = null;
         start.setEnabled(false);
         status.setText("Проверка профиля и файлов APK...");
+        catalogStatus.setText("Загрузка списка сборок...");
+        catalogRows.removeAllViews();
         io.execute(() -> {
             SpaceProfileReader.Result result = SpaceProfileReader.load(this);
+            SpaceCatalogReader.Catalog catalog = SpaceCatalogReader.load(this);
             runOnUiThread(() -> {
                 if (isDestroyed() || generation.get() != version) return;
                 current = result.ready ? result : null;
                 status.setText(result.message);
                 start.setEnabled(result.ready);
+                catalogStatus.setText(catalog.message);
+                // Catalog entries are *not* pre-verified. Each button re-reads
+                // the signed publisher and hashes its own game on every tap.
+                for (SpaceCatalogReader.Entry entry : catalog.entries) {
+                    Button game = new Button(this);
+                    game.setText("Проверить и запустить: " + entry.packageName);
+                    game.setAllCaps(false);
+                    game.setOnClickListener(v -> launchCatalogEntry(entry));
+                    catalogRows.addView(game);
+                }
+            });
+        });
+    }
+
+    private void launchCatalogEntry(SpaceCatalogReader.Entry selected) {
+        if (selected == null) return;
+        final int version = generation.incrementAndGet();
+        start.setEnabled(false);
+        status.setText("Проверка подписи и APK: " + selected.packageName);
+        io.execute(() -> {
+            SpaceCatalogReader.Verification verification =
+                    SpaceCatalogReader.verify(this, selected);
+            runOnUiThread(() -> {
+                if (isDestroyed() || generation.get() != version) return;
+                if (!verification.ready) {
+                    status.setText(verification.message);
+                    return;
+                }
+                Intent intent = getPackageManager()
+                        .getLaunchIntentForPackage(selected.packageName);
+                if (intent == null || intent.getComponent() == null ||
+                        !selected.packageName.equals(intent.getComponent().getPackageName())) {
+                    status.setText("Экран запуска игры больше недоступен.");
+                    return;
+                }
+                try {
+                    startActivity(new Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                } catch (RuntimeException failure) {
+                    status.setText("Не удалось запустить проверенную игру.");
+                } finally {
+                    refresh();
+                }
             });
         });
     }
