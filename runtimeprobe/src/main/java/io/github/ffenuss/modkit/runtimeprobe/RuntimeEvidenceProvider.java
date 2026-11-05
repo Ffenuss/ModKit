@@ -526,8 +526,23 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
         Context context = probeContext();
         int uid = Binder.getCallingUid();
         String[] packages = context.getPackageManager().getPackagesForUid(uid);
-        if (packages == null || !Arrays.asList(packages).contains(CALLER_PACKAGE)) {
-            throw new SecurityException("Runtime evidence is available only to ModKit.");
+        // Debug builds use the distinct .test application ID, and release
+        // builds use the stable publisher ID. An exact caller package name by
+        // itself is not sufficient: require matching Companion publisher
+        // signing identity as well. An unrelated caller UID is always denied.
+        PackageManager pm = context.getPackageManager();
+        boolean isPublisher = packages != null &&
+                (Arrays.asList(packages).contains(CALLER_PACKAGE) ||
+                 Arrays.asList(packages).contains("io.github.ffenuss.modkit.test"));
+        boolean signedLikeCompanion = isPublisher &&
+                (pm.checkSignatures(CALLER_PACKAGE,
+                        "io.github.ffenuss.modkit.spacecompanion")
+                        == PackageManager.SIGNATURE_MATCH ||
+                 pm.checkSignatures("io.github.ffenuss.modkit.test",
+                        "io.github.ffenuss.modkit.spacecompanion")
+                        == PackageManager.SIGNATURE_MATCH);
+        if (!signedLikeCompanion) {
+            throw new SecurityException("Runtime evidence requires signed ModKit publisher.");
         }
     }
 

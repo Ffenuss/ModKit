@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Only package visibility: no game-specific ModKit controller API. -->
+    <queries>
+        <package android:name="io.github.ffenuss.modkit" />
+        <package android:name="io.github.ffenuss.modkit.test" />
+        <package android:name="io.github.ffenuss.modkit.spacecompanion" />
+    </queries>
+    <application android:label="ModKit Native Fixture" android:allowBackup="false">
+        <activity android:name=".NativeGameActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

@@ -414,3 +414,54 @@ callback delivery remains an Android process-state prerequisite.
 gameplay effect driven end-to-end by Companion on a separate prepared
 non-cooperating APK. The new backend remains experimental until such a
 positive native fixture test is executed.
+
+## Confirmed native game effect from external Space overlay (2026-11-05)
+
+**New positive on-device proof:** [GitHub Actions #42037815175](https://github.com/Ffenuss/ModKit/actions/runs/42037815175)
+completed **SUCCESS** at commit `f4a2d4a6`. JVM unit tests, Android
+Lint, app/Companion/native test APK builds, signature validation, and ARM64
+reference recipe vectors passed. Instrumentation passed **17/17 tests on
+Android API 29** and **17/17 on Android API 35**.
+
+The final Android test,
+`q_preparedNativeProbeChangesRealIndependentGame`, executes on both
+emulators and proves the native patch affects actual gameplay:
+
+1. New `:nativefixture` APK (`dev.modkit.nativefixture`) has a JNI
+   gameplay movement function in `libmodkit_native_fixture.so` and
+   deliberately **does not** contain a ModKit-specific controller or
+   ContentProvider. Its baseline movement advances **2 units** per tap.
+2. Test parses the installed **x86_64 ELF .dynsym** and executable
+   section of the real game library to locate a unique exported
+   `native_fixture_step` function. It checks exact original machine
+   instructions `mov eax,2; ret`; any mismatch rejects the patch.
+3. ModKit's actual repacked-test instrumenter adds Runtime Probe DEX
+   and its native library to a new APK copy. The common build tail signs,
+   aligns, and verifies the APK. The CI-only test uninstalls **only
+   this owned fixture** and reinstalls the prepared APK through
+   Android's normal user-approved PackageInstaller flow.
+4. ModKit configures exactly one already-validated `PATCH` item:
+   the function's immediate value changes from **2** to **7**.
+   A fully verified Space catalog entry is saved for the installed APK.
+5. Space Companion, signed like ModKit, opens a real external
+   `TYPE_APPLICATION_OVERLAY` above the separate game, discovers its
+   prepared Runtime Probe and toggles the recipe by ID.
+6. Instrumentation proves **+2 before ON, +7 while ON, +2 after OFF**,
+   followed by **+2 after closing the overlay** with automatic restoration.
+   This is a confirmed gameplay effect, *not* an assertion based on UI
+   switch labels or a successful native byte-write acknowledgement.
+
+This establishes a functioning **prepared native APK → external overlay →
+actual native gameplay mutation → restoration** pipeline, independent of a
+game-authored ModKit control API.
+
+**Scope limits:** Android emulators for API 29/35 are both **x86_64**;
+the binary positive proof is therefore x86_64 only, even though the
+test APK compiles four Android ABIs. The tested game is entirely
+repository-owned; no third-party engine, production game, ARM64 native
+write-back, root mode, non-repacked runtime or virtual guest was
+validated by this test. The native game manifest explicitly grants
+publisher/Companion package visibility for signature checks, which
+ordinary third-party APKs might lack. Runtime patching on real games
+must still be backed by an exact per-target recipe and in-game effect
+validation; byte-write acknowledgement alone is insufficient.

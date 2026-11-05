@@ -19,3 +19,5 @@ include(":app")
 include(":runtimeprobe")
 include(":testgame")
 include(":spacecompanion")
+
+include(":nativefixture")

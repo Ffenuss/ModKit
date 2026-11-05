@@ -23,3 +23,6 @@ XML
   done
   adb install-multiple -r "$FIXTURE_OUTPUT/base.apk" "$FIXTURE_OUTPUT"/config.fixture*.apk
 fi
+
+# A second, independent native-game test target has NO custom ModKit API.
+adb install -r nativefixture/build/outputs/apk/debug/nativefixture-debug.apk

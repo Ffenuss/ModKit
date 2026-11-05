@@ -1275,4 +1275,189 @@ class AutoModDeviceTest {
         assertTrue(device.wait(Until.gone(By.text("MK")), 12_000))
     }
 
+    /**
+     * Positive proof of the native backend against a second game APK that
+     * contains NO ModKit controller. This installs only our owned disposable
+     * fixture APK, using Android's user-confirmed PackageInstaller.
+     *
+     * Distances must prove real native function write-back, not just an ON
+     * state reported by the new provider. q_ runs after all tests for the
+     * original fixture so a separate APK has no effect on their inputs.
+     */
+    @Test fun q_preparedNativeProbeChangesRealIndependentGame() = runBlocking {
+        val nativePackage = "dev.modkit.nativefixture"
+        val original = requireNotNull(
+            io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(nativePackage)
+        ) { "CI must install repository-owned native fixture before instrumentation" }
+        assertEquals(1, original.apkFiles.size)
+        assertNull(
+            "Unprepared native game must not implement a ModKit controller",
+            context.packageManager.resolveContentProvider(
+                "$nativePackage.modkit.runtimeprobe", 0),
+        )
+        val nativeLaunch = requireNotNull(
+            context.packageManager.getLaunchIntentForPackage(nativePackage)
+        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        context.startActivity(nativeLaunch)
+        assertNotNull(device.wait(Until.findObject(By.text("Native distance: 0")), 15_000))
+        fixtureText("Native move").click()
+        assertNotNull("Unmodified native step must advance exactly 2 units",
+            device.wait(Until.findObject(By.text("Native distance: 2")), 10_000))
+
+        // The exact function VA comes from the x86_64 .dynsym and executable
+        // ELF section in the real native game's APK. Never guess addresses.
+        val patch = NativeFixtureElfProof.readInstalled(
+            original.apkFiles.single(), "x86_64")
+        assertTrue(patch.address > 0L)
+        val target = AnalysisTargetDescriptor.InstalledPackage(
+            nativePackage, "ModKit Native Fixture")
+        val indexed = FastArtifactIndexer.index(original.apkFiles, signal, progress)
+        val workspace = PatchWorkspaceProvider.open(
+            context = context,
+            target = target,
+            expected = indexed,
+            cache = EngineResultCache(File(context.filesDir, "analysis-cache")),
+            cancellation = signal,
+            progress = progress,
+        )
+        val outputRoot = File(context.filesDir, "native-e2e-staging")
+        val build = workspace.use {
+            val injected = RepackedRuntimeInstrumentationCoordinator.instrumentNativeLookup(
+                context, it.workspace, outputRoot, signal)
+            assertEquals(nativePackage, injected.packageName)
+            RepackedRuntimeBuildCoordinator.buildNativeProbeInjected(
+                context = context,
+                manifestInventory = injected.base.manifestInventory,
+                injection = injected.nativeProbeInjection,
+                outputRoot = outputRoot,
+                cancellation = signal,
+                progress = progress,
+            )
+        }
+        val plan = RepackedRuntimeInstallPlanner.plan(build, signal)
+        assertTrue("Prepared native APK must pass sign/align/verify", plan.ready)
+        assertEquals(nativePackage, plan.packageName)
+
+        // Re-signing changes the app identity. CI shell may uninstall only this
+        // owned disposable fixture, never an unrelated installed application.
+        val removed = device.executeShellCommand("pm uninstall $nativePackage")
+        assertTrue("Remove disposable fixture for new signed install: $removed",
+            removed.contains("Success"))
+        assertTrue("The installer permission was explicitly approved in test a_",
+            context.packageManager.canRequestPackageInstalls())
+
+        val modkitComponent = android.content.ComponentName(
+            context, MainActivity::class.java).flattenToShortString()
+        device.executeShellCommand("am start -W -n $modkitComponent -f 0x14000000")
+        assertTrue(device.wait(Until.hasObject(By.pkg(context.packageName)), 15_000))
+        val attemptedAt = System.currentTimeMillis()
+        val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
+        assertEquals(nativePackage, submission.packageName)
+        val deadline = System.currentTimeMillis() + 75_000L
+        while (System.currentTimeMillis() < deadline) {
+            val status = RepackedRuntimeInstallStatusStore.status.value
+            if (status.sessionId == submission.sessionId &&
+                    status.updatedAtEpochMs >= attemptedAt) {
+                if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) break
+                if (status.kind == RepackedRuntimeInstallStatusKind.FAILURE) {
+                    throw AssertionError("Native fixture install failed: " + status.message)
+                }
+                if (status.kind == RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED) {
+                    runCatching {
+                        RepackedRuntimeInstallConfirmationStore.open(
+                            context, submission.sessionId)
+                    }
+                }
+                val confirmation = device.findObject(
+                    By.res("com.android.packageinstaller", "ok_button"))
+                    ?: device.findObject(
+                        By.res("com.google.android.packageinstaller", "ok_button"))
+                    ?: device.findObject(By.text("Install"))
+                    ?: device.findObject(By.text("INSTALL"))
+                    ?: device.findObject(By.text("Update"))
+                    ?: device.findObject(By.text("UPDATE"))
+                    ?: device.findObject(By.text("Подтвердить установку"))
+                if (confirmation != null) {
+                    try { confirmation.click() }
+                    catch (_: androidx.test.uiautomator.StaleObjectException) { }
+                }
+            }
+            device.wait(Until.hasObject(By.text("App installed")), 500)
+        }
+        val installed = RepackedRuntimeInstallStatusStore.status.value
+        assertEquals("User-approved native build must install successfully",
+            RepackedRuntimeInstallStatusKind.SUCCESS, installed.kind)
+        assertEquals(submission.sessionId, installed.sessionId)
+
+        val authority = "$nativePackage.modkit.runtimeprobe"
+        val transport = AndroidRepackedRuntimeProbeTransport(context)
+        val exactInstalled = requireNotNull(
+            transport.inspectInstalled(nativePackage, authority))
+        RepackedRuntimeProbeIdentityVerifier.verify(build, exactInstalled)
+        val recipe = RepackedRuntimeTestMenuItem(
+            id = "native:step-seven",
+            label = "Native movement",
+            detail = "Owned x86_64 fixture: 2 -> 7",
+            mode = RepackedRuntimeTestMenuItemMode.PATCH,
+            moduleName = patch.module,
+            binaryVirtualAddress = patch.address,
+            originalHex = patch.original,
+            replacementHex = patch.replacement,
+        )
+        val configured = transport.configureTestMenu(authority, listOf(recipe))
+        assertEquals(1, configured.patchItemCount)
+
+        // The Space catalog is derived from a REAL build history entry.
+        // Publishing a speculative item here would not authorize anything.
+        io.github.ffenuss.modkit.ui.AutoModBuildRecord(
+            plan, System.currentTimeMillis(), listOf("Native fixture E2E"), "")
+            .save(context)
+        val record = io.github.ffenuss.modkit.space.SpaceBuildProfileIndex.load(context)
+            .single { it.plan.packageName == nativePackage }
+        assertEquals(
+            io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY,
+            io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher.status(context, record),
+        )
+        io.github.ffenuss.modkit.space.SpaceTrustedHost.open(context)
+        fixtureText("Оверлей и запуск: $nativePackage").click()
+        assertNotNull("Prepared native game must launch",
+            device.wait(Until.findObject(By.text("Native distance: 0")), 25_000))
+        val bubbleSelector = By.desc("ModKit · открыть плавающее меню")
+        assertNotNull("The external floating overlay must be visible",
+            device.wait(Until.findObject(bubbleSelector), 20_000))
+        fixtureText("Native move").click()
+        assertNotNull("Native base step must be 2 after re-signed install",
+            device.wait(Until.findObject(By.text("Native distance: 2")), 10_000))
+
+        requireNotNull(device.findObject(bubbleSelector)).click()
+        fixtureText("Нативный патч · Native movement: выключено").click()
+        assertNotNull("Prepared native executor must acknowledge enabled bytes",
+            device.wait(Until.findObject(By.text(
+                "Нативный патч · Native movement: включено")), 20_000))
+        requireNotNull(device.findObject(bubbleSelector)).click()
+        fixtureText("Native move").click()
+        assertNotNull("Native code patch must change ACTUAL in-game movement to 7",
+            device.wait(Until.findObject(By.text("Native distance: 9")), 10_000))
+
+        requireNotNull(device.findObject(bubbleSelector)).click()
+        fixtureText("Нативный патч · Native movement: включено").click()
+        assertNotNull("The native executor must acknowledge OFF",
+            device.wait(Until.findObject(By.text(
+                "Нативный патч · Native movement: выключено")), 20_000))
+        requireNotNull(device.findObject(bubbleSelector)).click()
+        fixtureText("Native move").click()
+        assertNotNull("OFF must restore original machine instructions and step +2",
+            device.wait(Until.findObject(By.text("Native distance: 11")), 10_000))
+
+        requireNotNull(device.findObject(bubbleSelector)).click()
+        fixtureText("Нативный патч · Native movement: выключено").click()
+        assertNotNull(device.wait(Until.findObject(By.text(
+            "Нативный патч · Native movement: включено")), 20_000))
+        fixtureText("Закрыть меню").click()
+        assertTrue(device.wait(Until.gone(bubbleSelector), 15_000))
+        fixtureText("Native move").click()
+        assertNotNull("Closing external overlay must restore baseline native bytes",
+            device.wait(Until.findObject(By.text("Native distance: 13")), 10_000))
+    }
+
 }
