@@ -3,6 +3,7 @@ package io.github.ffenuss.modkit.runtimeprobe;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.net.Uri;
@@ -73,6 +74,28 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
 
     @Override
     public Bundle call(String method, String arg, Bundle extras) {
+        // A separately authorized companion channel for the already prepared
+        // native test recipes. Never admit external configuration or raw bytes.
+        if ("preparedNativeStatusV1".equals(method) ||
+                "preparedNativeSetV1".equals(method) ||
+                "preparedNativeRestoreV1".equals(method)) {
+            enforceCompanionCaller();
+            boolean changed = true;
+            if ("preparedNativeSetV1".equals(method)) {
+                if (extras == null || !extras.containsKey("enabled") ||
+                        extras.getString("id") == null)
+                    throw new IllegalArgumentException("Native recipe ID and ON/OFF required.");
+                changed = RuntimeModMenu.setPreparedNative(
+                        extras.getString("id"), extras.getBoolean("enabled"));
+            } else if ("preparedNativeRestoreV1".equals(method)) {
+                changed = RuntimeModMenu.restoreAllPreparedNative();
+            }
+            Bundle result = baseReply();
+            result.putString("contract", "modkit_prepared_native_v1");
+            result.putBoolean("operationAccepted", changed);
+            result.putAll(RuntimeModMenu.preparedNativeStatus());
+            return result;
+        }
         enforceCaller();
 
         if ("configureTestMenu".equals(method)) {
@@ -479,6 +502,24 @@ public final class RuntimeEvidenceProvider extends ContentProvider {
             String[] selectionArgs
     ) {
         throw new UnsupportedOperationException("Runtime probe is read-only.");
+    }
+
+    private void enforceCompanionCaller() {
+        Context context = probeContext();
+        PackageManager pm = context.getPackageManager();
+        String companion = "io.github.ffenuss.modkit.spacecompanion";
+        String[] owned = pm.getPackagesForUid(Binder.getCallingUid());
+        if (owned == null || !Arrays.asList(owned).contains(companion)) {
+            throw new SecurityException("Only installed Space Companion may call native recipes.");
+        }
+        boolean samePublisher =
+                pm.checkSignatures(companion, "io.github.ffenuss.modkit.test")
+                        == PackageManager.SIGNATURE_MATCH ||
+                pm.checkSignatures(companion, "io.github.ffenuss.modkit")
+                        == PackageManager.SIGNATURE_MATCH;
+        if (!samePublisher) {
+            throw new SecurityException("Companion signing identity is not trusted.");
+        }
     }
 
     private void enforceCaller() {

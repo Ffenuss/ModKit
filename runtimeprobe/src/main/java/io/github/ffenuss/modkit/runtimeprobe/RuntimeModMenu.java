@@ -98,6 +98,7 @@ final class RuntimeModMenu {
                                         new WeakReference<>(null);
                             }
                         }
+                        restoreAllPreparedNative();
                         detach();
                     }
 
@@ -135,6 +136,8 @@ final class RuntimeModMenu {
             );
         }
         Config parsed = parseBundle(extras);
+        if (!restoreAllPreparedNative())
+            throw new IllegalStateException("Existing native patches could not be restored.");
         persist(context.getApplicationContext(), parsed);
         synchronized (LOCK) {
             config = parsed;
@@ -146,6 +149,8 @@ final class RuntimeModMenu {
     }
 
     static void clear(Context context) {
+        if (!restoreAllPreparedNative())
+            throw new IllegalStateException("Existing native patches could not be restored.");
         context.getApplicationContext()
                 .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .edit()
@@ -177,6 +182,73 @@ final class RuntimeModMenu {
             if (MODE_INFO.equals(item.mode)) count++;
         }
         return count;
+    }
+
+    /**
+     * Only previously configured PATCH entries are exported. The companion
+     * supplies an ID and a boolean; it cannot inject addresses, modules or
+     * replacement bytes into an untrusted process.
+     */
+    static Bundle preparedNativeStatus() {
+        Bundle result = new Bundle();
+        List<String> ids = new ArrayList<>();
+        List<String> labels = new ArrayList<>();
+        List<Boolean> states = new ArrayList<>();
+        synchronized (LOCK) {
+            for (Item item : config.items) {
+                if (!MODE_PATCH.equals(item.mode)) continue;
+                ids.add(item.id);
+                labels.add(item.label);
+                states.add(Boolean.TRUE.equals(ACTIVE.get(item.id)));
+            }
+            Activity activity = resumedActivity.get();
+            result.putBoolean("active",
+                    activity != null && !activity.isFinishing() && !activity.isDestroyed());
+        }
+        boolean[] enabled = new boolean[states.size()];
+        for (int i = 0; i < states.size(); i++) enabled[i] = states.get(i);
+        result.putStringArray("ids", ids.toArray(new String[0]));
+        result.putStringArray("labels", labels.toArray(new String[0]));
+        result.putBooleanArray("enabledStates", enabled);
+        return result;
+    }
+
+    static boolean setPreparedNative(String id, boolean enabled) {
+        if (id == null) return false;
+        Item selected = null;
+        synchronized (LOCK) {
+            if (enabled) {
+                Activity activity = resumedActivity.get();
+                if (activity == null || activity.isFinishing() ||
+                        activity.isDestroyed()) return false;
+            }
+            for (Item item : config.items) {
+                if (MODE_PATCH.equals(item.mode) && item.id.equals(id)) {
+                    selected = item;
+                    break;
+                }
+            }
+            if (selected == null) return false;
+            if (APPLYING.contains(id)) return false;
+            if (Boolean.TRUE.equals(ACTIVE.get(id)) == enabled) return true;
+        }
+        return apply(selected, enabled);
+    }
+
+    static boolean restoreAllPreparedNative() {
+        List<String> activeIds = new ArrayList<>();
+        synchronized (LOCK) {
+            for (Item item : config.items) {
+                if (MODE_PATCH.equals(item.mode) &&
+                        Boolean.TRUE.equals(ACTIVE.get(item.id)))
+                    activeIds.add(item.id);
+            }
+        }
+        boolean allRestored = true;
+        for (String id : activeIds) {
+            if (!setPreparedNative(id, false)) allRestored = false;
+        }
+        return allRestored;
     }
 
     private static void requestRefresh() {
