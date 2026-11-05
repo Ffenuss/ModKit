@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feature/space-probe-native-control-v1-20261105 ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:

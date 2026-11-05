@@ -1249,4 +1249,30 @@ class AutoModDeviceTest {
             normalStep, movement() - afterCloseMovement)
     }
 
+    /** A signed build of the fixture without the injected probe must not
+     * mysteriously acquire a native execution provider or native toggles. */
+    @Test fun p_unpreparedFixtureNeverAdvertisesNativeBackend() = runBlocking {
+        val selected = io.github.ffenuss.modkit.space.SpaceBuildProfileIndex.load(context)
+            .single { it.plan.packageName == fixturePackage }
+        assertEquals(
+            io.github.ffenuss.modkit.space.SpaceLaunchStatus.READY,
+            io.github.ffenuss.modkit.space.SpaceInstalledPackageLauncher.status(context, selected),
+        )
+        assertNull(
+            "The standard fixture does not contain a prepared native provider",
+            context.packageManager.resolveContentProvider(
+                "$fixturePackage.modkit.runtimeprobe", 0),
+        )
+        io.github.ffenuss.modkit.space.SpaceTrustedHost.open(context)
+        fixtureText("Оверлей и запуск: $fixturePackage").click()
+        assertNotNull(device.wait(Until.findObject(By.text("MK")), 25_000))
+        requireNotNull(device.findObject(By.text("MK"))).click()
+        assertNotNull(device.wait(Until.findObject(
+            By.text("Движение ×2: выключено")), 20_000))
+        assertFalse("An unprepared fixture must not show a phantom native patch",
+            device.hasObject(By.textContains("Нативный патч ·")))
+        fixtureText("Закрыть меню").click()
+        assertTrue(device.wait(Until.gone(By.text("MK")), 12_000))
+    }
+
 }
