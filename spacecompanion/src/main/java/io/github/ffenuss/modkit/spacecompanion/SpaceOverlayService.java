@@ -339,7 +339,7 @@ public final class SpaceOverlayService extends Service {
 
     private void restoreSession(SpaceCatalogReader.Entry session) {
         if (RuntimeControlBridge.supports(session)) {
-            restoreSession(session);
+            RuntimeControlBridge.disableAllRecipesForCleanup(this, session);
         } else {
             PreparedNativeRecipeBridge.restore(this, session);
         }
