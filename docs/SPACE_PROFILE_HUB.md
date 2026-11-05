@@ -390,3 +390,27 @@ positive Android in-game effect test on a prepared sample native library.
 **Still absent:** true cloned/virtual guest process, live DEX hook for
 unmodified APKs, root runtime engine, generic Unity/Unreal/Godot adapters,
 and a claim of universal mod compatibility.
+
+### Prepared native bridge verification (2026-11-05)
+
+[GitHub Actions #42020021924](https://github.com/Ffenuss/ModKit/actions/runs/42020021924)
+**completed SUCCESS** on functional code commit `be460802`.
+The suite passed JVM unit tests, Android Lint, both APK assemblies,
+signed APK checks, ARM64 recipe vectors, and all **16 Android device tests**
+on API 29 (single APK) and API 35 (split APK). The newly added
+`p_unpreparedFixtureNeverAdvertisesNativeBackend` case proves the
+ordinary signed fixture without the injected probe does not receive
+any phantom native toggles; existing cooperative fixture effects still
+pass on both devices.
+
+A prepared runtime probe is now also initialized from Companion before
+bringing the verified game Activity to the foreground. This guarantees
+the probe gets a chance to register lifecycle callbacks on fresh launch
+instead of missing the game's initial resume; it is read-only until
+an explicit ON/OFF command. For already-running apps, actual lifecycle
+callback delivery remains an Android process-state prerequisite.
+
+**Not proven by this suite:** a successful native code write and a measured
+gameplay effect driven end-to-end by Companion on a separate prepared
+non-cooperating APK. The new backend remains experimental until such a
+positive native fixture test is executed.
