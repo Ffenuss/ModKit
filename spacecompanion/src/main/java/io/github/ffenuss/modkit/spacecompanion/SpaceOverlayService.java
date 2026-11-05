@@ -53,6 +53,8 @@ public final class SpaceOverlayService extends Service {
     private LinearLayout recipeContainer;
     private final Map<String, Button> recipeButtons = new LinkedHashMap<>();
     private final Map<String, Boolean> recipeStates = new LinkedHashMap<>();
+    private final Map<String, Button> nativeButtons = new LinkedHashMap<>();
+    private final Map<String, Boolean> nativeStates = new LinkedHashMap<>();
     private boolean closing;
     private SpaceCatalogReader.Entry active;
     private ContentObserver changes;
@@ -87,7 +89,7 @@ public final class SpaceOverlayService extends Service {
         closing = false;
         final SpaceCatalogReader.Entry previous = active;
         if (previous != null) {
-            io.execute(() -> RuntimeControlBridge.disableAllRecipesForCleanup(this, previous));
+            io.execute(() -> restoreSession(previous));
         }
         final int token = generation.incrementAndGet();
         removeOverlay();
@@ -192,13 +194,11 @@ public final class SpaceOverlayService extends Service {
         summary.setText("Только сведения об игре — модификации не активны");
         details.addView(summary);
 
-        if (RuntimeControlBridge.supports(selected)) {
-            // A supported adapter returns an explicit set of confirmed actions.
-            // Do not infer runtime support from name-based static DEX candidates.
-            recipeContainer = new LinearLayout(this);
-            recipeContainer.setOrientation(LinearLayout.VERTICAL);
-            details.addView(recipeContainer);
-        }
+        // Both the cooperating fixture and a separately PREPARED probe can
+        // report executable capabilities. Unknown apps keep this panel empty.
+        recipeContainer = new LinearLayout(this);
+        recipeContainer.setOrientation(LinearLayout.VERTICAL);
+        details.addView(recipeContainer);
         Button recheck = new Button(this);
         recheck.setText("Сверить APK");
         recheck.setAllCaps(false);
@@ -264,7 +264,19 @@ public final class SpaceOverlayService extends Service {
         final SpaceCatalogReader.Entry session = active;
         if (session == null || recipeContainer == null || closing) return;
         for (Button button : recipeButtons.values()) button.setEnabled(false);
+        for (Button button : nativeButtons.values()) button.setEnabled(false);
         final int token = generation.get();
+        if (!RuntimeControlBridge.supports(session)) {
+            io.execute(() -> {
+                PreparedNativeRecipeBridge.Status status =
+                        PreparedNativeRecipeBridge.read(this, session);
+                main.post(() -> {
+                    if (token != generation.get() || closing || recipeContainer == null) return;
+                    renderNativeRecipes(status);
+                });
+            });
+            return;
+        }
         io.execute(() -> {
             RuntimeControlBridge.RecipeSnapshot status =
                     RuntimeControlBridge.discoverRecipes(this, session);
@@ -273,6 +285,64 @@ public final class SpaceOverlayService extends Service {
                 renderRecipes(status);
             });
         });
+    }
+
+    /**
+     * An ON state here means a checked native binary patch. It is NOT proof
+     * of an actual gameplay effect; the UI must say so explicitly.
+     */
+    private void renderNativeRecipes(PreparedNativeRecipeBridge.Status snapshot) {
+        if (recipeContainer == null) return;
+        recipeContainer.removeAllViews();
+        nativeButtons.clear();
+        nativeStates.clear();
+        if (!snapshot.reachable || snapshot.recipes.isEmpty()) {
+            updateRecipeSummary();
+            return; // no fake controls for unprepared games
+        }
+        for (PreparedNativeRecipeContract.Recipe recipe : snapshot.recipes) {
+            Button button = new Button(this);
+            button.setAllCaps(false);
+            button.setText("Нативный патч · " + recipe.label + ": " +
+                    (recipe.applied ? "включено" : "выключено"));
+            button.setEnabled(snapshot.active);
+            button.setOnClickListener(v -> toggleNativeRecipe(recipe.id));
+            nativeButtons.put(recipe.id, button);
+            nativeStates.put(recipe.id, recipe.applied);
+            recipeContainer.addView(button);
+        }
+        updateRecipeSummary();
+    }
+
+    private void toggleNativeRecipe(String id) {
+        SpaceCatalogReader.Entry session = active;
+        Boolean current = nativeStates.get(id);
+        if (session == null || current == null || closing) return;
+        boolean desired = !current;
+        final int token = generation.get();
+        for (Button button : nativeButtons.values()) button.setEnabled(false);
+        io.execute(() -> {
+            PreparedNativeRecipeBridge.Status result =
+                    PreparedNativeRecipeBridge.set(this, session, id, desired);
+            main.post(() -> {
+                if (token != generation.get() || closing || recipeContainer == null) return;
+                PreparedNativeRecipeContract.Recipe ack = result.find(id);
+                if (!result.reachable || !result.active || ack == null ||
+                        ack.applied != desired) {
+                    requestStop();
+                    return;
+                }
+                renderNativeRecipes(result);
+            });
+        });
+    }
+
+    private void restoreSession(SpaceCatalogReader.Entry session) {
+        if (RuntimeControlBridge.supports(session)) {
+            RuntimeControlBridge.disableAllRecipesForCleanup(this, session);
+        } else {
+            PreparedNativeRecipeBridge.restore(this, session);
+        }
     }
 
     /** Only provider-acknowledged, adapter-reviewed recipes get UI controls. */
@@ -304,6 +374,17 @@ public final class SpaceOverlayService extends Service {
 
     private void updateRecipeSummary() {
         if (summary == null) return;
+        if (!nativeStates.isEmpty()) {
+            int count = 0;
+            for (Boolean applied : nativeStates.values()) {
+                if (Boolean.TRUE.equals(applied)) count++;
+            }
+            summary.setText(count > 0 ?
+                    "Бинарные патчи применены: " + count +
+                            " · эффект в игре не подтверждён" :
+                    "Подготовленные нативные патчи: эффект в игре не подтверждён");
+            return;
+        }
         if (Boolean.TRUE.equals(recipeStates.get(VerifiedRecipeContract.MOVEMENT)) &&
                 Boolean.TRUE.equals(recipeStates.get(VerifiedRecipeContract.SHIELD))) {
             summary.setText("В тестовой игре включены 2 проверенных рецепта");
@@ -355,7 +436,7 @@ public final class SpaceOverlayService extends Service {
             return;
         }
         io.execute(() -> {
-            RuntimeControlBridge.disableAllRecipesForCleanup(this, session);
+            restoreSession(session);
             main.post(this::stopSelf);
         });
     }
@@ -401,6 +482,8 @@ public final class SpaceOverlayService extends Service {
             recipeContainer = null;
             recipeButtons.clear();
             recipeStates.clear();
+            nativeButtons.clear();
+            nativeStates.clear();
         }
         active = null;
     }
@@ -411,7 +494,7 @@ public final class SpaceOverlayService extends Service {
         unregisterPublisher();
         removeOverlay();
         if (orphan != null) {
-            io.execute(() -> RuntimeControlBridge.disableAllRecipesForCleanup(this, orphan));
+            io.execute(() -> restoreSession(orphan));
         }
         io.shutdown();
         super.onDestroy();

@@ -154,6 +154,15 @@ public final class SpaceCompanionActivity extends Activity {
         io.execute(() -> {
             SpaceCatalogReader.Verification verification =
                     SpaceCatalogReader.verify(this, selected);
+            // For an instrumented, preconfigured game, instantiate its own
+            // Runtime Probe provider BEFORE bringing its Activity forward.
+            // This registers lifecycle callbacks in time for the next resume.
+            // An unprepared game is merely reported unavailable; it is never
+            // patched or modified during this read-only prewarm.
+            if (verification.ready && withOverlay &&
+                    !RuntimeControlBridge.supports(selected)) {
+                PreparedNativeRecipeBridge.read(this, selected);
+            }
             runOnUiThread(() -> {
                 if (isDestroyed() || generation.get() != version) return;
                 if (!verification.ready) {

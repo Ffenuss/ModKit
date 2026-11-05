@@ -346,3 +346,71 @@ movement write-back and both controls returned OFF on overlay shutdown.
 
 This evidence applies to the **cooperating owned fixture only**. No general
 DEX/native live executor or Android guest virtualization was introduced.
+
+## Native Runtime Probe control from Space Companion (prepared APKs only)
+
+This branch adds a **distinct**, fail-closed native patch backend for APKs
+previously prepared through ModKit's existing repacked Runtime Probe path.
+The runtime probe is injected as a DEX provider into the prepared APK,
+so it does not require the game's author to ship a custom Space API.
+
+- ModKit still must **prepare and configure** the native `PATCH` recipes
+  using `configureTestMenu`, with exact library, binary virtual address,
+  original and replacement byte sequences (already validated by the runtime).
+- The injected `RuntimeEvidenceProvider` accepts new
+  `preparedNativeStatusV1`, `preparedNativeSetV1` and
+  `preparedNativeRestoreV1` calls **only** from the installed
+  `io.github.ffenuss.modkit.spacecompanion` UID with a matching ModKit
+  publisher signing identity. The Companion cannot configure a recipe or
+  send arbitrary addresses/bytes via this interface.
+- A native recipe is selectable only while a tracked game Activity is
+  resumed and a compatible, explicitly configured `PATCH` item exists.
+  The exact native patcher requires the current bytes to match the expected
+  bytes and performs the inverse write when switched off.
+- The Companion re-reads the authenticated ModKit catalog and re-verifies
+  the complete signed installed base/split APK set **before every write**.
+  It independently checks the exact injected provider name and versioned
+  response, bounded unique IDs and labels, and the acknowledged per-item
+  write status. Unknown and non-prepared games retain an information-only
+  overlay with no fabricated switch.
+- `Activity.onPause`, configuration replacement and clearing attempt
+  to restore active native patches. Closing or revoking the Space overlay
+  also sends the safe OFF request for the session.
+
+**Evidence levels are intentionally separate.** An acknowledged native
+binary patch is a **byte-level write-back confirmation only**. It does NOT
+demonstrate that the intended gameplay mechanic changed. The user-facing
+native overlay text explicitly says that the gameplay effect is unconfirmed.
+In addition, the feature does not inject code into arbitrary running
+third-party games: using it requires preparing, re-signing and installing a
+separate APK through ModKit. Only the cooperating owned fixture has existing
+device-level gameplay proofs; this native backend still needs its own
+positive Android in-game effect test on a prepared sample native library.
+
+**Still absent:** true cloned/virtual guest process, live DEX hook for
+unmodified APKs, root runtime engine, generic Unity/Unreal/Godot adapters,
+and a claim of universal mod compatibility.
+
+### Prepared native bridge verification (2026-11-05)
+
+[GitHub Actions #42020021924](https://github.com/Ffenuss/ModKit/actions/runs/42020021924)
+**completed SUCCESS** on functional code commit `be460802`.
+The suite passed JVM unit tests, Android Lint, both APK assemblies,
+signed APK checks, ARM64 recipe vectors, and all **16 Android device tests**
+on API 29 (single APK) and API 35 (split APK). The newly added
+`p_unpreparedFixtureNeverAdvertisesNativeBackend` case proves the
+ordinary signed fixture without the injected probe does not receive
+any phantom native toggles; existing cooperative fixture effects still
+pass on both devices.
+
+A prepared runtime probe is now also initialized from Companion before
+bringing the verified game Activity to the foreground. This guarantees
+the probe gets a chance to register lifecycle callbacks on fresh launch
+instead of missing the game's initial resume; it is read-only until
+an explicit ON/OFF command. For already-running apps, actual lifecycle
+callback delivery remains an Android process-state prerequisite.
+
+**Not proven by this suite:** a successful native code write and a measured
+gameplay effect driven end-to-end by Companion on a separate prepared
+non-cooperating APK. The new backend remains experimental until such a
+positive native fixture test is executed.
