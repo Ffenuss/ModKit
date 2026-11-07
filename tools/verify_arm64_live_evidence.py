@@ -64,7 +64,7 @@ def validate(report, instrumentation, nonce):
         raise ValueError("Missing instrumentation transcript")
     if f"INSTRUMENTATION_STATUS: test={METHOD}" not in instrumentation:
         raise ValueError("Exact live game test was not executed")
-    if not re.search(r"(?m)^OK \\(1 test\\)\\s*$", instrumentation):
+    if not re.search(r"(?m)^OK \(1 test\)\s*$", instrumentation):
         raise ValueError("Instrumentation did not pass exactly one live test")
     if "INSTRUMENTATION_CODE: -1" not in instrumentation:
         raise ValueError("Instrumentation did not report success")
