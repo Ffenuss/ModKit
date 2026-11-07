@@ -1314,10 +1314,14 @@ class AutoModDeviceTest {
         assertNotNull("Unmodified native step must advance exactly 2 units",
             device.wait(Until.findObject(By.text("Native distance: 2")), 10_000))
 
-        // The exact function VA comes from the x86_64 .dynsym and executable
-        // ELF section in the real native game's APK. Never guess addresses.
+        // Select the actual device's 64-bit ABI, not an assumed test runner
+        // architecture. The exact function VA comes from its installed ELF
+        // .dynsym and executable section; never guess patch addresses.
+        val nativeAbi = android.os.Build.SUPPORTED_ABIS.firstOrNull {
+            it == "arm64-v8a" || it == "x86_64"
+        } ?: error("Native gameplay proof requires a supported 64-bit ABI")
         val patch = NativeFixtureElfProof.readInstalled(
-            original.apkFiles.single(), "x86_64")
+            original.apkFiles.single(), nativeAbi)
         assertTrue(patch.address > 0L)
         val target = AnalysisTargetDescriptor.InstalledPackage(
             nativePackage, "ModKit Native Fixture")
@@ -1419,7 +1423,7 @@ class AutoModDeviceTest {
         val recipe = RepackedRuntimeTestMenuItem(
             id = "native:step-seven",
             label = "Native movement",
-            detail = "Owned x86_64 fixture: 2 -> 7",
+            detail = "Owned $nativeAbi fixture: 2 -> 7",
             mode = RepackedRuntimeTestMenuItemMode.PATCH,
             moduleName = patch.module,
             binaryVirtualAddress = patch.address,
