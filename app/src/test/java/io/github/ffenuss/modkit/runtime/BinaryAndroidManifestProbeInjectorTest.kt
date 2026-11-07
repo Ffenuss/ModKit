@@ -41,6 +41,14 @@ class BinaryAndroidManifestProbeInjectorTest {
         assertTrue(android.R.attr.name in resourceIds)
         assertTrue(android.R.attr.authorities in resourceIds)
         assertTrue(android.R.attr.exported in resourceIds)
+        assertEquals(
+            listOf(
+                "io.github.ffenuss.modkit",
+                "io.github.ffenuss.modkit.test",
+                "io.github.ffenuss.modkit.spacecompanion",
+            ),
+            BinaryAndroidManifestProbeInjector.declaredPackageQueries(injected.bytes),
+        )
     }
 
     @Test
@@ -57,6 +65,32 @@ class BinaryAndroidManifestProbeInjectorTest {
         assertTrue(second.alreadyPresent)
         assertEquals(first.afterSha256, second.afterSha256)
         assertTrue(first.bytes.contentEquals(second.bytes))
+    }
+
+    @Test
+    fun existingVisibilityIsPreservedWithoutDuplicatePackageQueries() {
+        val original = manifest(
+            packageName = PACKAGE,
+            applicationName = null,
+            includeApplication = true,
+            queryPackages = listOf(
+                "com.example.existing",
+                "io.github.ffenuss.modkit",
+            ),
+        )
+        val injected = BinaryAndroidManifestProbeInjector.inject(original)
+        assertEquals(
+            listOf(
+                "com.example.existing",
+                "io.github.ffenuss.modkit",
+                "io.github.ffenuss.modkit.test",
+                "io.github.ffenuss.modkit.spacecompanion",
+            ),
+            BinaryAndroidManifestProbeInjector.declaredPackageQueries(injected.bytes),
+        )
+        val second = BinaryAndroidManifestProbeInjector.inject(injected.bytes)
+        assertTrue(second.alreadyPresent)
+        assertTrue(injected.bytes.contentEquals(second.bytes))
     }
 
     @Test
@@ -105,6 +139,7 @@ class BinaryAndroidManifestProbeInjectorTest {
         packageName: String,
         applicationName: String?,
         includeApplication: Boolean,
+        queryPackages: List<String> = emptyList(),
     ): ByteArray {
         val strings = linkedSetOf(
             "manifest",
@@ -115,6 +150,10 @@ class BinaryAndroidManifestProbeInjectorTest {
             "name",
         )
         applicationName?.let(strings::add)
+        if (queryPackages.isNotEmpty()) {
+            strings += "queries"
+            queryPackages.forEach(strings::add)
+        }
         val table = strings.toList()
         fun index(value: String): Int =
             table.indexOf(value).takeIf { it >= 0 } ?: error(value)
@@ -138,6 +177,24 @@ class BinaryAndroidManifestProbeInjectorTest {
                 ),
             ),
         )
+
+        if (queryPackages.isNotEmpty()) {
+            chunks += startElement(name = index("queries"), attrs = emptyList())
+            queryPackages.forEach { packageName ->
+                chunks += startElement(
+                    name = index("package"),
+                    attrs = listOf(Attr(
+                        namespace = index(ANDROID_NS),
+                        name = index("name"),
+                        rawValue = index(packageName),
+                        type = TYPE_STRING,
+                        data = index(packageName),
+                    )),
+                )
+                chunks += endElement(index("package"))
+            }
+            chunks += endElement(index("queries"))
+        }
 
         if (includeApplication) {
             val attrs = applicationName?.let {
