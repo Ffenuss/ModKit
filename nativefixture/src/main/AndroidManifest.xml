@@ -1,11 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Only package visibility: no game-specific ModKit controller API. -->
-    <queries>
-        <package android:name="io.github.ffenuss.modkit" />
-        <package android:name="io.github.ffenuss.modkit.test" />
-        <package android:name="io.github.ffenuss.modkit.spacecompanion" />
-    </queries>
+    <!-- No package visibility declared: preparation must inject scoped queries. -->
     <application android:label="ModKit Native Fixture" android:allowBackup="false">
         <activity android:name=".NativeGameActivity" android:exported="true">
             <intent-filter>
