@@ -28,6 +28,19 @@ object BinaryAndroidManifestProbeInjector {
         "io.github.ffenuss.modkit.runtimeprobe.RuntimeEvidenceProvider"
     const val AUTHORITY_SUFFIX = ".modkit.runtimeprobe"
 
+    // Android 11+ filters PackageManager lookups without manifest visibility.
+    // The injected probe must authenticate both publisher variants and the
+    // exact Companion package, even when the original game declares no queries.
+    private val REQUIRED_VISIBLE_PACKAGES = listOf(
+        "io.github.ffenuss.modkit",
+        "io.github.ffenuss.modkit.test",
+        "io.github.ffenuss.modkit.spacecompanion",
+    )
+
+    internal fun declaredPackageQueries(bytes: ByteArray): List<String> =
+        ParsedDocument.parse(bytes, BinaryAndroidManifestInspector.inspect(bytes).manifestSize)
+            .findQueries()?.packages.orEmpty()
+
     private const val RES_XML_TYPE = 0x0003
     private const val RES_STRING_POOL_TYPE = 0x0001
     private const val RES_XML_RESOURCE_MAP_TYPE = 0x0180
@@ -64,6 +77,12 @@ object BinaryAndroidManifestProbeInjector {
             require(currentProvider.authority == authority) {
                 "Runtime probe provider class already exists with another authority."
             }
+        }
+        val existingQueries = document.findQueries()
+        val missingQueries = REQUIRED_VISIBLE_PACKAGES.filterNot {
+            it in existingQueries?.packages.orEmpty()
+        }
+        if (currentProvider != null && missingQueries.isEmpty()) {
             return BinaryManifestProbeInjectionResult(
                 bytes = bytes.copyOf(manifest.manifestSize),
                 packageName = manifest.packageName,
@@ -98,8 +117,11 @@ object BinaryAndroidManifestProbeInjector {
         val providerClass = editor.ensurePlain(PROVIDER_CLASS)
         val authorityString = editor.ensurePlain(authority)
         val trueString = editor.ensurePlain("true")
+        val queriesTag = editor.ensurePlain("queries")
+        val packageTag = editor.ensurePlain("package")
+        val missingQueryStrings = missingQueries.map(editor::ensurePlain)
 
-        val providerChunks = providerElement(
+        val providerChunks = if (currentProvider == null) providerElement(
             providerTag = providerTag,
             androidNs = androidNs,
             nameAttribute = nameAttribute,
@@ -108,14 +130,31 @@ object BinaryAndroidManifestProbeInjector {
             providerClass = providerClass,
             authority = authorityString,
             trueString = trueString,
-        )
+        ) else byteArrayOf()
+        val packageChunks = missingQueryStrings.fold(byteArrayOf()) { acc, packageString ->
+            acc + manifestElement(
+                tag = packageTag,
+                attributes = listOf(Attribute(
+                    namespace = androidNs,
+                    name = nameAttribute,
+                    rawValue = packageString,
+                    dataType = TYPE_STRING,
+                    data = packageString,
+                )),
+            )
+        }
+        val visibilityChunks = if (existingQueries == null) {
+            manifestElement(tag = queriesTag, attributes = emptyList(), children = packageChunks)
+        } else packageChunks
+        val visibilityInsertOffset = existingQueries?.endOffset
+            ?: requireNotNull(manifest.applicationStartOffset)
 
         val newStringPool = editor.buildStringPool()
         val newResourceMap = editor.buildResourceMap()
 
         val output = ByteArrayOutputStream(
             manifest.manifestSize +
-                providerChunks.size +
+                providerChunks.size + visibilityChunks.size +
                 newStringPool.size,
         )
         output.write(
@@ -144,7 +183,10 @@ object BinaryAndroidManifestProbeInjector {
                 }
 
                 else -> {
-                    if (chunk.offset == applicationEnd) {
+                    if (chunk.offset == visibilityInsertOffset) {
+                        output.write(visibilityChunks)
+                    }
+                    if (chunk.offset == applicationEnd && providerChunks.isNotEmpty()) {
                         output.write(providerChunks)
                     }
                     output.write(
@@ -174,12 +216,16 @@ object BinaryAndroidManifestProbeInjector {
             "Application class changed during probe injection."
         }
 
-        val roundTrip = ParsedDocument.parse(
+        val roundTripDocument = ParsedDocument.parse(
             bytes = rewritten,
             rootSize = rewritten.size,
-        ).findProvider(PROVIDER_CLASS)
-        require(roundTrip?.authority == authority) {
+        )
+        require(roundTripDocument.findProvider(PROVIDER_CLASS)?.authority == authority) {
             "Injected runtime probe provider did not survive binary XML round-trip."
+        }
+        val effectiveQueries = roundTripDocument.findQueries()?.packages.orEmpty()
+        require(REQUIRED_VISIBLE_PACKAGES.all { it in effectiveQueries }) {
+            "Required publisher/Companion visibility queries did not survive binary XML rewrite."
         }
 
         return BinaryManifestProbeInjectionResult(
@@ -211,6 +257,11 @@ object BinaryAndroidManifestProbeInjector {
         val authority: String?,
     )
 
+    private data class QueriesSnapshot(
+        val endOffset: Int,
+        val packages: List<String>,
+    )
+
     private data class ParsedDocument(
         val rootHeaderSize: Int,
         val chunks: List<Chunk>,
@@ -219,6 +270,74 @@ object BinaryAndroidManifestProbeInjector {
         val resourceMapChunk: Chunk?,
         val bytes: ByteArray,
     ) {
+        /** Locate only root-level <queries>, preserving unrelated entries. */
+        fun findQueries(): QueriesSnapshot? {
+            var depth = 0
+            var queriesDepth: Int? = null
+            var found = false
+            var endOffset: Int? = null
+            val packages = mutableListOf<String>()
+            chunks.forEach { chunk ->
+                when (chunk.type) {
+                    RES_XML_START_ELEMENT_TYPE -> {
+                        require(chunk.size >= 36) { "Manifest start element is truncated." }
+                        val tag = stringAt(s32(bytes, chunk.offset + 20))
+                        if (tag == "queries" && depth == 1) {
+                            require(!found) { "Multiple root-level <queries> elements." }
+                            found = true
+                            queriesDepth = depth
+                        } else if (tag == "package" &&
+                            queriesDepth != null && depth == queriesDepth!! + 1
+                        ) {
+                            readAttribute(chunk, "name", ANDROID_NS)?.let(packages::add)
+                        }
+                        depth++
+                    }
+                    RES_XML_END_ELEMENT_TYPE -> {
+                        require(depth > 0) { "Manifest element nesting underflow." }
+                        depth--
+                        val tag = stringAt(s32(bytes, chunk.offset + 20))
+                        if (tag == "queries" && queriesDepth != null &&
+                            depth == queriesDepth
+                        ) {
+                            endOffset = chunk.offset
+                            queriesDepth = null
+                        }
+                    }
+                }
+            }
+            require(depth == 0) { "Manifest element nesting is incomplete." }
+            if (!found) return null
+            return QueriesSnapshot(
+                endOffset = requireNotNull(endOffset) { "Unclosed <queries> element." },
+                packages = packages,
+            )
+        }
+
+        private fun readAttribute(chunk: Chunk, wantedName: String, wantedNs: String): String? {
+            val attrStart = u16(bytes, chunk.offset + 24)
+            val attrSize = u16(bytes, chunk.offset + 26)
+            val attrCount = u16(bytes, chunk.offset + 28)
+            require(attrCount <= MAX_ATTRIBUTES && attrSize >= 20) {
+                "Manifest attribute table is malformed."
+            }
+            val start = safeAdd(chunk.offset + 16, attrStart, "manifest attribute start")
+            require(start >= chunk.offset + chunk.headerSize &&
+                start <= chunk.offset + chunk.size &&
+                attrSize * attrCount <= chunk.offset + chunk.size - start
+            ) { "Manifest attribute table exceeds its element." }
+            repeat(attrCount) { index ->
+                val base = start + index * attrSize
+                val ns = s32(bytes, base)
+                if (ns != NO_INDEX && stringAt(ns) == wantedNs &&
+                    stringAt(s32(bytes, base + 4)) == wantedName
+                ) {
+                    return attributeStringValue(base)
+                }
+            }
+            return null
+        }
+
         fun findProvider(
             className: String,
         ): ProviderSnapshot? {
@@ -594,6 +713,48 @@ object BinaryAndroidManifestProbeInjector {
                     (length and 0xff).toByte(),
                 )
             }
+    }
+
+    /** Emit bounded Android binary XML start/children/end chunks. */
+    private fun manifestElement(
+        tag: Int,
+        attributes: List<Attribute>,
+        children: ByteArray = byteArrayOf(),
+    ): ByteArray {
+        require(attributes.size <= MAX_ATTRIBUTES)
+        val size = 36 + attributes.size * 20
+        val start = ByteBuffer.allocate(size).order(ByteOrder.LITTLE_ENDIAN)
+        start.putShort(RES_XML_START_ELEMENT_TYPE.toShort())
+        start.putShort(16)
+        start.putInt(size)
+        start.putInt(0)
+        start.putInt(NO_INDEX)
+        start.putInt(NO_INDEX)
+        start.putInt(tag)
+        start.putShort(20)
+        start.putShort(20)
+        start.putShort(attributes.size.toShort())
+        start.putShort(0)
+        start.putShort(0)
+        start.putShort(0)
+        attributes.forEach { attr ->
+            start.putInt(attr.namespace)
+            start.putInt(attr.name)
+            start.putInt(attr.rawValue)
+            start.putShort(8)
+            start.put(0)
+            start.put(attr.dataType.toByte())
+            start.putInt(attr.data)
+        }
+        val end = ByteBuffer.allocate(24).order(ByteOrder.LITTLE_ENDIAN)
+        end.putShort(RES_XML_END_ELEMENT_TYPE.toShort())
+        end.putShort(16)
+        end.putInt(24)
+        end.putInt(0)
+        end.putInt(NO_INDEX)
+        end.putInt(NO_INDEX)
+        end.putInt(tag)
+        return start.array() + children + end.array()
     }
 
     private fun providerElement(
