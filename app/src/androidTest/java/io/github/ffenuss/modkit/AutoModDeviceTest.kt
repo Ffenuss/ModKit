@@ -1290,6 +1290,16 @@ class AutoModDeviceTest {
             io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(nativePackage)
         ) { "CI must install repository-owned native fixture before instrumentation" }
         assertEquals(1, original.apkFiles.size)
+        fun visiblePackageQueries(apk: File): List<String> = ZipFile(apk).use { zip ->
+            val manifest = requireNotNull(zip.getEntry("AndroidManifest.xml"))
+            zip.getInputStream(manifest).use { stream ->
+                BinaryAndroidManifestProbeInjector.declaredPackageQueries(stream.readBytes())
+            }
+        }
+        assertTrue(
+            "Original native game must not pre-grant package visibility",
+            visiblePackageQueries(original.apkFiles.single()).isEmpty(),
+        )
         assertNull(
             "Unprepared native game must not implement a ModKit controller",
             context.packageManager.resolveContentProvider(
@@ -1394,6 +1404,18 @@ class AutoModDeviceTest {
         val exactInstalled = requireNotNull(
             transport.inspectInstalled(nativePackage, authority))
         RepackedRuntimeProbeIdentityVerifier.verify(build, exactInstalled)
+        val repackedNative = requireNotNull(
+            io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(nativePackage)
+        )
+        assertEquals(
+            "Prepared APK must gain exactly the scoped publisher/Companion visibility",
+            listOf(
+                "io.github.ffenuss.modkit",
+                "io.github.ffenuss.modkit.test",
+                "io.github.ffenuss.modkit.spacecompanion",
+            ),
+            visiblePackageQueries(repackedNative.apkFiles.single()),
+        )
         val recipe = RepackedRuntimeTestMenuItem(
             id = "native:step-seven",
             label = "Native movement",

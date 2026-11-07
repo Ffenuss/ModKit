@@ -460,8 +460,59 @@ the binary positive proof is therefore x86_64 only, even though the
 test APK compiles four Android ABIs. The tested game is entirely
 repository-owned; no third-party engine, production game, ARM64 native
 write-back, root mode, non-repacked runtime or virtual guest was
-validated by this test. The native game manifest explicitly grants
-publisher/Companion package visibility for signature checks, which
-ordinary third-party APKs might lack. Runtime patching on real games
-must still be backed by an exact per-target recipe and in-game effect
+validated by this test. The original native fixture deliberately has
+**no package visibility** for the publisher or Companion; the prepared APK
+receives those scoped entries during manifest injection (see below).
+Runtime patching on real games must still be backed by an exact per-target recipe and in-game effect
 validation; byte-write acknowledgement alone is insufficient.
+
+## Scoped package visibility for prepared native APKs (2026-11-08)
+
+On Android 11+, the Runtime Probe must discover the exact ModKit publisher
+and Space Companion packages before accepting authenticated IPC calls. The
+previous positive native fixture test relied on a manually authored
+`<queries>` block inside the **original** fixture APK; an arbitrary APK
+without this block could fail closed before applying a valid recipe.
+
+The binary-manifest injector now adds only the three exact package names
+`io.github.ffenuss.modkit`, `io.github.ffenuss.modkit.test`, and
+`io.github.ffenuss.modkit.spacecompanion` to a prepared APK's manifest.
+If an existing root-level `<queries>` element is present, it preserves
+unrelated entries and appends only missing package declarations; otherwise
+it inserts a new element immediately before `<application>`. Repeated
+preparation leaves the bytes unchanged. This adds package *visibility*, not
+access privileges, signature exemptions, or executable patch recipes.
+
+The repository-owned `:nativefixture` no longer declares those packages
+up front. Its full positive native gameplay test now serves as an Android
+11+ regression for injector-supplied visibility, keeping exact caller UID,
+signer validation, installed-APK hash checks, and native byte validation.
+
+This change is limited to **explicitly prepared, re-signed APKs**. It does
+not permit cross-app runtime injection into unmodified games, virtualized
+Android guests, or root mode; actual validation should be taken from the
+CI run for the branch and not inferred from these source changes alone.
+
+### Verified Android CI (PR #52)
+
+[Actions run #42414699593](https://github.com/Ffenuss/ModKit/actions/runs/42414699593)
+for functional commit `1f30adb` completed **SUCCESS**, including:
+
+- JVM tests, Android Lint, signed APK builds, native payload checks and
+  independently executed ARM64 recipe reference vectors — **PASS**.
+- Android API 29, single original fixture APK — **17/17 device tests PASS**.
+- Android API 35, original fixture split APK — **17/17 device tests PASS**
+  on rerun attempt 2, with **no source changes** from the functional commit.
+- The first API 35 attempt was blocked by an emulator-level **Pixel Launcher
+  isn't responding** ANR, with a saved screenshot and UI evidence. Retrying
+  the failed job alone restored the previously passing 17/17 behavior.
+- `q_preparedNativeProbeChangesRealIndependentGame` now confirms that the
+  original native game manifest has **no** package visibility declarations,
+  while the installed prepared manifest contains exactly the three required
+  publisher/Companion package declarations, before measuring actual native
+  movement `+2 → +7 → +2` and reset on overlay close.
+
+The validated change does not demonstrate support for arbitrary external
+Android games or any real ARM64 native patch execution; both device emulator
+runs use x86_64. The final workflow-filter/doc commits do not alter
+production code after this successful validation.
