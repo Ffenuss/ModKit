@@ -516,3 +516,61 @@ The validated change does not demonstrate support for arbitrary external
 Android games or any real ARM64 native patch execution; both device emulator
 runs use x86_64. The final workflow-filter/doc commits do not alter
 production code after this successful validation.
+
+## ARM64 exact-fixture CPU proof (2026-11-08)
+
+The existing positive native gameplay Android test now uses the device's
+reported 64-bit ABI (`x86_64` or `arm64-v8a`) to choose its exact ELF
+symbol/byte recipe. No address is guessed: `NativeFixtureElfProof`
+resolves the exported `native_fixture_step` from the *installed*
+fixture's dynamic symbol table and verifies the matching executable section.
+
+For ARM64, the sole prepared write replaces one aligned 4-byte
+instruction `mov w0,#2` (`40008052`) with `mov w0,#7`
+(`e0008052`), leaving the `ret` untouched. The same exact
+expected-original-byte guard applies on ON and inverse OFF. The device
+test also validates this recipe against the ARM64 ELF bundled in the
+original multi-ABI fixture APK, even when the Android emulator uses x86_64.
+
+CI additionally takes the *actual Android NDK-built* ARM64
+`libmodkit_native_fixture.so` from `:nativefixture:assembleDebug`
+and runs `tools/verify_arm64_fixture_elf.py`. The verifier checks
+ELF64 class, AArch64 machine type, section boundaries, the unique
+exported function in `.dynsym`, its precise file offset and original
+bytes. Unicorn 2.1.4 then independently executes the original function,
+the guarded replacement and exact restoration, expecting
+`2 → 7 → 2`. A stale original-byte expectation must be rejected.
+The JSON evidence is saved to
+`app/build/arm64-fixture-verification.json`.
+
+**Verification boundary:** this is actual NDK ARM64 *machine-code
+execution in Unicorn*, not an Android ARM64 device/overlay write-back
+demonstration. Existing x86_64 Android device tests continue exercising
+actual prepared APKs, user-confirmed installation, overlay control
+and in-game movement. The ARM64 on-device branch will require a
+separate real ARM64 test run before it can be called proven; no claims
+are made for arbitrary games, non-repacked runtime injection or root.
+
+### CI evidence for ARM64 ELF proof (PR #53)
+
+[GitHub Actions #42419020019](https://github.com/Ffenuss/ModKit/actions/runs/42419020019)
+completed **SUCCESS** on functional commit `2f878ff`:
+
+- JVM tests, Lint, all APK assemblies/signatures, existing ARM64 reference
+  vectors, and the new real NDK ELF + Unicorn test — **PASS**.
+- ARM64 `native_fixture_step` symbol VA `0x688`, ELF file offset
+  `1672`, original instruction+return `40008052c0035fd6`.
+- Exact first instruction `40008052 → e0008052`, independently
+  executed in Unicorn as `2 → 7 → 2`; stale expected bytes rejected
+  and restoration byte-identical.
+- Android API29 single APK — **17/17 device tests PASS**.
+- Android API35 split APK — **17/17 device tests PASS**.
+- The initial host verifier had rejected normal file-less ELF
+  `SHT_NOBITS` sections. The parser was corrected; this was a
+  test-tool bug, not a native Runtime Probe or game behavior regression.
+  No source changes were needed after the successful functional commit
+  except documentation and restoring the CI push filter.
+
+**Not established:** Android ARM64 live mprotect/write/restore from
+the Space Companion. Both Android device suites still use x86_64
+emulators; on-device ARM64 validation remains a separate release gate.

@@ -1314,11 +1314,25 @@ class AutoModDeviceTest {
         assertNotNull("Unmodified native step must advance exactly 2 units",
             device.wait(Until.findObject(By.text("Native distance: 2")), 10_000))
 
-        // The exact function VA comes from the x86_64 .dynsym and executable
-        // ELF section in the real native game's APK. Never guess addresses.
+        // Select the actual device's 64-bit ABI, not an assumed test runner
+        // architecture. The exact function VA comes from its installed ELF
+        // .dynsym and executable section; never guess patch addresses.
+        val nativeAbi = android.os.Build.SUPPORTED_ABIS.firstOrNull {
+            it == "arm64-v8a" || it == "x86_64"
+        } ?: error("Native gameplay proof requires a supported 64-bit ABI")
         val patch = NativeFixtureElfProof.readInstalled(
-            original.apkFiles.single(), "x86_64")
+            original.apkFiles.single(), nativeAbi)
         assertTrue(patch.address > 0L)
+        // Every native fixture APK includes ARM64 regardless of the
+        // emulator's running architecture. Validate the actual packaged
+        // ARM64 ELF/symbol and exact instruction recipe here too; the
+        // separate Unicorn test executes its code without claiming a live
+        // ARM64 device patch.
+        val arm64Patch = NativeFixtureElfProof.readInstalled(
+            original.apkFiles.single(), "arm64-v8a")
+        assertEquals(0L, arm64Patch.address % 4L)
+        assertEquals("40008052", arm64Patch.original)
+        assertEquals("e0008052", arm64Patch.replacement)
         val target = AnalysisTargetDescriptor.InstalledPackage(
             nativePackage, "ModKit Native Fixture")
         val indexed = FastArtifactIndexer.index(original.apkFiles, signal, progress)
@@ -1419,7 +1433,7 @@ class AutoModDeviceTest {
         val recipe = RepackedRuntimeTestMenuItem(
             id = "native:step-seven",
             label = "Native movement",
-            detail = "Owned x86_64 fixture: 2 -> 7",
+            detail = "Owned $nativeAbi fixture: 2 -> 7",
             mode = RepackedRuntimeTestMenuItemMode.PATCH,
             moduleName = patch.module,
             binaryVirtualAddress = patch.address,

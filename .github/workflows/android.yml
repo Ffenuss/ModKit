@@ -55,6 +55,15 @@ jobs:
           python -m pip install unicorn==2.1.4
           python tools/verify_arm64_vectors.py app/build/native-verification.tsv
 
+      - name: Execute actual NDK-built ARM64 fixture and reversible patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIXTURE="$(find nativefixture/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)"
+          test -n "$FIXTURE"
+          test -s "$FIXTURE"
+          python tools/verify_arm64_fixture_elf.py "$FIXTURE" app/build/arm64-fixture-verification.json
+
       - name: Verify APK
         shell: bash
         run: |
@@ -102,6 +111,7 @@ jobs:
             app/build/reports/lint-results-debug.*
             apk-signature-verification.txt
             app/build/native-verification.*
+            app/build/arm64-fixture-verification.json
             spacecompanion/build/test-results/
             spacecompanion/build/reports/tests/
             spacecompanion/build/reports/lint-results-debug.*
