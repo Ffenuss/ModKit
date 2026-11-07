@@ -1323,6 +1323,16 @@ class AutoModDeviceTest {
         val patch = NativeFixtureElfProof.readInstalled(
             original.apkFiles.single(), nativeAbi)
         assertTrue(patch.address > 0L)
+        // Every native fixture APK includes ARM64 regardless of the
+        // emulator's running architecture. Validate the actual packaged
+        // ARM64 ELF/symbol and exact instruction recipe here too; the
+        // separate Unicorn test executes its code without claiming a live
+        // ARM64 device patch.
+        val arm64Patch = NativeFixtureElfProof.readInstalled(
+            original.apkFiles.single(), "arm64-v8a")
+        assertEquals(0L, arm64Patch.address % 4L)
+        assertEquals("40008052", arm64Patch.original)
+        assertEquals("e0008052", arm64Patch.replacement)
         val target = AnalysisTargetDescriptor.InstalledPackage(
             nativePackage, "ModKit Native Fixture")
         val indexed = FastArtifactIndexer.index(original.apkFiles, signal, progress)
