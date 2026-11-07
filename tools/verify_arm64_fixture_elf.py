@@ -59,8 +59,11 @@ def find_fixture_body(elf):
         item = struct.unpack_from(
             "<IIQQQQIIQQ", elf, section_offset + idx * section_entry_size)
         _, kind, flags, address, offset, size, link, _, _, entry_size = item
-        require(offset <= len(elf) and size <= len(elf) - offset,
-                "ELF section extends beyond file")
+        # SHT_NOBITS (.bss) occupies memory but intentionally has no
+        # file-backed payload. Its size must not be checked against EOF.
+        require(offset <= len(elf) and
+                (kind == 8 or size <= len(elf) - offset),
+                "File-backed ELF section extends beyond file")
         sections.append(dict(
             kind=kind, flags=flags, address=address,
             offset=offset, size=size, link=link, entry_size=entry_size,
