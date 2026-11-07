@@ -460,9 +460,9 @@ the binary positive proof is therefore x86_64 only, even though the
 test APK compiles four Android ABIs. The tested game is entirely
 repository-owned; no third-party engine, production game, ARM64 native
 write-back, root mode, non-repacked runtime or virtual guest was
-validated by this test. The native game manifest explicitly grants
-publisher/Companion package visibility for signature checks, which
-ordinary third-party APKs might lack. Runtime patching on real games
+validated by this test. The original native fixture now deliberately has **no package visibility**
+for the publisher or Companion: the prepared APK receives those scoped
+entries during binary-manifest injection (see the 2026-11-08 regression). Runtime patching on real games
 must still be backed by an exact per-target recipe and in-game effect
 validation; byte-write acknowledgement alone is insufficient.
 
