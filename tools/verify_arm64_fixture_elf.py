@@ -40,7 +40,7 @@ def load_from_apk(apk):
 
 
 def find_fixture_body(elf):
-    require(len(elf) >= 64 and elf[:6] == b"\\x7fELF\\x02\\x01",
+    require(len(elf) >= 64 and elf[:6] == b"\x7fELF\x02\x01",
             "Expected little-endian ELF64")
     require(struct.unpack_from("<H", elf, 16)[0] == 3,
             "Fixture must be a shared ELF object (ET_DYN)")
@@ -78,7 +78,7 @@ def find_fixture_body(elf):
     def read_name(offset):
         require(offset < strings["size"], "ELF symbol name out of range")
         start = strings["offset"] + offset
-        end = elf.find(b"\\0", start, strings["offset"] + strings["size"])
+        end = elf.find(b"\0", start, strings["offset"] + strings["size"])
         require(end != -1, "Unterminated ELF symbol")
         return elf[start:end].decode("utf-8")
 
