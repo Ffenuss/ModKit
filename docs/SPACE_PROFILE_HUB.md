@@ -465,3 +465,30 @@ publisher/Companion package visibility for signature checks, which
 ordinary third-party APKs might lack. Runtime patching on real games
 must still be backed by an exact per-target recipe and in-game effect
 validation; byte-write acknowledgement alone is insufficient.
+
+## Scoped package visibility for prepared native APKs (2026-11-08)
+
+On Android 11+, the Runtime Probe must discover the exact ModKit publisher
+and Space Companion packages before accepting authenticated IPC calls. The
+previous positive native fixture test relied on a manually authored
+`<queries>` block inside the **original** fixture APK; an arbitrary APK
+without this block could fail closed before applying a valid recipe.
+
+The binary-manifest injector now adds only the three exact package names
+`io.github.ffenuss.modkit`, `io.github.ffenuss.modkit.test`, and
+`io.github.ffenuss.modkit.spacecompanion` to a prepared APK's manifest.
+If an existing root-level `<queries>` element is present, it preserves
+unrelated entries and appends only missing package declarations; otherwise
+it inserts a new element immediately before `<application>`. Repeated
+preparation leaves the bytes unchanged. This adds package *visibility*, not
+access privileges, signature exemptions, or executable patch recipes.
+
+The repository-owned `:nativefixture` no longer declares those packages
+up front. Its full positive native gameplay test now serves as an Android
+11+ regression for injector-supplied visibility, keeping exact caller UID,
+signer validation, installed-APK hash checks, and native byte validation.
+
+This change is limited to **explicitly prepared, re-signed APKs**. It does
+not permit cross-app runtime injection into unmodified games, virtualized
+Android guests, or root mode; actual validation should be taken from the
+CI run for the branch and not inferred from these source changes alone.
