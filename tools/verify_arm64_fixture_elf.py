@@ -61,8 +61,8 @@ def find_fixture_body(elf):
         _, kind, flags, address, offset, size, link, _, _, entry_size = item
         # SHT_NOBITS (.bss) occupies memory but intentionally has no
         # file-backed payload. Its size must not be checked against EOF.
-        require(offset <= len(elf) and
-                (kind == 8 or size <= len(elf) - offset),
+        require(kind == 8 or
+                (offset <= len(elf) and size <= len(elf) - offset),
                 "File-backed ELF section extends beyond file")
         sections.append(dict(
             kind=kind, flags=flags, address=address,
