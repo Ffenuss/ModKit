@@ -1285,6 +1285,25 @@ class AutoModDeviceTest {
      * original fixture so a separate APK has no effect on their inputs.
      */
     @Test fun q_preparedNativeProbeChangesRealIndependentGame() = runBlocking {
+        // Normal emulator CI remains cross-ABI. A dedicated device proof must
+        // opt in and fail BEFORE installation/removal on anything but a real
+        // ARM64 kernel + 64-bit process. Android x86 translation is not proof.
+        val liveArm64 = InstrumentationRegistry.getArguments()
+            .getString("modkit_arm64_proof") == "true"
+        val liveNonce = InstrumentationRegistry.getArguments()
+            .getString("modkit_proof_nonce")
+        val kernelMachine = android.system.Os.uname().machine
+        if (liveArm64) {
+            assertEquals("ARM64 must be the device's primary ABI",
+                "arm64-v8a", Build.SUPPORTED_ABIS.firstOrNull())
+            assertEquals("ARM64 device proof requires an AArch64 kernel",
+                "aarch64", kernelMachine)
+            assertTrue("Runtime process must be 64-bit", android.os.Process.is64Bit())
+            assertTrue("ARM64 required in 64-bit supported ABIs",
+                Build.SUPPORTED_64_BIT_ABIS.contains("arm64-v8a"))
+            assertTrue("A fresh 128-bit proof nonce is required",
+                liveNonce != null && Regex("[0-9a-f]{32}").matches(liveNonce))
+        }
         val nativePackage = "dev.modkit.nativefixture"
         val original = requireNotNull(
             io.github.ffenuss.modkit.data.InstalledAppRepository(context).find(nativePackage)
@@ -1322,6 +1341,7 @@ class AutoModDeviceTest {
         } ?: error("Native gameplay proof requires a supported 64-bit ABI")
         val patch = NativeFixtureElfProof.readInstalled(
             original.apkFiles.single(), nativeAbi)
+        if (liveArm64) assertEquals("arm64-v8a", nativeAbi)
         assertTrue(patch.address > 0L)
         // Every native fixture APK includes ARM64 regardless of the
         // emulator's running architecture. Validate the actual packaged
@@ -1367,7 +1387,7 @@ class AutoModDeviceTest {
         val removed = device.executeShellCommand("pm uninstall $nativePackage")
         assertTrue("Remove disposable fixture for new signed install: $removed",
             removed.contains("Success"))
-        assertTrue("The installer permission was explicitly approved in test a_",
+        assertTrue("Install permission must be granted by test a_ or explicit device opt-in",
             context.packageManager.canRequestPackageInstalls())
 
         val modkitComponent = android.content.ComponentName(
@@ -1494,6 +1514,36 @@ class AutoModDeviceTest {
         fixtureText("Native move").click()
         assertNotNull("Closing external overlay must restore baseline native bytes",
             device.wait(Until.findObject(By.text("Native distance: 13")), 10_000))
+
+        if (liveArm64) {
+            // Emit only after the whole real, out-of-process overlay and
+            // native game sequence was observed. Fresh nonce prevents stale
+            // reports from ever satisfying an independent host gate.
+            evidence("arm64-native-live-${requireNotNull(liveNonce)}.json") { file ->
+                file.writeText(JSONObject()
+                    .put("schema", "modkit.arm64.native-live.v1")
+                    .put("nonce", liveNonce)
+                    .put("deviceAbi", nativeAbi)
+                    .put("primaryAbi", Build.SUPPORTED_ABIS.first())
+                    .put("kernelMachine", kernelMachine)
+                    .put("process64", android.os.Process.is64Bit())
+                    .put("apiLevel", Build.VERSION.SDK_INT)
+                    .put("fixturePackage", nativePackage)
+                    .put("originalInputSha256", indexed.index.artifactSha256)
+                    .put("recipe", JSONObject()
+                        .put("functionVirtualAddress", patch.address)
+                        .put("originalHex", patch.original)
+                        .put("replacementHex", patch.replacement))
+                    .put("observedNativeDistance", JSONObject()
+                        .put("baseline", 2)
+                        .put("on", 9)
+                        .put("off", 11)
+                        .put("overlayClosed", 13))
+                    .put("observedStepDeltas", org.json.JSONArray(listOf(2, 7, 2, 2)))
+                    .put("overlayAndInstallerConfirmed", true)
+                    .toString(2))
+            }
+        }
     }
 
 }
