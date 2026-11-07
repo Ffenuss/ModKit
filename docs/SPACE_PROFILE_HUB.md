@@ -516,3 +516,37 @@ The validated change does not demonstrate support for arbitrary external
 Android games or any real ARM64 native patch execution; both device emulator
 runs use x86_64. The final workflow-filter/doc commits do not alter
 production code after this successful validation.
+
+## ARM64 exact-fixture CPU proof (2026-11-08)
+
+The existing positive native gameplay Android test now uses the device's
+reported 64-bit ABI (`x86_64` or `arm64-v8a`) to choose its exact ELF
+symbol/byte recipe. No address is guessed: `NativeFixtureElfProof`
+resolves the exported `native_fixture_step` from the *installed*
+fixture's dynamic symbol table and verifies the matching executable section.
+
+For ARM64, the sole prepared write replaces one aligned 4-byte
+instruction `mov w0,#2` (`40008052`) with `mov w0,#7`
+(`e0008052`), leaving the `ret` untouched. The same exact
+expected-original-byte guard applies on ON and inverse OFF. The device
+test also validates this recipe against the ARM64 ELF bundled in the
+original multi-ABI fixture APK, even when the Android emulator uses x86_64.
+
+CI additionally takes the *actual Android NDK-built* ARM64
+`libmodkit_native_fixture.so` from `:nativefixture:assembleDebug`
+and runs `tools/verify_arm64_fixture_elf.py`. The verifier checks
+ELF64 class, AArch64 machine type, section boundaries, the unique
+exported function in `.dynsym`, its precise file offset and original
+bytes. Unicorn 2.1.4 then independently executes the original function,
+the guarded replacement and exact restoration, expecting
+`2 → 7 → 2`. A stale original-byte expectation must be rejected.
+The JSON evidence is saved to
+`app/build/arm64-fixture-verification.json`.
+
+**Verification boundary:** this is actual NDK ARM64 *machine-code
+execution in Unicorn*, not an Android ARM64 device/overlay write-back
+demonstration. Existing x86_64 Android device tests continue exercising
+actual prepared APKs, user-confirmed installation, overlay control
+and in-game movement. The ARM64 on-device branch will require a
+separate real ARM64 test run before it can be called proven; no claims
+are made for arbitrary games, non-repacked runtime injection or root.
