@@ -161,7 +161,7 @@ def verify(apk, destination):
         "restored_exactly": restored == original,
     }
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(json.dumps(report, indent=2) + "\\n")
+    destination.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps(report, indent=2))
 
 
