@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feature/space-arm64-live-device-gate-20261108 ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
@@ -46,6 +46,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.5.0'
+
+      - name: Validate opt-in ARM64 device evidence gates (host-only)
+        run: |
+          bash -n tools/run_arm64_native_live_proof.sh
+          python3 -m unittest discover -s tools -p 'test_verify_arm64_live_evidence.py' -v
 
       - name: Unit tests, lint, assemble
         run: gradle --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :spacecompanion:testDebugUnitTest :spacecompanion:lintDebug :spacecompanion:assembleDebug :nativefixture:assembleDebug
