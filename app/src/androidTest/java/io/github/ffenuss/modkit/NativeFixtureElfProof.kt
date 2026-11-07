@@ -7,16 +7,20 @@ import java.util.zip.ZipFile
 
 /**
  * CI-only bounded ELF evidence reader. The fixture's native executable
- * symbol/address are extracted from the actual installed APK, not assumed
- * from a hardcoded linker address. Only the exact known 6-byte x86_64 body
- * is patchable by this regression; all mismatches fail closed.
+ * symbol/address are extracted from the actually installed APK, not assumed
+ * from a hardcoded linker address. Only the exact known x86_64 or ARM64
+ * fixture instruction body is patchable; all mismatches fail closed.
+ * This permits the same Android end-to-end test on an ARM64 device, but
+ * does not by itself establish live ARM64 write-back on an emulator.
  */
 internal object NativeFixtureElfProof {
     data class Patch(val module: String, val address: Long,
                      val original: String, val replacement: String)
 
     fun readInstalled(apk: File, abi: String): Patch {
-        require(abi == "x86_64") { "Native CI proof currently requires x86_64" }
+        require(abi == "x86_64" || abi == "arm64-v8a") {
+            "Native positive proof supports only x86_64 and arm64-v8a"
+        }
         val module = "libmodkit_native_fixture.so"
         val data = ZipFile(apk).use { zip ->
             val entry = requireNotNull(zip.getEntry("lib/$abi/$module")) {
@@ -32,7 +36,10 @@ internal object NativeFixtureElfProof {
                 data[3] == 'F'.code.toByte() &&
                 data[4] == 2.toByte() && data[5] == 1.toByte())
         val bytes = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-        require(bytes.getShort(18).toInt() and 0xffff == 62) // x86_64
+        val expectedMachine = if (abi == "x86_64") 62 else 183 // EM_X86_64 / EM_AARCH64
+        require(bytes.getShort(18).toInt() and 0xffff == expectedMachine) {
+            "ELF machine does not match requested native fixture ABI"
+        }
         val headers = bytes.getLong(40)
         val entrySize = bytes.getShort(58).toInt() and 0xffff
         val count = bytes.getShort(60).toInt() and 0xffff
@@ -76,17 +83,31 @@ internal object NativeFixtureElfProof {
         val at = (symtab.offset + matches.single() * symtab.sizeOfEntry).toInt()
         val value = bytes.getLong(at + 8)
         require(value > 0)
+        val bodyLength = if (abi == "x86_64") 6 else 8
         val executable = sections.single {
             (it.flags and 0x4L) != 0L && value >= it.address &&
-                    value + 6 <= it.address + it.size
+                    value + bodyLength <= it.address + it.size
         }
         checked(executable)
         val offset = (executable.offset + value - executable.address).toInt()
-        val expected = byteArrayOf(0xb8.toByte(), 0x02, 0, 0, 0, 0xc3.toByte())
-        require(data.copyOfRange(offset, offset + 6).contentEquals(expected)) {
+        val expected = if (abi == "x86_64") {
+            byteArrayOf(0xb8.toByte(), 0x02, 0, 0, 0, 0xc3.toByte())
+        } else {
+            // mov w0,#2; ret in little-endian ARM64 machine instructions.
+            byteArrayOf(0x40, 0x00, 0x80.toByte(), 0x52,
+                0xc0.toByte(), 0x03, 0x5f, 0xd6.toByte())
+        }
+        require(data.copyOfRange(offset, offset + bodyLength).contentEquals(expected)) {
             "Compiled native fixture function bytes changed: refusing patch"
         }
-        // At function entry: mov eax, 2; ret. Replace only imm32 2 -> 7.
-        return Patch(module, value + 1, "02000000", "07000000")
+        return if (abi == "x86_64") {
+            // mov eax,2; ret: replace the 4-byte immediate, never the opcode.
+            Patch(module, value + 1, "02000000", "07000000")
+        } else {
+            // ARM64 instructions are naturally aligned and 4 bytes wide.
+            require(value % 4L == 0L) { "Unaligned ARM64 function entry" }
+            // mov w0,#2 -> mov w0,#7; retain the original ret instruction.
+            Patch(module, value, "40008052", "e0008052")
+        }
     }
 }
