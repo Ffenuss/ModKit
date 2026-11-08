@@ -158,7 +158,7 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Text("Оригинальные игры", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(4.dp))
-                Text(
+                if (showLegacyBuilds) Text(
                     when {
                         selectedRecord != null ->
                             "Активный профиль: ${selectedRecord.plan.packageName}"
@@ -168,14 +168,14 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                     },
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Text(
+                if (showLegacyBuilds) Text(
                     "Ниже доступны старые профили переподписанных APK. " +
                         "Они несовместимы с установленными оригиналами и по умолчанию скрыты. " +
                         "Для нового режима никаких переподписанных сборок не нужно.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (selectedKey != null) {
+                if (showLegacyBuilds && selectedKey != null) {
                     TextButton(
                         onClick = {
                             scope.launch {
@@ -196,7 +196,7 @@ fun SpaceProfilesScreen(onBack: () -> Unit) {
                         enabled = !selecting,
                     ) { Text("Снять выбор") }
                 }
-                if (selectedRecord != null) {
+                if (showLegacyBuilds && selectedRecord != null) {
                     Button(
                         onClick = {
                             scope.launch {
