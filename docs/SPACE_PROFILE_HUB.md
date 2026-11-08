@@ -770,3 +770,62 @@ prove semantic classification of arbitrary games, supported ARM64 live
 runtime patching on a physical device, or automatic mod deployment for
 all engines. The implementation remains repacked APK + external overlay,
 not a virtual Android guest.
+
+## UI-observed reversible native gameplay effect (PR #57)
+
+The independent native-game end-to-end test now records **actual game UI
+state** after each controlled movement action, rather than writing
+hardcoded cumulative values into the exported evidence. The test
+requires a visible `Native distance: N` counter from the **native game
+package**, not the external overlay or ModKit. Readings use five
+different UI checkpoints with monotonic timestamps:
+
+1. `START`: the prepared game before movement;
+2. `UNMODIFIED_ACTION`: one native movement with no active patch;
+3. `PATCH_ENABLED_ACTION`: one movement after the external overlay turns
+   on the exact scanner-derived patch;
+4. `PATCH_DISABLED_ACTION`: one movement after the overlay turns it off;
+5. `OVERLAY_CLOSED_ACTION`: one movement after the overlay is closed and
+   native bytes must be restored.
+
+`NativeScalarEffectCorrelation.confirm` is a **strict, pure Kotlin
+correlation gate**. It requires a SHA-256-bound original APK-set,
+package name, native module name, action label, a non-selectable original
+`NativeScalarExportCandidate`, and a patch that agrees exactly with
+`NativeScalarExportDiscovery.propose` for that source. It rejects any
+missing, repeated, unordered or timestamp-inconsistent checkpoint;
+invalid counters; a patch that does not actually change the game
+counter; or a failure to restore the original increment when switched
+off and again when the overlay is closed.
+
+The confirmed evidence retains the real observed values, derived step
+deltas, monotonic checkpoint timestamps, exact native patch address
+and byte identities. Both
+`native-scalar-gameplay-<abi>.json` and the optional ARM64 physical
+device report now derive their effect fields from these game UI
+samples, not constant JSON arrays. A passing provider toggle state
+alone is **insufficient**.
+
+### CI validation
+
+[GitHub Actions run #42448640159](https://github.com/Ffenuss/ModKit/actions/runs/42448640159)
+completed **SUCCESS** at functional commit `7aaeadc7`:
+
+- JVM tests, including wrong-effect/missing-restoration, bad source
+  identity or opcode, out-of-order/repeated timestamps, wrong phase
+  and malformed counter rejection: **PASS**.
+- Android Lint, APK builds and ARM64 NDK/Unicorn code proofs: **PASS**.
+- Android 10 / API 29, x86_64: **17/17 device tests PASS**.
+- Android 15 / API 35, x86_64: **17/17 device tests PASS**.
+- The owned game E2E on both emulator configurations exercises
+  scanner discovery -> exact byte recipe -> prepared APK -> external
+  overlay -> real UI-observed game movement -> reversible proof.
+
+**Important boundary:** the game action and native symbol are linked by
+the repository-owned test fixture. An arbitrary third-party native
+symbol has **no verified semantic role** from this test, cannot become
+an automatic selectable mod, and would require independently controlled
+game actions and trusted UI observations. The current x86_64 emulator
+tests also do not establish live physical ARM64 Android native
+write-back. The repo still lacks universal root/guest virtualization
+or all-engine mod support.

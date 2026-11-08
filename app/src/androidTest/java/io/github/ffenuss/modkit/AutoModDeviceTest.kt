@@ -1344,8 +1344,9 @@ class AutoModDeviceTest {
         // The actual candidate for the running-game recipe now comes from the
         // generic ELF discovery, not the fixture-specific ELF proof. The
         // latter remains an independent oracle for bytes/virtual address.
-        val discoveredPatch = NativeFixtureScalarDiscoveryProof.discover(
+        val nativeDiscovery = NativeFixtureScalarDiscoveryProof.discover(
             original.apkFiles.single(), nativeAbi, context.cacheDir, signal)
+        val discoveredPatch = nativeDiscovery.patch
         assertEquals("Discovered function VA must match independent ELF parser",
             patch.address, discoveredPatch.patchVirtualAddress)
         assertEquals(patch.original, discoveredPatch.expectedHex)
@@ -1485,14 +1486,37 @@ class AutoModDeviceTest {
         )
         io.github.ffenuss.modkit.space.SpaceTrustedHost.open(context)
         fixtureText("Оверлей и запуск: $nativePackage").click()
-        assertNotNull("Prepared native game must launch",
-            device.wait(Until.findObject(By.text("Native distance: 0")), 25_000))
+        // Read the *actual game package's UI text* after each independent
+        // game action. Later evidence is built from these samples, never
+        // populated with hardcoded expected cumulative totals.
+        val uiObservations = mutableListOf<NativeScalarUiObservation>()
+        fun readActualNativeCounter(
+            phase: NativeScalarEffectPhase,
+            expected: Long,
+            timeoutMs: Long = 10_000L,
+        ) {
+            val control = device.wait(Until.findObject(
+                By.pkg(nativePackage).text(
+                    Pattern.compile("^Native distance: [0-9]{1,9}$")
+                )), timeoutMs)
+            assertNotNull("Game UI counter absent at $phase", control)
+            val raw = requireNotNull(control).text
+            val actual = raw?.removePrefix("Native distance: ")?.toLongOrNull()
+                ?: throw AssertionError("Unparseable game UI counter at $phase: $raw")
+            assertEquals("Game UI measured an unexpected counter at $phase",
+                expected, actual)
+            uiObservations += NativeScalarUiObservation(
+                phase = phase,
+                displayedCounter = actual,
+                monotonicTimestampMs = android.os.SystemClock.elapsedRealtimeNanos() / 1_000_000L,
+            )
+        }
+        readActualNativeCounter(NativeScalarEffectPhase.START, 0L, 25_000L)
         val bubbleSelector = By.desc("ModKit · открыть плавающее меню")
         assertNotNull("The external floating overlay must be visible",
             device.wait(Until.findObject(bubbleSelector), 20_000))
         fixtureText("Native move").click()
-        assertNotNull("Native base step must be 2 after re-signed install",
-            device.wait(Until.findObject(By.text("Native distance: 2")), 10_000))
+        readActualNativeCounter(NativeScalarEffectPhase.UNMODIFIED_ACTION, 2L)
 
         requireNotNull(device.findObject(bubbleSelector)).click()
         fixtureText("Нативный патч · Native movement: выключено").click()
@@ -1501,8 +1525,7 @@ class AutoModDeviceTest {
                 "Нативный патч · Native movement: включено")), 20_000))
         requireNotNull(device.findObject(bubbleSelector)).click()
         fixtureText("Native move").click()
-        assertNotNull("Native code patch must change ACTUAL in-game movement to 7",
-            device.wait(Until.findObject(By.text("Native distance: 9")), 10_000))
+        readActualNativeCounter(NativeScalarEffectPhase.PATCH_ENABLED_ACTION, 9L)
 
         requireNotNull(device.findObject(bubbleSelector)).click()
         fixtureText("Нативный патч · Native movement: включено").click()
@@ -1511,8 +1534,7 @@ class AutoModDeviceTest {
                 "Нативный патч · Native movement: выключено")), 20_000))
         requireNotNull(device.findObject(bubbleSelector)).click()
         fixtureText("Native move").click()
-        assertNotNull("OFF must restore original machine instructions and step +2",
-            device.wait(Until.findObject(By.text("Native distance: 11")), 10_000))
+        readActualNativeCounter(NativeScalarEffectPhase.PATCH_DISABLED_ACTION, 11L)
 
         requireNotNull(device.findObject(bubbleSelector)).click()
         fixtureText("Нативный патч · Native movement: выключено").click()
@@ -1521,8 +1543,19 @@ class AutoModDeviceTest {
         fixtureText("Закрыть меню").click()
         assertTrue(device.wait(Until.gone(bubbleSelector), 15_000))
         fixtureText("Native move").click()
-        assertNotNull("Closing external overlay must restore baseline native bytes",
-            device.wait(Until.findObject(By.text("Native distance: 13")), 10_000))
+        readActualNativeCounter(NativeScalarEffectPhase.OVERLAY_CLOSED_ACTION, 13L)
+
+        val confirmedEffect = NativeScalarEffectCorrelation.confirm(
+            originalArtifactSha256 = indexed.index.artifactSha256,
+            packageName = nativePackage,
+            moduleName = patch.module,
+            actionLabel = "Native move",
+            candidate = nativeDiscovery.candidate,
+            patch = discoveredPatch,
+            modifiedStep = 7,
+            observations = uiObservations,
+        )
+        assertEquals(listOf(2L, 7L, 2L, 2L), confirmedEffect.observedDeltas)
 
         // Only the owned fixture has a known user-facing movement action. No
         // generic native candidate is automatically promoted or made selectable
@@ -1539,9 +1572,16 @@ class AutoModDeviceTest {
                 .put("patchVirtualAddress", discoveredPatch.patchVirtualAddress)
                 .put("expectedHex", discoveredPatch.expectedHex)
                 .put("replacementHex", discoveredPatch.replacementHex)
-                .put("observedNativeDistance", org.json.JSONArray(listOf(0, 2, 9, 11, 13)))
-                .put("actualStepDeltas", org.json.JSONArray(listOf(2, 7, 2, 2)))
-                .put("overlayClosedRestoresOriginal", true)
+                .put("observationSource", confirmedEffect.source)
+                .put("observationPhases", org.json.JSONArray(
+                    confirmedEffect.observations.map { it.phase.name }))
+                .put("observationTimestampMonotonicMs", org.json.JSONArray(
+                    confirmedEffect.observations.map { it.monotonicTimestampMs }))
+                .put("observedNativeDistance", org.json.JSONArray(
+                    confirmedEffect.observations.map { it.displayedCounter }))
+                .put("actualStepDeltas", org.json.JSONArray(confirmedEffect.observedDeltas))
+                .put("overlayClosedRestoresOriginal",
+                    confirmedEffect.observedDeltas.last() == confirmedEffect.unmodifiedStep.toLong())
                 .put("scope", "repository-owned native fixture only")
                 .toString(2))
         }
@@ -1566,11 +1606,12 @@ class AutoModDeviceTest {
                         .put("originalHex", patch.original)
                         .put("replacementHex", patch.replacement))
                     .put("observedNativeDistance", JSONObject()
-                        .put("baseline", 2)
-                        .put("on", 9)
-                        .put("off", 11)
-                        .put("overlayClosed", 13))
-                    .put("observedStepDeltas", org.json.JSONArray(listOf(2, 7, 2, 2)))
+                        .put("baseline", confirmedEffect.observations[1].displayedCounter)
+                        .put("on", confirmedEffect.observations[2].displayedCounter)
+                        .put("off", confirmedEffect.observations[3].displayedCounter)
+                        .put("overlayClosed", confirmedEffect.observations[4].displayedCounter))
+                    .put("observedStepDeltas", org.json.JSONArray(
+                        confirmedEffect.observedDeltas))
                     .put("overlayAndInstallerConfirmed", true)
                     .toString(2))
             }
