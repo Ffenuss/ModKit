@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">ModKit</string>
+    <string name="native_metric_accessibility_name">ModKit: ручное наблюдение показателя</string>
+    <string name="native_metric_accessibility_description">По вашему нажатию считывает только выбранный числовой показатель интерфейса одной игры. Не записывает остальной экран, жесты или пароли, не делает снимки экрана и не отправляет данные. Разрешение можно отозвать в настройках Android.</string>
 </resources>
