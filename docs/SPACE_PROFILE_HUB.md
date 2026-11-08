@@ -892,3 +892,79 @@ write-back remains unproven until an explicitly authorized disposable
 device is tested. The production app still lacks a general non-root
 guest sandbox, arbitrary third-party semantic mod discovery, and
 universal engine compatibility.
+
+## Generic, read-only UI metric association for analyzed native exports (PR #59)
+
+`NativeVisibleCounterParser` recognizes one exact, user-specified
+numeric label from the **target application's UI text node**, e.g.
+`Health: 98`, `Distance: 42`, or `Charges = 0`. It accepts only a single
+bounded signed integer and no OCR, floating-point approximation, fuzzy
+substring matching, silent rescaling, or ambiguous duplicate nodes.
+This is the **parsing core**, not yet a general third-party UI
+hierarchy capture/Accessibility workflow.
+
+`NativeMetricExperimentPlanner.fromAnalysis` creates an experiment
+*only* for a uniquely identified symbol from the original APK-set's
+`UniversalElfInventoryResult`. It requires a concrete archive,
+`lib/<abi>/<module>.so` path, matching indexed ABI, source SHA-256,
+non-selectable exact-byte native scalar candidate, explicit user-selected
+action/metric labels, and explicit proposed integer replacement.
+A plan is fingerprinted against those fields. Preparing a plan does
+**not** execute the native patch or grant app installation access.
+
+`NativeVisibleMetricExperiment.assess` evaluates eight supplied
+source-package-scoped, timestamp-ordered UI observations from two
+baseline actions, two repeated ON/OFF cycles and overlay-close
+restoration. Unlike the fixed fixture experiment, it can detect
+**increasing, decreasing, or zero-baseline** integer metrics. It requires
+identical baseline/restore action deltas, identical changed ON deltas in
+both trials, and a meaningful ON-vs-control difference. It rejects
+partial trials, stale or changed plans, mismatched game package, UI
+label, ordering, or captured counter values.
+
+**Result is deliberately read-only:** `REPLICATED_UI_METRIC_ASSOCIATION_ONLY`,
+`selectable=false` with a semantic-evidence blocker. A match in a user-
+supplied metric does **not** establish that the selected machine-code
+function caused the difference. The pure evaluator cannot authenticate
+the origin of caller-supplied observations, establish instrumentation
+truth, or enable a mod in another game. Actual third-party UI capture,
+provenance, consent, code ownership and controlled execution are
+separate features not delivered here.
+
+The Runtime Test Menu now reserves **up to 4 slots** for existing
+structural native `INFO` discoveries *before* allocating the remaining
+general INFO budget. This prevents ordinary findings from hiding native
+exports, never displaces already-verified PATCH items, and never
+promotes structural matches to executable toggles.
+
+### CI proof and PackageInstaller hardening
+
+[GitHub Actions #42473086463](https://github.com/Ffenuss/ModKit/actions/runs/42473086463)
+completed **SUCCESS** on functional commit `0e368f9`:
+
+- JVM tests include the generic metric parser, ambiguous-label rejection,
+  signed and zero-baseline experiments, two ON/OFF cycles, identity/
+  timestamp/proposal mismatch rejection, indexed-export binding and
+  native INFO menu budget checks.
+- Android Lint, APK assembly, 22 Python strict ARM64-v2 host checks,
+  and ARM64 machine-code/Unicorn proofs: **PASS**.
+- Android API29 x86_64, owned single APK: **17/17 PASS**.
+- Android API35 x86_64, owned split APK: **17/17 PASS**.
+- The owned independent native game's real Android UI observations are
+  fed through *both* the original fixture-specific effect gate and the
+  new generic, read-only metric association model.
+
+The API29 test suite's earlier attempts exposed an installer session
+stuck in `SESSION_COMMITTED`, causing downstream test failures.
+The owned-fixture test now brings the test host explicitly to the
+foreground, waits for system PackageInstaller confirmation longer,
+clicks only PackageInstaller-owned controls, validates the exact
+installation session, and exports UI diagnostics on timeout. It does
+**not** suppress failures or treat commitment as successful
+installation. The subsequent complete two-emulator CI run is green.
+
+Physical Android ARM64 live code write-back, general third-party
+observation collection, semantic identification and automatic game
+mod application remain unverified/unimplemented. The implementation
+still uses a repacked test APK and an external overlay, not a universal
+virtual guest Space.
