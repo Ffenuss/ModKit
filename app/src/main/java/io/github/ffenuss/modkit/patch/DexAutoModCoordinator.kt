@@ -76,7 +76,10 @@ object DexAutoModCoordinator {
             // whole APK twice. The apply path revalidates the exact source SHA.
             DexLocalPatchEngine.scanApks(
                 apkFiles = files,
-                developerTestMode = true,
+                // A third-party app is never implicitly an owned debug fixture.
+                // Disallow premium/debug test flags unless a separate trusted
+                // developer-owned harness explicitly authorizes them.
+                developerTestMode = false,
                 cancellation = cancellation,
                 progress = { count, entry ->
                     progress.publish(EngineProgress(

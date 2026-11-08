@@ -165,6 +165,35 @@ class DexLocalPatchEngineTest {
     }
 
     @Test
+    fun apkEditorsAndServiceMonitorsAreNotPlayerHealthMods() {
+        val unrelated = listOf(
+            "Lbin/mt/plus/ApkEditor;" to "getHealth",
+            "Lcom/example/manager/PackageManager;" to "getCurrentHealth",
+            "Lcom/example/system/HealthService;" to "getMaxHealth",
+            "Lcom/example/diagnostic/DeviceHealth;" to "isDead",
+            "Lcom/example/app/Utility;" to "getHealth",
+        )
+        for ((owner, method) in unrelated) {
+            val result = DexLocalPatchEngine.scanDex(
+                syntheticDex(owner, method, if (method == "isDead") "Z" else "I"),
+                0, "classes.dex", false, signal,
+            )
+            assertTrue("Not a player-health getter: " + owner + method,
+                result.opportunities.isEmpty())
+            assertEquals("No false health semantic signal: " + owner,
+                0, result.semanticNamesMatched)
+        }
+        // Existing known game context continues to be discoverable, but
+        // installed original APKs will only display it as an INFO hint.
+        val game = DexLocalPatchEngine.scanDex(
+            syntheticDex("Lcom/example/game/PlayerStats;", "getHealth", "I"),
+            0, "classes.dex", false, signal,
+        )
+        assertEquals(1, game.opportunities.size)
+        assertEquals(DexLocalCategory.HEALTH, game.opportunities.single().category)
+    }
+
+    @Test
     fun commonAppLevelAndExperienceMethodsAreNotGameplayPatches() {
         val cases = listOf(
             Triple("Lcom/example/logging/Logger;", "getLevel", "I"),

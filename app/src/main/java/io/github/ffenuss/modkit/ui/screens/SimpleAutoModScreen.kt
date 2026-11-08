@@ -54,6 +54,125 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
         NativeMetricRecorderScreen(target, result) { metricExperimentOpen = false }
         return
     }
+    if (target is AnalysisTargetDescriptor.InstalledPackage) {
+        // Installed packages must never lead to build/install of a ModKit-
+        // signed replacement. This path keeps the original signature and
+        // app data, and launches only the SHA-verified existing package.
+        Scaffold(
+            topBar = {
+                Surface(tonalElevation = 1.dp) {
+                    Row(Modifier.statusBarsPadding().padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = onBack, enabled = !state.busy) {
+                            Text("Назад")
+                        }
+                        Column(Modifier.padding(start = 12.dp)) {
+                            Text("ModKit · оригинал", style = MaterialTheme.typography.titleMedium)
+                            Text(target.label, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            },
+        ) { insets ->
+            LazyColumn(Modifier.fillMaxSize().padding(insets),
+                contentPadding = PaddingValues(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                item {
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Без удаления и переустановки",
+                                style = MaterialTheme.typography.titleLarge)
+                            Text(
+                                "ModKit проверяет, что установленный APK совпадает с проанализированным, " +
+                                    "и запускает оригинальное приложение. Его подпись, файлы и данные не меняются.",
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            Text(
+                                "Важное ограничение: это пока обычный запуск оригинала, " +
+                                    "не виртуальный ModKit Space. Меню и поиск кандидатов не означают, " +
+                                    "что мод может изменить чужой процесс без root.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+                state.error?.let { message ->
+                    item { Text(message, color = MaterialTheme.colorScheme.error) }
+                }
+                state.notice?.let { message ->
+                    item { Text(message, style = MaterialTheme.typography.bodyMedium) }
+                }
+                if (state.busy) {
+                    item {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Text(state.operation, style = MaterialTheme.typography.bodySmall)
+                        TextButton(onClick = model::cancel) { Text("Отмена") }
+                    }
+                }
+                item {
+                    Button(
+                        onClick = model::launchOriginal,
+                        enabled = !state.busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Запустить оригинальное приложение") }
+                }
+                item {
+                    OutlinedButton(
+                        onClick = { model.exportDiagnostics() },
+                        enabled = !state.busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Экспортировать результаты анализа") }
+                }
+                if (result.elfInventory?.records?.any {
+                    it.scalarExportCandidates.isNotEmpty()
+                } == true) {
+                    item {
+                        OutlinedButton(
+                            onClick = { metricExperimentOpen = true },
+                            enabled = !state.busy,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Исследовать показатель · только наблюдение") }
+                    }
+                }
+                if (state.recipes.isEmpty() && !state.busy) {
+                    item {
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text("Подтверждённых игровых модов нет",
+                                    style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    "Слова вроде Health, Level и Damage могут относиться " +
+                                        "к диагностике и служебным функциям даже в файловом менеджере. " +
+                                        "Без доказанной игровой механики они не выдаются как моды.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        }
+                    }
+                } else if (state.recipes.isNotEmpty()) {
+                    item {
+                        Text("Статические кандидаты (не рабочие моды)",
+                            style = MaterialTheme.typography.titleMedium)
+                    }
+                    items(state.recipes.take(30), key = { it.id }) { recipe ->
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(recipe.title, style = MaterialTheme.typography.titleSmall)
+                                Text(recipe.targetLabel,
+                                    style = MaterialTheme.typography.bodySmall)
+                                Text(recipe.blocker ?: "Игровой эффект не подтверждён.",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
     if (expert) {
         BackHandler { expert = false }
         AutoModScreen(target, result) { expert = false }
@@ -128,8 +247,16 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                                 else -> it.message ?: "Ожидаем ответ Android"
                             }, style = MaterialTheme.typography.bodySmall) }
                         }
+                        Text(
+                            "Это экспериментальный переподписанный APK, а не мод поверх официальной игры. " +
+                                "Не удаляйте оригинал ради установки: подпись и проверки магазина могут отличаться.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(onClick = model::install, modifier = Modifier.weight(1f)) { Text("Установить") }
+                            Button(onClick = model::install, modifier = Modifier.weight(1f)) {
+                                Text("Тестовая установка")
+                            }
                             OutlinedButton(onClick = {
                                 if (Build.VERSION.SDK_INT >= 29) model.save() else folder.launch(null)
                             }, modifier = Modifier.weight(1f)) { Text("Сохранить") }
@@ -149,7 +276,7 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                 item {
                     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Сборка создана", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            Text("Экспериментальная APK-сборка", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                             Text(if (record!!.plan.apks.size == 1) "Один подписанный APK" else "Комплект из ${record.plan.apks.size} APK — установка вместе")
                             Text("Патчи и подпись проверены. Игровой эффект пока не подтверждён.", style = MaterialTheme.typography.bodyMedium)
                         }

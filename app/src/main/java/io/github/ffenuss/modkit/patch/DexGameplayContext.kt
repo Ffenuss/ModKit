@@ -41,6 +41,47 @@ object DexGameplayContext {
         "roguelike", "combat", "battle",
     )
 
+    /**
+     * Health is also an OS/network/diagnostic term. A bare getHealth()
+     * in an APK editor or utility must not be interpreted as player HP.
+     * Even a contextual name remains only static evidence, not gameplay proof.
+     */
+    private val healthGetterNames = setOf(
+        "gethealth", "gethp", "getmaxhp", "getcurrenthp",
+        "getmaxhealth", "getcurrenthealth", "getplayerhealth",
+        "getplayerhp", "gethitpoints", "getmaxhitpoints",
+        "getmaxhitpoint", "isinvincible", "getisinvincible",
+        "isimmortal", "getisimmortal", "isgodmode", "getisgodmode",
+        "hasinfinitehealth", "isinvulnerable", "getisinvulnerable",
+        "isundamageable", "getisundamageable", "isdead",
+        "getisdead", "isdamageable", "getisdamageable",
+        "candamageplayer", "cantakedamage", "istakingdamage",
+    )
+    private val nonGameOwnerParts = listOf(
+        "server", "network", "http", "service", "diagnostic",
+        "system", "battery", "device", "storage", "file", "apk",
+        "package", "manager", "installer", "updater", "telemetry",
+        "analytics", "healthcheck", "endpoint", "monitor",
+    )
+    private val healthGameOwners = listOf(
+        "player", "character", "avatar", "hero", "enemy",
+        "npc", "combat", "battle", "damage", "health",
+        "hitpoint", "actor", "unit", "creature", "game",
+    )
+
+    fun isHealthSignal(methodName: String): Boolean =
+        normalize(methodName) in healthGetterNames
+
+    fun acceptHealthSignal(definingClass: String, methodName: String): Boolean {
+        if (!isHealthSignal(methodName)) return false
+        val path = definingClass.removePrefix("L").removeSuffix(";").lowercase()
+        val owner = path.substringAfterLast('/').substringBefore('$')
+        if (nonGameOwnerParts.any { it in owner }) return false
+        val segments = path.split('/')
+        return healthGameOwners.any { it in owner } ||
+            segments.any { it in gameplayPackageSegments }
+    }
+
     fun isProgressionGetter(methodName: String): Boolean =
         normalize(methodName) in progressionGetterNames
 
