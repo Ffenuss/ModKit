@@ -23,6 +23,7 @@ data class ElfInventoryRecord(
     val definedDynamicSymbolCount: Int,
     val sampledDefinedSymbols: List<String>,
     val warnings: List<String>,
+    val scalarExportCandidates: List<NativeScalarExportCandidate> = emptyList(),
 ) : Serializable
 
 data class UniversalElfInventoryResult(
@@ -39,7 +40,7 @@ data class UniversalElfInventoryResult(
  */
 object UniversalElfInventoryEngine {
     const val ID = "elf.universal-inventory"
-    const val VERSION = "2"
+    const val VERSION = "3"
 
     private const val MAX_ELF_BYTES = 512L * 1024L * 1024L
     private const val BUFFER_BYTES = 128 * 1024
@@ -126,6 +127,8 @@ object UniversalElfInventoryEngine {
                                     .sorted()
                                     .take(MAX_SYMBOL_SAMPLE)
                                     .toList(),
+                                scalarExportCandidates = if (mismatch) emptyList() else
+                                    NativeScalarExportDiscovery.scan(elf, cancellation),
                                 warnings = buildList {
                                     if (architecture == "unknown") {
                                         add("ELF machine is not mapped to a supported Android architecture.")

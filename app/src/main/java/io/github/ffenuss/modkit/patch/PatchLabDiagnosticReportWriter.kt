@@ -22,7 +22,7 @@ import java.util.zip.ZipOutputStream
 object PatchLabDiagnosticReportWriter {
     private const val SCHEMA_VERSION = 2
     private const val ENGINE_VERSION =
-        "patch-lab-diagnostic/3"
+        "patch-lab-diagnostic/4"
     private const val COPY_BUFFER_BYTES =
         128 * 1024
 
@@ -110,6 +110,7 @@ object PatchLabDiagnosticReportWriter {
                     preparation = preparation,
                 )
                 writeMetadataTables(zip, result)
+                writeNativeScalarExportCandidates(zip, result)
                 writeBindings(zip, result)
                 writeEvidenceTargets(zip, result)
                 writeSharedBodies(zip, result)
@@ -293,6 +294,9 @@ object PatchLabDiagnosticReportWriter {
             writer.line()
             writer.line("FILES")
             writer.line(
+                "elf/scalar-export-candidates.tsv - exact ELF constant-return exports; discovery only, no gameplay proof",
+            )
+            writer.line(
                 "il2cpp/dump.cs - metadata dump, streamed from analysis output",
             )
             writer.line(
@@ -407,6 +411,38 @@ object PatchLabDiagnosticReportWriter {
                         tsv(it)
                     },
                 )
+            }
+        }
+    }
+
+    /** Export every verified structural match without presenting any as a working mod. */
+    private fun writeNativeScalarExportCandidates(
+        zip: ZipOutputStream,
+        result: FastAnalysisResult,
+    ) {
+        writeTextEntry(zip, "elf/scalar-export-candidates.tsv") { writer ->
+            writer.line(
+                "container\tentryPath\tabi\tsymbol\tfunctionVa\tfileOffset\tpatchVa\treturnedInteger\toriginalBodyHex\texpectedPatchHex\tselectable\tblocker",
+            )
+            result.elfInventory?.records.orEmpty().forEach { record ->
+                record.scalarExportCandidates.forEach { candidate ->
+                    writer.line(
+                        listOf(
+                            record.container,
+                            record.entryPath,
+                            candidate.abi,
+                            candidate.symbol,
+                            hex(candidate.binaryVirtualAddress),
+                            candidate.fileOffset,
+                            hex(candidate.patchVirtualAddress),
+                            candidate.value,
+                            candidate.originalBodyHex,
+                            candidate.expectedPatchHex,
+                            candidate.selectable,
+                            candidate.blocker,
+                        ).joinToString("\t") { tsv(it) },
+                    )
+                }
             }
         }
     }

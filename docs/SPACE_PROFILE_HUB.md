@@ -659,3 +659,59 @@ completed **SUCCESS** at functional commit `401a40c`:
 The standard GitHub CI cannot substitute for a real ARM64 handset; the
 new *physical-device* proof has **not yet been run**. Post-validation
 documentation and CI-filter cleanup do not alter the tested logic.
+
+## Structural native scalar-export discovery (PR #55)
+
+The existing `ElfImage` parser and universal ELF inventory now enumerate
+a narrow, independently checkable class of **exported constant-return
+functions** without a fixture-specific symbol name or game/engine-specific
+keyword dictionary. Two exact machine-code shapes are supported:
+
+- **ARM64**: `MOVZ W0,#imm16` (shift 0), followed immediately by `RET`.
+- **x86_64**: `MOV EAX,imm32` (bounded nonnegative 0..65535),
+  followed immediately by `RET`.
+
+Only defined global/weak ELF64 `STT_FUNC` dynamic symbols, with verified
+file-backed executable segments and bounded function sizes, are
+considered. Aliased/shared function addresses, mismatched indexed ABI,
+non-matching opcodes, wrong destination registers and any additional
+instructions before return are rejected. Scanning is cancellable and
+bounded to 128 resulting candidates per ELF; **this is not exhaustive
+native disassembly** and will not find stripped/hidden exports or
+arbitrary machine-code control flow.
+
+For each match, `ElfInventoryRecord.scalarExportCandidates` carries
+ABI, symbol, ELF virtual address, file offset, patch address, original
+machine-code bytes, observed integer and exact expected patch bytes.
+Every candidate has `selectable=false` and a blocker stating that neither
+return type nor in-game effect is proven.
+`NativeScalarExportDiscovery.propose(candidate, newValue)` can create
+an **explicit 4-byte expected/replacement draft**, but performs **no
+automatic installation, memory write, overlay publication or gameplay
+semantic classification**. The caller must separately verify source
+APK identity, exact runtime bytes, return type and real in-game change.
+
+The universal inventory backend version is now **3** (avoiding stale
+cache reuse), and Patch Lab diagnostic writer version **4** exports
+`elf/scalar-export-candidates.tsv` in the regular diagnostic ZIP,
+including the blocker and nonselectable status.
+
+### CI proof for the new discovery
+
+[Actions run #42442538998](https://github.com/Ffenuss/ModKit/actions/runs/42442538998)
+completed **SUCCESS** on functional commit `4af6250`:
+
+- JVM tests, Lint, APK assemblies and previous ARM64 Unicorn proofs **PASS**.
+- A new JVM test takes the actual `arm64-v8a` and `x86_64` ELF files
+  from the NDK-built independent game APK, discovers exported
+  `native_fixture_step` **without a hardcoded symbol in the production
+  scanner**, and verifies `2 -> 7` 4-byte proposals, no-op rejection,
+  stale original bytes, cancellation and malformed-instruction negatives.
+- Android API29 x86_64 single-fixture suite: **17/17 PASS**.
+- Android API35 x86_64 split-fixture suite: **17/17 PASS**.
+
+**Not yet established:** this scanner does not prove any discovered
+symbol controls a game mechanic, nor does it turn those candidates into
+verified selectable overlay mods. ARM64 live native write-back on
+physical Android hardware remains a separate gate from PR #54. This
+work does not extend support to all native engines or versions.
