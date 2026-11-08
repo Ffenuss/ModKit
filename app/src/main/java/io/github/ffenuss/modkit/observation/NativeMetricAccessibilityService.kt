@@ -20,6 +20,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 /**
@@ -196,14 +197,14 @@ class NativeMetricAccessibilityService : AccessibilityService() {
                 }
                 if (node.childCount > 256) return null
                 for (index in 0 until node.childCount) {
-                    node.getChild(index)?.let(pending::add)
+                    node.getChild(index)?.let { pending.add(it) }
                 }
             }
         }
-        if (match == null) return null
+        val uniqueText = match ?: return null
         return runCatching {
-            NativeVisibleCounterParser.parseSingle(label, match)
-            match
+            NativeVisibleCounterParser.parseSingle(label, uniqueText)
+            uniqueText
         }.getOrNull()
     }
 }
