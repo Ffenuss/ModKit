@@ -9,6 +9,8 @@ import io.github.ffenuss.modkit.build.BuildArtifactExporter
 import io.github.ffenuss.modkit.domain.EngineProgress
 import io.github.ffenuss.modkit.patch.*
 import io.github.ffenuss.modkit.runtime.*
+import io.github.ffenuss.modkit.data.InstalledAppRepository
+import io.github.ffenuss.modkit.space.OriginalInstalledPackageLauncher
 import java.io.File
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,7 +58,17 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun discover() = operate("Проверяем доступные изменения") {
-        val restored = withContext(Dispatchers.IO) { AutoModBuildRecord.load(context, analysis.index.artifactSha256) }
+        val installedTarget = target as? AnalysisTargetDescriptor.InstalledPackage
+        // Never restore a previously repacked APK as the result of an
+        // installed-original analysis. The original has a different signer.
+        val restored = if (installedTarget == null) withContext(Dispatchers.IO) {
+            AutoModBuildRecord.load(context, analysis.index.artifactSha256)
+        } else null
+        val hasGameCategory = installedTarget?.let { installed ->
+            withContext(Dispatchers.IO) {
+                InstalledAppRepository(context).find(installed.packageName)?.isGame == true
+            }
+        } ?: false
         val dex = DexAutoModCoordinator.scan(context, target, analysis, signal, sink)
         val native = if (analysis.il2cppFastDump != null || analysis.il2cppBinaryBinding != null) {
             val prepared = AutoModPreparationCoordinator.prepare(context, target, analysis, signal, sink)
@@ -71,15 +83,27 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
             emptyList()
         }
         val preferences = context.getSharedPreferences("automod-selection", 0)
-        val recipes = (DexRecipeCatalog.create(dex) + native).map { recipe ->
+        val found = (DexRecipeCatalog.create(dex) + native).map { recipe ->
             preferences.getString(analysis.index.artifactSha256 + ":value:" + recipe.id, null)
                 ?.let(recipe::withScalarValue) ?: recipe
         }
-        val saved = preferences.getStringSet(analysis.index.artifactSha256, emptySet()).orEmpty()
+        // MT Manager and other APK editors may contain getHealth() but
+        // have no verified player-health mechanic. Even games only get
+        // read-only candidate hints in the preserve-original mode.
+        val recipes = if (installedTarget == null) found else
+            InstalledOriginalRecipePolicy.researchOnly(found, hasGameCategory)
+        val saved = if (installedTarget == null)
+            preferences.getStringSet(analysis.index.artifactSha256, emptySet()).orEmpty()
+        else emptySet()
         mutable.update { it.copy(recipes = recipes, methodsExamined = dex.methodsExamined,
             selected = saved.intersect(recipes.filter { r -> r.selectable }.map { r -> r.id }.toSet()),
-            built = it.built ?: restored, showingResult = restored != null,
-            notice = (dex.warnings + analysis.engineWarnings).firstOrNull()) }
+            built = restored, showingResult = restored != null,
+            notice = if (installedTarget != null) {
+                if (hasGameCategory)
+                    "Исходная игра не меняется. Найденные имена/байты — только кандидаты; готовых модов без подтверждённого runtime-эффекта нет."
+                else
+                    "Android не подтверждает категорию «игра». Совпадения getHealth/health в утилитах не доказывают игровое здоровье и не выдаются как моды."
+            } else (dex.warnings + analysis.engineWarnings).firstOrNull()) }
     }
 
     fun toggle(id: String) {
@@ -97,6 +121,9 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun build() = operate("Создаём мод") {
+        check(target !is AnalysisTargetDescriptor.InstalledPackage) {
+            "Для установленной игры сборка и переподпись APK отключены. Используйте «Запустить оригинал»."
+        }
         val selected = state.value.recipes.filter { it.id in state.value.selected }
         val built = AutoModBuildCoordinator.build(context, target, analysis, preparation, selected, signal, sink) {
             mutable.update { current -> current.copy(recipes = current.recipes.map {
@@ -123,6 +150,9 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun install() = operate("Готовим установку") {
+        check(target !is AnalysisTargetDescriptor.InstalledPackage) {
+            "Установка переподписанной версии поверх оригинала запрещена. Удалять игру не нужно."
+        }
         mutable.update { it.copy(needsInstallPermission = false) }
         val record = requireNotNull(state.value.built)
         val readiness = withContext(Dispatchers.IO) { AndroidRepackedRuntimeInstaller.inspectReadiness(context, record.plan) }
@@ -141,6 +171,21 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
                 mutable.update { it.copy(installSession = submitted.sessionId, notice = "Комплект APK передан Android. Ожидаем подтверждение.") }
             }
         }
+    }
+
+    /** Launch the verified *original*, not a ModKit-signed replacement. */
+    fun launchOriginal() = operate("Проверяем оригинальную игру") {
+        val installed = target as? AnalysisTargetDescriptor.InstalledPackage
+            ?: error("Для этого файла нет установленного оригинала.")
+        OriginalInstalledPackageLauncher.launch(
+            context,
+            installed.packageName,
+            analysis.index.artifactSha256,
+            signal,
+        )
+        mutable.update { it.copy(
+            notice = "Оригинальное приложение запущено без удаления, установки или изменения APK. Это не виртуальный Space и не активированный мод.",
+        ) }
     }
 
     fun permissionReturned() {
