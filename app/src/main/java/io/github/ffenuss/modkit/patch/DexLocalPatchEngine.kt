@@ -623,6 +623,11 @@ object DexLocalPatchEngine {
                 definingClass, methodName,
             )
         ) return null
+        // Example: APK/file managers contain getHealth() for system/service
+        // diagnostics. Method name alone does not establish player health.
+        if (DexGameplayContext.isHealthSignal(methodName) &&
+            !DexGameplayContext.acceptHealthSignal(definingClass, methodName)
+        ) return null
 
         if (returnType == "Z") {
             // Prefer explicit gameplay verbs over broad substring matches:
@@ -751,6 +756,11 @@ object DexLocalPatchEngine {
         if (sensitiveMethodName(key)) return false
         if (DexGameplayContext.isProgressionGetter(methodName)) {
             return DexGameplayContext.acceptProgressionGetter(
+                definingClass, methodName,
+            )
+        }
+        if (DexGameplayContext.isHealthSignal(methodName)) {
+            return DexGameplayContext.acceptHealthSignal(
                 definingClass, methodName,
             )
         }
