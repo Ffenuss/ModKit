@@ -715,3 +715,58 @@ symbol controls a game mechanic, nor does it turn those candidates into
 verified selectable overlay mods. ARM64 live native write-back on
 physical Android hardware remains a separate gate from PR #54. This
 work does not extend support to all native engines or versions.
+
+## Native scalar discovery → readable menu hint → owned-game proof (PR #56)
+
+The structural ELF scalar-export findings from PR #55 are now surfaced
+in the repacked Runtime Test Menu. The adapter
+`NativeScalarExportInfoBuilder` emits at most **12 INFO-only** entries,
+after existing semantic and already-selectable items. It accepts only
+architecture-matched, non-selectable candidates, gives each entry a
+stable fingerprint from its source container/entry/ABI/symbol/expected
+bytes and **never embeds replacement bytes** in a runtime menu item.
+Source architecture mismatches and unexpectedly selectable candidate
+records are excluded. These hints are not toggles, mods, or confirmed
+gameplay opportunities.
+
+For the repository-owned native game only, the positive device test
+now builds its runtime PATCH item from the **generic production**
+`NativeScalarExportDiscovery.scan` → `propose(candidate, 7)` path. A
+fixture-specific adapter chooses the game-owned exported native step;
+the independent `NativeFixtureElfProof` must confirm the exact
+virtual address, original bytes and replacement bytes. This prevents
+the test from passing because its in-game patch was hardcoded outside
+the discovery pipeline.
+
+The existing full device E2E then verifies a separately installed,
+originally unmodified game: original step `+2`, scanner-derived
+native patch ON `+7`, OFF `+2`, and overlay close `+2`. Only after
+actual UI-observed movement and restoration does the device test
+export a source-bound
+`native-scalar-gameplay-<abi>.json` report with the originally indexed
+APK SHA-256, scan symbol/module/address, exact bytes and cumulative
+distances `0 → 2 → 9 → 11 → 13`. This evidence **does not**
+automatically promote unrelated ELF symbols to selectable recipes.
+The owned fixture is the only place that supplies the symbol's
+known gameplay meaning.
+
+### CI verification (PR #56)
+
+[Actions run #42445264877](https://github.com/Ffenuss/ModKit/actions/runs/42445264877)
+completed **SUCCESS** on functional commit `6101fb8`:
+
+- Kotlin/JVM tests (including INFO-only menu integration and limit/mismatch
+  guards), Android Lint, APK assembly and ARM64 Unicorn/NDK proofs: **PASS**.
+- Android API 29 x86_64, owned single APK: **17/17 tests PASS**.
+- Android API 35 x86_64, owned split APK: **17/17 tests PASS**.
+- Both device suites execute the test that configures its native patch
+  from the production structural scanner, independently checks the
+  proposed ELF bytes and observes the actual native movement effect.
+
+**Verification boundary:** this confirms scanner → fixture-scoped exact
+recipe → prepared APK → Space Companion overlay → native game effect
+and restoration **on x86_64 Android test emulators**. It does not
+prove semantic classification of arbitrary games, supported ARM64 live
+runtime patching on a physical device, or automatic mod deployment for
+all engines. The implementation remains repacked APK + external overlay,
+not a virtual Android guest.

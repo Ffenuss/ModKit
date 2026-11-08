@@ -192,9 +192,17 @@ object RuntimeGameplayTestMenuBuilder {
                 )
                 .toList()
 
+        val nativeInfo = NativeScalarExportInfoBuilder.build(
+            inventory = result.elfInventory,
+            limit = minOf(
+                NativeScalarExportInfoBuilder.MAX_INFO_ITEMS,
+                (MAX_ITEMS - patches.size - info.size).coerceAtLeast(0),
+            ),
+        )
+
         return RuntimeGameplayTestMenuSpec(
             items =
-                (patches + info)
+                (patches + info + nativeInfo)
                     .take(MAX_ITEMS),
         )
     }
