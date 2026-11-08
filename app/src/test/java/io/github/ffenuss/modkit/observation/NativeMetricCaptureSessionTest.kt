@@ -92,7 +92,7 @@ class NativeMetricCaptureSessionTest {
         try {
             NativeMetricCaptureSession.begin(plan)
             fail("Cannot launch a second concurrent capture")
-        } catch (_: IllegalArgumentException) { }
+        } catch (_: IllegalStateException) { }
         NativeMetricCaptureSession.clear()
         try {
             NativeMetricCaptureSession.begin(plan.copy(
