@@ -3,6 +3,7 @@ package io.github.ffenuss.modkit
 import io.github.ffenuss.modkit.analysis.CancellationSignal
 import io.github.ffenuss.modkit.analysis.ElfImage
 import io.github.ffenuss.modkit.analysis.NativeScalarExportDiscovery
+import io.github.ffenuss.modkit.analysis.NativeScalarExportCandidate
 import io.github.ffenuss.modkit.analysis.NativeScalarExportPatch
 import java.io.File
 import java.util.zip.ZipFile
@@ -13,12 +14,17 @@ import java.util.zip.ZipFile
  * to this device test, not to the generic scanner or the production menu.
  */
 internal object NativeFixtureScalarDiscoveryProof {
+    data class Discovery(
+        val candidate: NativeScalarExportCandidate,
+        val patch: NativeScalarExportPatch,
+    )
+
     fun discover(
         apk: File,
         abi: String,
         cacheDir: File,
         cancellation: CancellationSignal,
-    ): NativeScalarExportPatch {
+    ): Discovery {
         require(abi == "x86_64" || abi == "arm64-v8a")
         val temp = File.createTempFile("modkit-game-native-", ".so", cacheDir)
         try {
@@ -45,7 +51,7 @@ internal object NativeFixtureScalarDiscoveryProof {
                 val proposed = NativeScalarExportDiscovery.propose(candidate, 7)
                 require(proposed.expectedHex == candidate.expectedPatchHex)
                 require(proposed.patchVirtualAddress > 0)
-                return proposed
+                return Discovery(candidate, proposed)
             }
         } finally {
             temp.delete()
