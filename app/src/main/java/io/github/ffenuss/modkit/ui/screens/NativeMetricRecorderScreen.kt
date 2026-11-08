@@ -1,6 +1,7 @@
 package io.github.ffenuss.modkit.ui.screens
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -91,6 +92,7 @@ fun NativeMetricRecorderScreen(
         NativeMetricCaptureSession.clear()
         onBack()
     }
+    BackHandler { exit() }
 
     Scaffold { insets ->
         LazyColumn(
@@ -99,7 +101,7 @@ fun NativeMetricRecorderScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             item {
-                TextButton(onClick = ::exit) { Text("Назад") }
+                TextButton(onClick = { exit() }) { Text("Назад") }
                 Text("Наблюдение игрового показателя", style = MaterialTheme.typography.headlineSmall)
                 Text("Цель: " + target.label + " · " + target.packageName,
                     style = MaterialTheme.typography.bodySmall)
