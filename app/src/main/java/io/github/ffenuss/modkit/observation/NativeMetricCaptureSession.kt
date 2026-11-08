@@ -123,6 +123,12 @@ object NativeMetricCaptureSession {
         )
     }
 
+    /** Only bounded local status messages; never retain arbitrary screen text. */
+    @Synchronized
+    fun reportError(message: String) {
+        mutable.value = mutable.value.copy(error = message.take(180))
+    }
+
     @Synchronized
     fun clear() {
         mutable.value = NativeMetricCaptureState()
