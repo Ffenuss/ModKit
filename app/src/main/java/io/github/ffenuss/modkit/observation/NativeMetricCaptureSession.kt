@@ -46,7 +46,7 @@ object NativeMetricCaptureSession {
             plan.actionLabel, plan.metricLabel, plan.candidate, plan.replacementValue,
         )
         require(expected == plan) { "Experiment identity does not match original ELF proposal" }
-        require(!mutable.value.active) { "Another recording is already in progress" }
+        check(!mutable.value.active) { "Another recording is already in progress" }
         mutable.value = NativeMetricCaptureState(plan = plan, active = true)
     }
 
