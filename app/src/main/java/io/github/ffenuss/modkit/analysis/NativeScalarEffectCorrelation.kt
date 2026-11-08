@@ -79,7 +79,12 @@ object NativeScalarEffectCorrelation {
         require(packageNamePattern.matches(packageName) && packageName.length <= 200) {
             "Invalid game package identity"
         }
-        require(module.matches(moduleName)) { "Invalid native module name" }
+        require(packageName == "dev.modkit.nativefixture") {
+            "This controlled experiment is restricted to the owned native fixture"
+        }
+        require(module.matches(moduleName) && moduleName == "libmodkit_native_fixture.so") {
+            "This proof requires the owned native fixture module"
+        }
         require(actionLabel.isNotBlank() && actionLabel.length <= 120) {
             "No bounded user-visible action label"
         }
