@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [ main, feature/space-native-scalar-export-discovery-20261108 ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:
