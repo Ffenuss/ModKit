@@ -194,27 +194,64 @@ class AutoModDeviceTest {
             AndroidRepackedRuntimeInstaller.inspectReadiness(context, plan).state)
         // The production app never uninstalls the original. This is test-fixture cleanup only.
         assertTrue(device.executeShellCommand("pm uninstall $fixturePackage").contains("Success"))
-        context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        device.waitForIdle()
+        // An Activity launched from instrumentation context may be blocked or
+        // fail to own the foreground on a slow API29 emulator. The shell launch
+        // is restricted to this disposable test host, never production code.
+        val hostComponent =
+            android.content.ComponentName(context, MainActivity::class.java)
+                .flattenToShortString()
+        val launchResult = device.executeShellCommand(
+            "am start -W -n $hostComponent -f 0x14000000",
+        )
+        assertTrue("ModKit must be foreground before PackageInstaller: $launchResult",
+            device.wait(Until.hasObject(By.pkg(context.packageName)), 15_000))
         val submission = AndroidRepackedRuntimeInstaller.submit(context, plan, signal)
-        val deadline = System.currentTimeMillis() + 30_000
+        val deadline = System.currentTimeMillis() + 90_000L
         while (System.currentTimeMillis() < deadline) {
             val status = RepackedRuntimeInstallStatusStore.status.value
-            if (status.kind == RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED) {
-                instrumentation.runOnMainSync {
-                    RepackedRuntimeInstallConfirmationStore.open(context, submission.sessionId)
+            if (status.sessionId == submission.sessionId) {
+                if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) break
+                if (status.kind == RepackedRuntimeInstallStatusKind.FAILURE) {
+                    throw AssertionError("Fixture install failed: " + status.message)
                 }
-                val install = device.wait(Until.findObject(By.res("com.android.packageinstaller", "ok_button")), 1500)
-                    ?: device.findObject(By.res("com.google.android.packageinstaller", "ok_button"))
-                    ?: device.findObject(By.text("Install"))
-                    ?: device.findObject(By.text("INSTALL"))
-                install?.click()
+                if (status.kind == RepackedRuntimeInstallStatusKind.USER_ACTION_REQUIRED) {
+                    instrumentation.runOnMainSync {
+                        RepackedRuntimeInstallConfirmationStore.open(context, submission.sessionId)
+                    }
+                }
             }
-            if (status.kind == RepackedRuntimeInstallStatusKind.SUCCESS) break
-            assertNotEquals(status.message, RepackedRuntimeInstallStatusKind.FAILURE, status.kind)
-            device.waitForIdle(500)
+            // Only system-owned PackageInstaller controls may be clicked. A
+            // generic Install label can accidentally resubmit the ModKit
+            // session, so scope selectors to Android's installer packages.
+            val install = device.findObject(By.res(
+                "com.android.packageinstaller", "ok_button"))
+                ?: device.findObject(By.res(
+                    "com.google.android.packageinstaller", "ok_button"))
+                ?: device.findObject(By.pkg("com.android.packageinstaller").text("Install"))
+                ?: device.findObject(By.pkg("com.google.android.packageinstaller").text("Install"))
+                ?: device.findObject(By.pkg("com.android.packageinstaller").text("INSTALL"))
+                ?: device.findObject(By.pkg("com.google.android.packageinstaller").text("INSTALL"))
+            if (install != null) {
+                try {
+                    install.click()
+                } catch (_: androidx.test.uiautomator.StaleObjectException) {
+                    // System installer can recompose; re-query on next iteration.
+                }
+            }
+            device.wait(Until.hasObject(By.text("App installed")), 500)
         }
-        assertEquals(RepackedRuntimeInstallStatusKind.SUCCESS, RepackedRuntimeInstallStatusStore.status.value.kind)
+        val installStatus = RepackedRuntimeInstallStatusStore.status.value
+        if (installStatus.kind != RepackedRuntimeInstallStatusKind.SUCCESS ||
+                installStatus.sessionId != submission.sessionId) {
+            evidence("fixture-install-timeout.png") { device.takeScreenshot(it) }
+            evidence("fixture-install-timeout-hierarchy.xml") {
+                device.dumpWindowHierarchy(it)
+            }
+        }
+        assertEquals("Owned fixture must complete exactly its install session",
+            submission.sessionId, installStatus.sessionId)
+        assertEquals("Pending PackageInstaller cannot count as installed",
+            RepackedRuntimeInstallStatusKind.SUCCESS, installStatus.kind)
         launchGame()
         assertTrue(device.hasObject(By.text("ALIVE | Health: 9999")))
         repeat(3) { hit() }
@@ -1490,6 +1527,16 @@ class AutoModDeviceTest {
         // game action. Later evidence is built from these samples, never
         // populated with hardcoded expected cumulative totals.
         val uiObservations = mutableListOf<NativeScalarUiObservation>()
+        val generalSamples = mutableListOf<NativeVisibleMetricObservation>()
+        val generalPlan = NativeVisibleMetricExperiment.prepare(
+            originalArtifactSha256 = indexed.index.artifactSha256,
+            packageName = nativePackage,
+            moduleName = patch.module,
+            actionLabel = "Native move",
+            metricLabel = "Native distance",
+            candidate = nativeDiscovery.candidate,
+            replacementValue = 7,
+        )
         fun readActualNativeCounter(
             phase: NativeScalarEffectPhase,
             expected: Long,
@@ -1501,14 +1548,23 @@ class AutoModDeviceTest {
                 )), timeoutMs)
             assertNotNull("Game UI counter absent at $phase", control)
             val raw = requireNotNull(control).text
-            val actual = raw?.removePrefix("Native distance: ")?.toLongOrNull()
-                ?: throw AssertionError("Unparseable game UI counter at $phase: $raw")
+            val actual = NativeVisibleCounterParser.parseSingle(
+                generalPlan.metricLabel,
+                requireNotNull(raw) { "Game UI metric absent at $phase" },
+            )
             assertEquals("Game UI measured an unexpected counter at $phase",
                 expected, actual)
+            val recordedAt = android.os.SystemClock.elapsedRealtimeNanos() / 1_000_000L
             uiObservations += NativeScalarUiObservation(
                 phase = phase,
                 displayedCounter = actual,
-                monotonicTimestampMs = android.os.SystemClock.elapsedRealtimeNanos() / 1_000_000L,
+                monotonicTimestampMs = recordedAt,
+            )
+            generalSamples += NativeVisibleMetricObservation(
+                phase = phase,
+                sourcePackage = nativePackage,
+                nodeText = raw,
+                elapsedRealtimeMs = recordedAt,
             )
         }
         readActualNativeCounter(NativeScalarEffectPhase.START, 0L, 25_000L)
@@ -1580,6 +1636,17 @@ class AutoModDeviceTest {
         )
         assertEquals(listOf(2L, 2L, 7L, 2L, 7L, 2L, 2L), confirmedEffect.observedDeltas)
         assertEquals(2, confirmedEffect.completedPatchOnOffCycles)
+        // Run the same actual game UI readings through a generic, not
+        // fixture-named metric association evaluator. It intentionally
+        // returns a read-only hypothesis, never an executable mod.
+        val generalAssociation = NativeVisibleMetricExperiment.assess(
+            generalPlan, generalSamples,
+        )
+        assertEquals(confirmedEffect.observedDeltas, generalAssociation.observedDeltas)
+        assertEquals(2L, generalAssociation.baselineDelta)
+        assertEquals(7L, generalAssociation.interventionDelta)
+        assertFalse("UI association must not authorize patch selection",
+            generalAssociation.selectable)
 
         // Only the owned fixture has a known user-facing movement action. No
         // generic native candidate is automatically promoted or made selectable
@@ -1597,6 +1664,14 @@ class AutoModDeviceTest {
                 .put("expectedHex", discoveredPatch.expectedHex)
                 .put("replacementHex", discoveredPatch.replacementHex)
                 .put("observationSource", confirmedEffect.source)
+                .put("generalMetricAssociation", JSONObject()
+                    .put("status", generalAssociation.status)
+                    .put("selectable", generalAssociation.selectable)
+                    .put("fingerprint", generalAssociation.fingerprint)
+                    .put("metricLabel", generalAssociation.metricLabel)
+                    .put("baselineDelta", generalAssociation.baselineDelta)
+                    .put("interventionDelta", generalAssociation.interventionDelta)
+                    .put("blocker", generalAssociation.blocker))
                 .put("baselineControlActions", confirmedEffect.baselineControlActions)
                 .put("completedPatchOnOffCycles", confirmedEffect.completedPatchOnOffCycles)
                 .put("observationPhases", org.json.JSONArray(

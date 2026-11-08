@@ -35,6 +35,7 @@ data class RuntimeGameplayTestMenuSpec(
 object RuntimeGameplayTestMenuBuilder {
     private const val MAX_ITEMS = 64
     private const val MAX_PATCH_ITEMS = 24
+    private const val RESERVED_NATIVE_INFO = 4
 
     fun build(
         result: FastAnalysisResult,
@@ -148,6 +149,18 @@ object RuntimeGameplayTestMenuBuilder {
                 .map { it.targetId }
                 .toSet()
 
+        // Reserve a small, fixed slot budget for structural native findings.
+        // Otherwise dozens of regular INFO entries can consume all 64 slots
+        // and the newly discovered ELF exports never appear in the menu.
+        // These entries are read-only and never displace executable patches.
+        val nativeInfo = NativeScalarExportInfoBuilder.build(
+            inventory = result.elfInventory,
+            limit = minOf(
+                RESERVED_NATIVE_INFO,
+                (MAX_ITEMS - patches.size).coerceAtLeast(0),
+            ),
+        )
+
         val info =
             opportunities
                 .asSequence()
@@ -187,18 +200,10 @@ object RuntimeGameplayTestMenuBuilder {
                 }
                 .distinctBy { it.id }
                 .take(
-                    (MAX_ITEMS - patches.size)
+                    (MAX_ITEMS - patches.size - nativeInfo.size)
                         .coerceAtLeast(0),
                 )
                 .toList()
-
-        val nativeInfo = NativeScalarExportInfoBuilder.build(
-            inventory = result.elfInventory,
-            limit = minOf(
-                NativeScalarExportInfoBuilder.MAX_INFO_ITEMS,
-                (MAX_ITEMS - patches.size - info.size).coerceAtLeast(0),
-            ),
-        )
 
         return RuntimeGameplayTestMenuSpec(
             items =
