@@ -118,6 +118,8 @@ class NativeScalarEffectCorrelationTest {
         denied { check(expectedSha = "garbage") }
         denied { check(expectedSha = "AB".repeat(32)) }
         denied { check(gamePackage = "bad package") }
+        denied { check(gamePackage = "com.example.unrelatedgame") }
+        denied { check(module = "libother_game.so") }
         denied { check(module = "../lib.so") }
         denied { check(module = "not-a-native-module") }
         denied { check(label = " ") }
