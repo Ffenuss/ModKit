@@ -7,8 +7,11 @@ package io.github.ffenuss.modkit.analysis
 enum class NativeScalarEffectPhase {
     START,
     UNMODIFIED_ACTION,
+    UNMODIFIED_CONTROL_ACTION,
     PATCH_ENABLED_ACTION,
     PATCH_DISABLED_ACTION,
+    PATCH_ENABLED_REPEAT_ACTION,
+    PATCH_DISABLED_REPEAT_ACTION,
     OVERLAY_CLOSED_ACTION,
 }
 
@@ -38,14 +41,18 @@ data class NativeScalarEffectConfirmation(
     val observations: List<NativeScalarUiObservation>,
     val observedDeltas: List<Long>,
 ) {
+    val baselineControlActions: Int = 2
+    val completedPatchOnOffCycles: Int = 2
     val source: String = "CI-owned fixture; independent UI hierarchy samples"
 }
 
 /**
  * Exact, conservative gate for the repository-owned fixture experiment.
- * Requires 5 separately sampled UI checkpoints, a SHA-bound source,
- * a byte-exact structural proposal, a positive action delta during ON,
- * and restoration with both OFF and overlay teardown. No UI readings
+ * Requires eight separately sampled UI checkpoints: two baseline controls,
+ * two independent ON/OFF cycles and restoration after overlay teardown.
+ * Source SHA and proposed bytes must be exact. A one-time coincidence or
+ * patch-ON state alone cannot satisfy this repeated intervention protocol.
+ * No UI readings
  * are synthesized here. A separately installed game/overlay test is
  * responsible for collecting them from the actual Android UI.
  */
@@ -89,7 +96,7 @@ object NativeScalarEffectCorrelation {
             "Proposed native bytes/address differ from exact ELF scan"
         }
         require(observations.size == expectedPhases.size) {
-            "Five original UI observations are required"
+            "Eight original UI observations are required"
         }
         require(observations.map { it.phase } == expectedPhases) {
             "UI checkpoints are missing, repeated or out of sequence"
@@ -106,16 +113,19 @@ object NativeScalarEffectCorrelation {
             after.displayedCounter - before.displayedCounter
         }
         val expectedDeltas = listOf(
-            candidate.value.toLong(),
-            modifiedStep.toLong(),
-            candidate.value.toLong(),
-            candidate.value.toLong(),
+            candidate.value.toLong(), // Baseline action
+            candidate.value.toLong(), // Baseline control without a toggle
+            modifiedStep.toLong(), // First ON trial
+            candidate.value.toLong(), // First OFF recovery
+            modifiedStep.toLong(), // Independent repeat ON trial
+            candidate.value.toLong(), // Independent repeat OFF recovery
+            candidate.value.toLong(), // Overlay closed after re-enabling
         )
         require(candidate.value > 0 && modifiedStep > 0 && candidate.value != modifiedStep) {
             "No distinct positive native movement effect"
         }
         require(deltas == expectedDeltas) {
-            "UI movement did not demonstrate baseline -> ON -> OFF -> teardown restoration"
+            "UI movement did not replicate baseline controls, ON/OFF cycles and overlay restoration"
         }
 
         return NativeScalarEffectConfirmation(
