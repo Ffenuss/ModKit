@@ -239,3 +239,10 @@ tasks.configureEach {
         dependsOn(generateRuntimeProbeDexAsset)
     }
 }
+
+
+// Structural native-discovery JVM regression consumes the actual NDK-built
+// independent fixture ELF; never rely on a hand-authored fake library.
+tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
+    dependsOn(":nativefixture:assembleDebug")
+}
