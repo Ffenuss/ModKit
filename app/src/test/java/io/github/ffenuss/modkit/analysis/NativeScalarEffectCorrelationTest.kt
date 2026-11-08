@@ -91,7 +91,8 @@ class NativeScalarEffectCorrelationTest {
         denied { check(observations = samples(values = listOf(0, 2, 9, 16, 18))) }
         denied { check(observations = samples(values = listOf(0, 2, 9, 11, 18))) }
         denied { check(observations = samples(values = listOf(0, 2, 9, 11, 12))) }
-        denied { check(observations = samples(values = listOf(0, 2, 9, 11, 13, 15))) }
+        denied { check(observations = samples() +
+            NativeScalarUiObservation(NativeScalarEffectPhase.OVERLAY_CLOSED_ACTION, 15, 600)) }
     }
 
     @Test fun rejectsWrongSequenceAndNonMonotonicObservations() {
