@@ -1490,6 +1490,16 @@ class AutoModDeviceTest {
         // game action. Later evidence is built from these samples, never
         // populated with hardcoded expected cumulative totals.
         val uiObservations = mutableListOf<NativeScalarUiObservation>()
+        val generalSamples = mutableListOf<NativeVisibleMetricObservation>()
+        val generalPlan = NativeVisibleMetricExperiment.prepare(
+            originalArtifactSha256 = indexed.index.artifactSha256,
+            packageName = nativePackage,
+            moduleName = patch.module,
+            actionLabel = "Native move",
+            metricLabel = "Native distance",
+            candidate = nativeDiscovery.candidate,
+            replacementValue = 7,
+        )
         fun readActualNativeCounter(
             phase: NativeScalarEffectPhase,
             expected: Long,
@@ -1501,14 +1511,23 @@ class AutoModDeviceTest {
                 )), timeoutMs)
             assertNotNull("Game UI counter absent at $phase", control)
             val raw = requireNotNull(control).text
-            val actual = raw?.removePrefix("Native distance: ")?.toLongOrNull()
-                ?: throw AssertionError("Unparseable game UI counter at $phase: $raw")
+            val actual = NativeVisibleCounterParser.parseSingle(
+                generalPlan.metricLabel,
+                requireNotNull(raw) { "Game UI metric absent at $phase" },
+            )
             assertEquals("Game UI measured an unexpected counter at $phase",
                 expected, actual)
+            val recordedAt = android.os.SystemClock.elapsedRealtimeNanos() / 1_000_000L
             uiObservations += NativeScalarUiObservation(
                 phase = phase,
                 displayedCounter = actual,
-                monotonicTimestampMs = android.os.SystemClock.elapsedRealtimeNanos() / 1_000_000L,
+                monotonicTimestampMs = recordedAt,
+            )
+            generalSamples += NativeVisibleMetricObservation(
+                phase = phase,
+                sourcePackage = nativePackage,
+                nodeText = raw,
+                elapsedRealtimeMs = recordedAt,
             )
         }
         readActualNativeCounter(NativeScalarEffectPhase.START, 0L, 25_000L)
@@ -1580,6 +1599,17 @@ class AutoModDeviceTest {
         )
         assertEquals(listOf(2L, 2L, 7L, 2L, 7L, 2L, 2L), confirmedEffect.observedDeltas)
         assertEquals(2, confirmedEffect.completedPatchOnOffCycles)
+        // Run the same actual game UI readings through a generic, not
+        // fixture-named metric association evaluator. It intentionally
+        // returns a read-only hypothesis, never an executable mod.
+        val generalAssociation = NativeVisibleMetricExperiment.assess(
+            generalPlan, generalSamples,
+        )
+        assertEquals(confirmedEffect.observedDeltas, generalAssociation.observedDeltas)
+        assertEquals(2L, generalAssociation.baselineDelta)
+        assertEquals(7L, generalAssociation.interventionDelta)
+        assertFalse("UI association must not authorize patch selection",
+            generalAssociation.selectable)
 
         // Only the owned fixture has a known user-facing movement action. No
         // generic native candidate is automatically promoted or made selectable
@@ -1597,6 +1627,14 @@ class AutoModDeviceTest {
                 .put("expectedHex", discoveredPatch.expectedHex)
                 .put("replacementHex", discoveredPatch.replacementHex)
                 .put("observationSource", confirmedEffect.source)
+                .put("generalMetricAssociation", JSONObject()
+                    .put("status", generalAssociation.status)
+                    .put("selectable", generalAssociation.selectable)
+                    .put("fingerprint", generalAssociation.fingerprint)
+                    .put("metricLabel", generalAssociation.metricLabel)
+                    .put("baselineDelta", generalAssociation.baselineDelta)
+                    .put("interventionDelta", generalAssociation.interventionDelta)
+                    .put("blocker", generalAssociation.blocker))
                 .put("baselineControlActions", confirmedEffect.baselineControlActions)
                 .put("completedPatchOnOffCycles", confirmedEffect.completedPatchOnOffCycles)
                 .put("observationPhases", org.json.JSONArray(
