@@ -37,6 +37,7 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
     var showUnavailable by rememberSaveable { mutableStateOf(false) }
     var testDialog by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    var metricExperimentOpen by remember { mutableStateOf(false) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { model.permissionReturned() }
     val folder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> if (uri != null) model.save(uri) }
     LaunchedEffect(result.index.artifactSha256) { model.initialize(target, result) }
@@ -49,6 +50,10 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
         }
     }
     BackHandler(state.busy) { model.cancel() }
+    if (metricExperimentOpen && target is AnalysisTargetDescriptor.InstalledPackage) {
+        NativeMetricRecorderScreen(target, result) { metricExperimentOpen = false }
+        return
+    }
     if (expert) {
         BackHandler { expert = false }
         AutoModScreen(target, result) { expert = false }
@@ -68,6 +73,10 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                             TextButton(onClick = { menuOpen = true }, enabled = !state.busy) { Text("Ещё") }
                             DropdownMenu(menuOpen, { menuOpen = false }) {
                                 DropdownMenuItem(text = { Text("Экспертный режим") }, onClick = { menuOpen = false; expert = true })
+                                DropdownMenuItem(text = { Text("Исследовать числовой показатель · без патча") },
+                                    enabled = target is AnalysisTargetDescriptor.InstalledPackage &&
+                                        result.elfInventory?.records?.any { it.scalarExportCandidates.isNotEmpty() } == true,
+                                    onClick = { menuOpen = false; metricExperimentOpen = true })
                                 DropdownMenuItem(text = { Text("Экспорт диагностики") }, onClick = {
                                     menuOpen = false; model.exportDiagnostics()
                                 })

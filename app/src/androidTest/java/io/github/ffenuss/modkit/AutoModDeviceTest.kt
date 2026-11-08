@@ -13,6 +13,8 @@ import androidx.test.uiautomator.Until
 import io.github.ffenuss.modkit.analysis.*
 import io.github.ffenuss.modkit.patch.*
 import io.github.ffenuss.modkit.runtime.*
+import io.github.ffenuss.modkit.observation.NativeMetricCaptureSession
+import io.github.ffenuss.modkit.observation.NativeMetricAccessibilityService
 import java.io.File
 import java.util.regex.Pattern
 import java.util.zip.ZipFile
@@ -1321,6 +1323,22 @@ class AutoModDeviceTest {
      * state reported by the new provider. q_ runs after all tests for the
      * original fixture so a separate APK has no effect on their inputs.
      */
+    @Test fun r_observerServiceIsSystemPermissionProtectedAndNotImplicitlyEnabled() {
+        val component = android.content.ComponentName(
+            context, NativeMetricAccessibilityService::class.java,
+        )
+        val info = context.packageManager.getServiceInfo(
+            component, android.content.pm.PackageManager.GET_META_DATA,
+        )
+        assertEquals("android.permission.BIND_ACCESSIBILITY_SERVICE", info.permission)
+        assertTrue("Android must discover the explicit opt-in accessibility service",
+            info.exported)
+        assertTrue("Accessibility metadata is required for OS-managed consent",
+            info.metaData.getInt("android.accessibilityservice") != 0)
+        assertFalse("The instrumentation suite never silently enables accessibility",
+            NativeMetricAccessibilityService.connected.value)
+    }
+
     @Test fun q_preparedNativeProbeChangesRealIndependentGame() = runBlocking {
         // Normal emulator CI remains cross-ABI. A dedicated device proof must
         // opt in and fail BEFORE installation/removal on anything but a real
@@ -1537,6 +1555,8 @@ class AutoModDeviceTest {
             candidate = nativeDiscovery.candidate,
             replacementValue = 7,
         )
+        NativeMetricCaptureSession.clear()
+        NativeMetricCaptureSession.begin(generalPlan)
         fun readActualNativeCounter(
             phase: NativeScalarEffectPhase,
             expected: Long,
@@ -1554,7 +1574,16 @@ class AutoModDeviceTest {
             )
             assertEquals("Game UI measured an unexpected counter at $phase",
                 expected, actual)
-            val recordedAt = android.os.SystemClock.elapsedRealtimeNanos() / 1_000_000L
+            val lastCapture = NativeMetricCaptureSession.state.value.observations
+                .lastOrNull()?.elapsedRealtimeMs
+            if (lastCapture != null) {
+                val until = lastCapture + 300L - android.os.SystemClock.elapsedRealtime()
+                if (until > 0L) android.os.SystemClock.sleep(until)
+            }
+            val recordedAt = android.os.SystemClock.elapsedRealtime()
+            assertTrue("The same real game UI must enter the user-tap capture state machine",
+                NativeMetricCaptureSession.recordFromUserTap(
+                    nativePackage, requireNotNull(raw), recordedAt))
             uiObservations += NativeScalarUiObservation(
                 phase = phase,
                 displayedCounter = actual,
@@ -1647,6 +1676,13 @@ class AutoModDeviceTest {
         assertEquals(7L, generalAssociation.interventionDelta)
         assertFalse("UI association must not authorize patch selection",
             generalAssociation.selectable)
+        assertEquals(8, NativeMetricCaptureSession.state.value.observations.size)
+        assertTrue(NativeMetricCaptureSession.state.value.complete)
+        val recordedAssociation = requireNotNull(NativeMetricCaptureSession.evaluate())
+        assertEquals(generalAssociation, recordedAssociation)
+        assertFalse(recordedAssociation.selectable)
+        NativeMetricCaptureSession.clear()
+        assertTrue(NativeMetricCaptureSession.state.value.observations.isEmpty())
 
         // Only the owned fixture has a known user-facing movement action. No
         // generic native candidate is automatically promoted or made selectable
