@@ -247,8 +247,16 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                                 else -> it.message ?: "Ожидаем ответ Android"
                             }, style = MaterialTheme.typography.bodySmall) }
                         }
+                        Text(
+                            "Это экспериментальный переподписанный APK, а не мод поверх официальной игры. " +
+                                "Не удаляйте оригинал ради установки: подпись и проверки магазина могут отличаться.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(onClick = model::install, modifier = Modifier.weight(1f)) { Text("Установить") }
+                            Button(onClick = model::install, modifier = Modifier.weight(1f)) {
+                                Text("Тестовая установка")
+                            }
                             OutlinedButton(onClick = {
                                 if (Build.VERSION.SDK_INT >= 29) model.save() else folder.launch(null)
                             }, modifier = Modifier.weight(1f)) { Text("Сохранить") }
@@ -268,7 +276,7 @@ fun SimpleAutoModScreen(target: AnalysisTargetDescriptor, result: FastAnalysisRe
                 item {
                     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Сборка создана", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                            Text("Экспериментальная APK-сборка", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                             Text(if (record!!.plan.apks.size == 1) "Один подписанный APK" else "Комплект из ${record.plan.apks.size} APK — установка вместе")
                             Text("Патчи и подпись проверены. Игровой эффект пока не подтверждён.", style = MaterialTheme.typography.bodyMedium)
                         }
