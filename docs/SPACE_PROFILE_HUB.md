@@ -968,3 +968,91 @@ observation collection, semantic identification and automatic game
 mod application remain unverified/unimplemented. The implementation
 still uses a repacked test APK and an external overlay, not a universal
 virtual guest Space.
+
+## Consented, local Android numeric metric capture (PR #60)
+
+ModKit now includes an explicitly launched **read-only metric recorder**
+reachable from the analyzed installed game's `Ещё` menu. The user
+chooses a unique ELF scalar-export candidate indexed from the source
+APK-set, a literal game action label, one numeric text-node label and
+a proposed integer value. `NativeMetricExperimentPlanner.fromAnalysis`
+checks source/ABI/path/candidate identity before a session can start.
+This setup does **not** install, inject or switch a native patch.
+
+### User consent and privacy boundary
+
+The user must manually enable **ModKit: ручное наблюдение показателя**
+in Android's Accessibility Settings. The service is protected by the
+system-only `android.permission.BIND_ACCESSIBILITY_SERVICE` permission
+and starts its compact `TYPE_ACCESSIBILITY_OVERLAY` controls only
+during an explicitly started session. Android Accessibility permissions
+are sensitive: the service can access the active accessibility tree,
+but **`onAccessibilityEvent` deliberately performs no event-based
+monitoring**. Only the user's `Снять значение` button starts one
+bounded, synchronous lookup of the *active window*, and its root
+package must equal the one analyzed/selected in the ModKit UI.
+
+Each lookup traverses at most **2048 nodes**, rejecting nodes with
+too many children and any ambiguous duplicate metric. It accepts only
+a visible node with the exact selected `Label: integer` or
+`Label = integer` text. Only the normalized selected label, bounded
+integer, target package, phase and monotonic timestamp remain in the
+volatile state. No screenshots, entire accessibility hierarchies,
+unrelated node text, key events, gestures, network uploads, or
+background recording are produced. A stop, user back action or service
+termination clears the in-memory session and removes the overlay.
+
+Native game engines drawing numbers in `SurfaceView`/Canvas may not
+expose those numbers to Android accessibility, so such a game fails
+closed with an explanation; no OCR fallback is present.
+
+### Eight manually recorded actions
+
+The user follows eight prompts: START, baseline, second baseline,
+first ON, first OFF, repeat ON, repeat OFF, and after overlay close.
+Each sample requires a separate tap and at least 250 ms after the
+previous accepted sample. The service cannot attest that a third-party
+code change really occurred: **the user performs any ON/OFF operation
+outside this feature** in a separately authorized test environment.
+Results from `NativeVisibleMetricExperiment.assess` remain
+`REPLICATED_UI_METRIC_ASSOCIATION_ONLY`, `selectable=false`.
+Neither the UI nor the service promotes or executes the researched
+native scalar-export candidate.
+
+After the eighth reading, the overlay closes. The user may return
+to ModKit to inspect the eight normalized values and explicitly
+evaluate repeatability. A local JSON report containing only the
+selected source identity, phase/value/timestamp series and
+information-only status can be saved **by separate user action** to
+`Downloads/ModKit-validation` (Android API29+) or an app-specific
+Documents folder on older Android. Nothing is written or transmitted
+without that export action.
+
+### CI validation
+
+[GitHub Actions run #42475939358](https://github.com/Ffenuss/ModKit/actions/runs/42475939358)
+completed **SUCCESS** on functional commit `dee9aa43`:
+
+- JVM unit tests cover the in-memory opt-in session, 8-step ordering,
+  wrong-game-package rejection, exact node text, rapid duplicate
+  sampling, clearing of data on stop, stale plan rejection, no-effect
+  rejection and informational (not executable) experiment result.
+- APK compilation, Android Lint, previous ARM64/Unicorn ELF proof and
+  22 strict Python ARM64 report checks: **PASS**.
+- Android API29 x86_64 single-APK: **18/18 instrumentation PASS**.
+- Android API35 x86_64 split-APK: **18/18 instrumentation PASS**.
+- An independent game E2E drives the capture **state machine** with
+  actual UIAutomator-derived game counter samples and cross-checks
+  its read-only result. A separate instrumentation assertion checks
+  that the installed AccessibilityService is system-permission-gated
+  and was **not silently enabled** by the suite.
+
+**Evidence boundary:** CI did not automatically grant Accessibility
+or verify a physical user's actual overlay tap in a separate
+third-party game. The service and UI are implemented and compiled,
+but manual device acceptance testing (Android system consent flow,
+overlay interaction, accessibility text exposure and cleanup) is
+still required. Physical ARM64 native execution, a generic non-root
+virtual guest, semantic verification and automatic third-party
+native mod execution remain outside this PR. Accessibility-service
+distribution also needs policy review before public store release.
