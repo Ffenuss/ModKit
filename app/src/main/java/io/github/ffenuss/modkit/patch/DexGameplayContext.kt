@@ -41,7 +41,7 @@ object DexGameplayContext {
         "roguelike", "combat", "battle",
     )
 
-    /** 
+    /**
      * Health is also an OS/network/diagnostic term. A bare getHealth()
      * in an APK editor or utility must not be interpreted as player HP.
      * Even a contextual name remains only static evidence, not gameplay proof.
@@ -75,32 +75,7 @@ object DexGameplayContext {
     fun acceptHealthSignal(definingClass: String, methodName: String): Boolean {
         if (!isHealthSignal(methodName)) return false
         val path = definingClass.removePrefix("L").removeSuffix(";").lowercase()
-        val owner = path.substringAfterLast('/').substringBefore('
-    fun isPlausibleProgressionOwner(
-        definingClass: String,
-    ): Boolean {
-        val path = definingClass.removePrefix("L")
-            .removeSuffix(";").lowercase()
-        val owner = path.substringAfterLast('/')
-            .substringBefore('$')
-        if (excludedOwnerMarkers.any { it in owner }) return false
-        val segments = path.split('/')
-        val gameNamespace = segments.any { it in gameplayPackageSegments }
-        val gameOwner = explicitlyGameplayOwners.any { it in owner }
-        return gameNamespace || gameOwner
-    }
-
-    fun acceptProgressionGetter(
-        definingClass: String,
-        methodName: String,
-    ): Boolean =
-        isProgressionGetter(methodName) &&
-            isPlausibleProgressionOwner(definingClass)
-
-    private fun normalize(value: String): String =
-        value.lowercase().filter(Char::isLetterOrDigit)
-}
-)
+        val owner = path.substringAfterLast('/').substringBefore('$')
         if (nonGameOwnerParts.any { it in owner }) return false
         val segments = path.split('/')
         return healthGameOwners.any { it in owner } ||
