@@ -41,7 +41,7 @@ class DexStructuralDiscoveryTest {
         assertTrue(opportunity.selectable)
         assertEquals(owner + "->a:I", opportunity.fieldIdentity)
         assertTrue(opportunity.reason.contains("Структурное подтверждение"))
-        assertTrue(scan.explanation.contains("Структурный анализ подтвердил"))
+        assertTrue(scan.explanation.contains("структурных шаблонов"))
     }
 
     @Test
