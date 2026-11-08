@@ -1517,6 +1517,10 @@ class AutoModDeviceTest {
             device.wait(Until.findObject(bubbleSelector), 20_000))
         fixtureText("Native move").click()
         readActualNativeCounter(NativeScalarEffectPhase.UNMODIFIED_ACTION, 2L)
+        // Negative control: the same user action without any patch must keep
+        // the original step. This catches one-off UI coincidence/drift.
+        fixtureText("Native move").click()
+        readActualNativeCounter(NativeScalarEffectPhase.UNMODIFIED_CONTROL_ACTION, 4L)
 
         requireNotNull(device.findObject(bubbleSelector)).click()
         fixtureText("Нативный патч · Native movement: выключено").click()
@@ -1525,7 +1529,7 @@ class AutoModDeviceTest {
                 "Нативный патч · Native movement: включено")), 20_000))
         requireNotNull(device.findObject(bubbleSelector)).click()
         fixtureText("Native move").click()
-        readActualNativeCounter(NativeScalarEffectPhase.PATCH_ENABLED_ACTION, 9L)
+        readActualNativeCounter(NativeScalarEffectPhase.PATCH_ENABLED_ACTION, 11L)
 
         requireNotNull(device.findObject(bubbleSelector)).click()
         fixtureText("Нативный патч · Native movement: включено").click()
@@ -1534,8 +1538,27 @@ class AutoModDeviceTest {
                 "Нативный патч · Native movement: выключено")), 20_000))
         requireNotNull(device.findObject(bubbleSelector)).click()
         fixtureText("Native move").click()
-        readActualNativeCounter(NativeScalarEffectPhase.PATCH_DISABLED_ACTION, 11L)
+        readActualNativeCounter(NativeScalarEffectPhase.PATCH_DISABLED_ACTION, 13L)
 
+        // Repeat the complete ON/OFF intervention against the *same* game
+        // process. A single coincidental counter change cannot pass the gate.
+        requireNotNull(device.findObject(bubbleSelector)).click()
+        fixtureText("Нативный патч · Native movement: выключено").click()
+        assertNotNull(device.wait(Until.findObject(By.text(
+            "Нативный патч · Native movement: включено")), 20_000))
+        requireNotNull(device.findObject(bubbleSelector)).click()
+        fixtureText("Native move").click()
+        readActualNativeCounter(NativeScalarEffectPhase.PATCH_ENABLED_REPEAT_ACTION, 20L)
+
+        requireNotNull(device.findObject(bubbleSelector)).click()
+        fixtureText("Нативный патч · Native movement: включено").click()
+        assertNotNull(device.wait(Until.findObject(By.text(
+            "Нативный патч · Native movement: выключено")), 20_000))
+        requireNotNull(device.findObject(bubbleSelector)).click()
+        fixtureText("Native move").click()
+        readActualNativeCounter(NativeScalarEffectPhase.PATCH_DISABLED_REPEAT_ACTION, 22L)
+
+        // Closing while ON is a separate rollback mechanism from toggling OFF.
         requireNotNull(device.findObject(bubbleSelector)).click()
         fixtureText("Нативный патч · Native movement: выключено").click()
         assertNotNull(device.wait(Until.findObject(By.text(
@@ -1543,7 +1566,7 @@ class AutoModDeviceTest {
         fixtureText("Закрыть меню").click()
         assertTrue(device.wait(Until.gone(bubbleSelector), 15_000))
         fixtureText("Native move").click()
-        readActualNativeCounter(NativeScalarEffectPhase.OVERLAY_CLOSED_ACTION, 13L)
+        readActualNativeCounter(NativeScalarEffectPhase.OVERLAY_CLOSED_ACTION, 24L)
 
         val confirmedEffect = NativeScalarEffectCorrelation.confirm(
             originalArtifactSha256 = indexed.index.artifactSha256,
@@ -1555,14 +1578,15 @@ class AutoModDeviceTest {
             modifiedStep = 7,
             observations = uiObservations,
         )
-        assertEquals(listOf(2L, 7L, 2L, 2L), confirmedEffect.observedDeltas)
+        assertEquals(listOf(2L, 2L, 7L, 2L, 7L, 2L, 2L), confirmedEffect.observedDeltas)
+        assertEquals(2, confirmedEffect.completedPatchOnOffCycles)
 
         // Only the owned fixture has a known user-facing movement action. No
         // generic native candidate is automatically promoted or made selectable
         // by this test. Save confirmation only after actual gameplay changes.
         evidence("native-scalar-gameplay-$nativeAbi.json") { file ->
             file.writeText(JSONObject()
-                .put("schema", "modkit.native-scalar-fixture-e2e.v1")
+                .put("schema", "modkit.native-scalar-fixture-e2e.v2")
                 .put("originalArtifactSha256", indexed.index.artifactSha256)
                 .put("fixturePackage", nativePackage)
                 .put("abi", nativeAbi)
@@ -1573,6 +1597,8 @@ class AutoModDeviceTest {
                 .put("expectedHex", discoveredPatch.expectedHex)
                 .put("replacementHex", discoveredPatch.replacementHex)
                 .put("observationSource", confirmedEffect.source)
+                .put("baselineControlActions", confirmedEffect.baselineControlActions)
+                .put("completedPatchOnOffCycles", confirmedEffect.completedPatchOnOffCycles)
                 .put("observationPhases", org.json.JSONArray(
                     confirmedEffect.observations.map { it.phase.name }))
                 .put("observationTimestampMonotonicMs", org.json.JSONArray(
@@ -1592,7 +1618,7 @@ class AutoModDeviceTest {
             // reports from ever satisfying an independent host gate.
             evidence("arm64-native-live-${requireNotNull(liveNonce)}.json") { file ->
                 file.writeText(JSONObject()
-                    .put("schema", "modkit.arm64.native-live.v1")
+                    .put("schema", "modkit.arm64.native-live.v2")
                     .put("nonce", liveNonce)
                     .put("deviceAbi", nativeAbi)
                     .put("primaryAbi", Build.SUPPORTED_ABIS.first())
@@ -1605,13 +1631,23 @@ class AutoModDeviceTest {
                         .put("functionVirtualAddress", patch.address)
                         .put("originalHex", patch.original)
                         .put("replacementHex", patch.replacement))
+                    .put("observationPhases", org.json.JSONArray(
+                        confirmedEffect.observations.map { it.phase.name }))
+                    .put("observationTimestampMonotonicMs", org.json.JSONArray(
+                        confirmedEffect.observations.map { it.monotonicTimestampMs }))
                     .put("observedNativeDistance", JSONObject()
+                        .put("start", confirmedEffect.observations[0].displayedCounter)
                         .put("baseline", confirmedEffect.observations[1].displayedCounter)
-                        .put("on", confirmedEffect.observations[2].displayedCounter)
-                        .put("off", confirmedEffect.observations[3].displayedCounter)
-                        .put("overlayClosed", confirmedEffect.observations[4].displayedCounter))
+                        .put("control", confirmedEffect.observations[2].displayedCounter)
+                        .put("on", confirmedEffect.observations[3].displayedCounter)
+                        .put("off", confirmedEffect.observations[4].displayedCounter)
+                        .put("repeatOn", confirmedEffect.observations[5].displayedCounter)
+                        .put("repeatOff", confirmedEffect.observations[6].displayedCounter)
+                        .put("overlayClosed", confirmedEffect.observations[7].displayedCounter))
                     .put("observedStepDeltas", org.json.JSONArray(
                         confirmedEffect.observedDeltas))
+                    .put("baselineControlActions", confirmedEffect.baselineControlActions)
+                    .put("completedPatchOnOffCycles", confirmedEffect.completedPatchOnOffCycles)
                     .put("overlayAndInstallerConfirmed", true)
                     .toString(2))
             }

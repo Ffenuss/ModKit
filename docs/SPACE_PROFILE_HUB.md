@@ -829,3 +829,66 @@ game actions and trusted UI observations. The current x86_64 emulator
 tests also do not establish live physical ARM64 Android native
 write-back. The repo still lacks universal root/guest virtualization
 or all-engine mod support.
+
+## Replicated native intervention and strict ARM64 v2 proof (PR #58)
+
+One successful patch ON/OFF experiment is not enough to establish
+reproducibility. The owned native fixture's device test now performs
+eight separately recorded Android UI checkpoints from the **game**
+package itself, each requiring a monotonically later timestamp:
+
+| Checkpoint | Actual cumulative native distance on the owned test game |
+| --- | ---: |
+| START | 0 |
+| UNMODIFIED_ACTION | 2 |
+| UNMODIFIED_CONTROL_ACTION (negative control, still no patch) | 4 |
+| PATCH_ENABLED_ACTION | 11 |
+| PATCH_DISABLED_ACTION | 13 |
+| PATCH_ENABLED_REPEAT_ACTION | 20 |
+| PATCH_DISABLED_REPEAT_ACTION | 22 |
+| OVERLAY_CLOSED_ACTION (close with patch re-enabled) | 24 |
+
+The per-action deltas are `2,2,7,2,7,2,2`. There are **two baseline
+controls**, **two complete ON/OFF cycles**, and a separate teardown
+rollback check when closing the external overlay from its ON state.
+Neither a displayed overlay toggle alone nor a one-time accidental
+counter change can pass `NativeScalarEffectCorrelation.confirm`.
+
+The correlation gate also checks the exact original APK-set SHA,
+candidate identity, ABI, source native function, expected/replacement
+opcodes, the eight expected phases and strictly ordered UI samples.
+Its current automated proof is **restricted to the repository-owned
+`dev.modkit.nativefixture` package and `libmodkit_native_fixture.so`**:
+using the same values from another app is not proof of its gameplay
+semantics. A separate trusted observation/action binding will be
+required before generic native candidates become selectable.
+
+The optional, **not yet executed** disposable physical ARM64 runner
+now exports `modkit.arm64.native-live.v2` rather than v1.
+The independent host validator requires the expanded UI phase and
+monotonic timestamp sequences, checks all eight cumulative counters,
+recomputes all seven deltas, and rejects contradictory/missing
+observations, outdated v1 proofs, stale nonce, wrong ARM64
+architecture/kernel, invalid instructions, inconsistent APK identity,
+or failed/missing instrumentation. This is a gate, **not** proof that a
+physical handset has already run it.
+
+### CI proof for the repeated experiment
+
+[GitHub Actions #42469551294](https://github.com/Ffenuss/ModKit/actions/runs/42469551294)
+completed **SUCCESS** on functional commit `0738d73`:
+
+- **22 Python host validation tests PASS**, including v1 rejection,
+  second-cycle false effects, missing baseline control, timestamp,
+  counter type and actual delta mismatch rejection.
+- Kotlin/JVM regressions, Android Lint, NDK-built signed APK
+  verification, ARM64 machine-code execution in Unicorn: **PASS**.
+- Android API29 x86_64 single-APK test matrix: **17/17 PASS**.
+- Android API35 x86_64 split-APK test matrix: **17/17 PASS**.
+
+Both Android emulators exercised the complete owned native game
+workflow with two independent ON/OFF trials. Physical ARM64 runtime
+write-back remains unproven until an explicitly authorized disposable
+device is tested. The production app still lacks a general non-root
+guest sandbox, arbitrary third-party semantic mod discovery, and
+universal engine compatibility.
