@@ -204,3 +204,53 @@ object NativeVisibleMetricExperiment {
         )
     }
 }
+
+
+/**
+ * Bridges a real analyzed APK/ELF inventory to an explicitly selected
+ * experiment, instead of accepting an invented symbol or an arbitrary VA.
+ *
+ * This only prepares a read-only hypothesis and an exact byte proposal;
+ * it does not run a third-party game, request permissions or modify code.
+ */
+object NativeMetricExperimentPlanner {
+    fun fromAnalysis(
+        result: FastAnalysisResult,
+        packageName: String,
+        sourceContainer: String,
+        elfEntryPath: String,
+        abi: String,
+        symbol: String,
+        actionLabel: String,
+        metricLabel: String,
+        replacementValue: Int,
+    ): NativeMetricExperimentPlan {
+        require(sourceContainer.isNotBlank() && elfEntryPath.isNotBlank() &&
+            symbol.isNotBlank()) {
+            "Select a concrete analyzed ELF export"
+        }
+        val record = result.elfInventory?.records.orEmpty().singleOrNull {
+            it.container == sourceContainer &&
+                it.entryPath == elfEntryPath &&
+                it.architecture == abi &&
+                it.indexedAbi == abi &&
+                !it.abiPathMismatch
+        } ?: throw IllegalArgumentException("Unique architecture-matched ELF was not indexed")
+        require(elfEntryPath.startsWith("lib/" + abi + "/") &&
+            elfEntryPath.count { it == '/' } == 2) {
+            "Export does not belong to the selected Android library ABI path"
+        }
+        val candidate = record.scalarExportCandidates.singleOrNull {
+            it.symbol == symbol && it.abi == abi && !it.selectable
+        } ?: throw IllegalArgumentException("Export is ambiguous, unavailable or already selected")
+        return NativeVisibleMetricExperiment.prepare(
+            originalArtifactSha256 = result.index.artifactSha256,
+            packageName = packageName,
+            moduleName = elfEntryPath.substringAfterLast('/'),
+            actionLabel = actionLabel,
+            metricLabel = metricLabel,
+            candidate = candidate,
+            replacementValue = replacementValue,
+        )
+    }
+}
