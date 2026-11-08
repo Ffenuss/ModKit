@@ -160,8 +160,10 @@ class AutoModViewModel(application: Application) : AndroidViewModel(application)
             RepackedRuntimeInstallReadinessState.UNKNOWN_SOURCES_PERMISSION_REQUIRED ->
                 mutable.update { it.copy(needsInstallPermission = true, notice = "Разрешите установку из ModKit. После возврата установка продолжится.") }
             RepackedRuntimeInstallReadinessState.INSTALLED_SIGNATURE_CONFLICT ->
-                mutable.update { it.copy(error = "Установленная версия подписана другим ключом. Android не разрешает обновить её этим APK. " +
-                    "Перед самостоятельным удалением оригинала сохраните игровые данные: локальные сохранения могут быть потеряны.") }
+                mutable.update { it.copy(error = "Не удаляйте оригинальную игру. Android отклонил переподписанный APK, " +
+                    "потому что он имеет другую подпись. Вернитесь к анализу установленного приложения " +
+                    "и используйте «Запустить оригинальное приложение». Изменение сторонней игры " +
+                    "без root или настоящей виртуализации здесь пока не реализовано.") }
             else -> {
                 val submitted = withContext(Dispatchers.IO) {
                     AndroidRepackedRuntimeInstaller.submit(context, record.plan, signal) { copied, total, name ->
