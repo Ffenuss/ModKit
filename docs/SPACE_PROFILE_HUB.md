@@ -641,3 +641,21 @@ until this opt-in run produces both a genuine ARM64 device report and
 a successful game/overlay result. The ordinary GitHub-hosted API29/35
 device matrix is still x86_64. No third-party game, root injection,
 Android virtual guest, or universal engine coverage is implied.
+
+### CI verification of the ARM64-device gate (PR #54)
+
+[Actions run #42427404241](https://github.com/Ffenuss/ModKit/actions/runs/42427404241)
+completed **SUCCESS** at functional commit `401a40c`:
+
+- **15/15 host tests PASS**: correct proof accepted; stale nonce, x86
+  translation, 32-bit process, inconsistent game effects, invalid ELF
+  recipe, missing APK hash and failed/missing instrumentation rejected.
+- **Shell syntax check PASS** for the opt-in device runner.
+- **JVM tests, Lint, signed APK builds, NDK ELF + Unicorn ARM64
+  machine-code proof PASS**.
+- **API 29 x86_64 device: 17/17 PASS**.
+- **API 35 x86_64 device: 17/17 PASS**.
+
+The standard GitHub CI cannot substitute for a real ARM64 handset; the
+new *physical-device* proof has **not yet been run**. Post-validation
+documentation and CI-filter cleanup do not alter the tested logic.
