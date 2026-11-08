@@ -113,4 +113,35 @@ class NativeScalarExportInfoBuilderTest {
             root.deleteRecursively()
         }
     }
+
+    @Test fun fullNativeInventoryKeepsFourVisibleHintsWithoutCreatingPatch() {
+        val digest = "bc".repeat(32)
+        val result = FastAnalysisResult(
+            index = ArtifactIndex(
+                artifactSha256 = digest, sources = emptyList(), entries = emptyList(),
+            ),
+            routingPlan = EngineRoutingPlan(emptyList(), emptyList()),
+            elapsedMs = 1,
+            elfInventory = inventory((0 until 25).map { candidate("hidden_$it") }),
+        )
+        val preparation = PatchPreparationPlan(
+            artifactSha256 = digest, sourceShaVerified = true,
+            preparedAtEpochMs = 1, targets = emptyList(), globalBlockers = emptyList(),
+        )
+        val root = Files.createTempDirectory("modkit-native-reserved-budget").toFile()
+        try {
+            val menu = RuntimeGameplayTestMenuBuilder.build(
+                result, preparation, root, root,
+            )
+            assertEquals(4, menu.infoItemCount)
+            assertEquals(0, menu.patchItemCount)
+            assertTrue(menu.items.all { it.id.startsWith("info:native:") })
+            assertTrue(menu.items.all { it.mode == RepackedRuntimeTestMenuItemMode.INFO })
+            assertTrue(menu.items.all { it.replacementHex.isEmpty() })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+
 }
