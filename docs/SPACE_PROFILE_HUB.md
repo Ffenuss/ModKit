@@ -574,3 +574,88 @@ completed **SUCCESS** on functional commit `2f878ff`:
 **Not established:** Android ARM64 live mprotect/write/restore from
 the Space Companion. Both Android device suites still use x86_64
 emulators; on-device ARM64 validation remains a separate release gate.
+
+## Opt-in *live* ARM64 device gate (PR #54)
+
+The ARM64 ELF test in PR #53 proves CPU instruction semantics in Unicorn.
+To test **Android runtime code write-back** instead, this revision adds an
+independent run of the existing native gameplay E2E on a **real, expendable
+ARM64 device**, not on the standard x86_64 CI emulator.
+
+The test runner checks *before* preparing/installing any game that:
+- `Build.SUPPORTED_ABIS.first()` is `arm64-v8a`;
+- the actual kernel reports `aarch64` (rejecting x86 emulation/translation);
+- `android.os.Process.is64Bit()` is true;
+- the instrumentation arguments include an explicit opt-in and a fresh,
+  unpredictable 128-bit nonce.
+
+The already-proven full flow then must succeed: untouched game +2,
+prepare/re-sign/install only the owned disposable game APK, verified
+package visibility/signer/installed image, Companion overlay, native
+patch ON +7, OFF +2, and overlay close +2. The test emits a
+**nonce-named JSON report only after all observations succeed**. It
+includes platform ABI, native ELF patch address/bytes, original input
+digest, and actual accumulated distance `2 → 9 → 11 → 13`.
+
+The host-side validator `tools/verify_arm64_live_evidence.py` requires
+the exact nonce, genuine ARM64 runtime/kernel, exact function patch
+bytes, original image SHA-256, exact gameplay deltas and a passing
+**single-test** instrumentation transcript. CI independently executes
+15 synthetic host regressions for malformed/stale or false-success
+reports. **A passing CI host validator is not live-device evidence.**
+
+### Run on a dedicated disposable ARM64 Android device
+
+This procedure is intentionally NOT for a daily-use phone. It uses
+an authenticated ADB connection and must be invoked from a machine
+with Java 17, Android SDK/NDK (SDK 37, build-tools 36.0.0,
+NDK 28.2.13676358), Gradle 9.5, adb and Python 3, with the device
+unlocked. The operator must explicitly authorize and connect the device.
+
+```bash
+export ADB_SERIAL='YOUR_DISPOSABLE_DEVICE_SERIAL'
+export MODKIT_ARM64_DISPOSABLE_DEVICE=YES
+bash tools/run_arm64_native_live_proof.sh
+```
+
+The script first refuses x86 host kernels, non-ARM64 device primary
+ABIs, API below 29, unauthorized/disconnected devices, or *any
+preexisting* test package
+(`io.github.ffenuss.modkit.test`, its test runner,
+`io.github.ffenuss.modkit.spacecompanion`,
+`dev.modkit.nativefixture`). This prevents overwriting existing
+package data. It builds and installs **only these temporary owned
+packages**, grants their test-only app-ops, invokes exactly
+`q_preparedNativeProbeChangesRealIndependentGame`, pulls the
+fresh report, validates it, and attempts cleanup of only the
+packages it installed even on failure. Android OEM permission policies
+must be respected; user confirmation may be required.
+
+Local evidence is stored under
+`build/arm64-live-proof/<nonce>/`, including the instrumentation
+transcript, raw JSON report and independently validated summary. It is
+not automatically uploaded to any external service.
+
+**Release gate:** do not mark ARM64 Android native write-back validated
+until this opt-in run produces both a genuine ARM64 device report and
+a successful game/overlay result. The ordinary GitHub-hosted API29/35
+device matrix is still x86_64. No third-party game, root injection,
+Android virtual guest, or universal engine coverage is implied.
+
+### CI verification of the ARM64-device gate (PR #54)
+
+[Actions run #42427404241](https://github.com/Ffenuss/ModKit/actions/runs/42427404241)
+completed **SUCCESS** at functional commit `401a40c`:
+
+- **15/15 host tests PASS**: correct proof accepted; stale nonce, x86
+  translation, 32-bit process, inconsistent game effects, invalid ELF
+  recipe, missing APK hash and failed/missing instrumentation rejected.
+- **Shell syntax check PASS** for the opt-in device runner.
+- **JVM tests, Lint, signed APK builds, NDK ELF + Unicorn ARM64
+  machine-code proof PASS**.
+- **API 29 x86_64 device: 17/17 PASS**.
+- **API 35 x86_64 device: 17/17 PASS**.
+
+The standard GitHub CI cannot substitute for a real ARM64 handset; the
+new *physical-device* proof has **not yet been run**. Post-validation
+documentation and CI-filter cleanup do not alter the tested logic.
