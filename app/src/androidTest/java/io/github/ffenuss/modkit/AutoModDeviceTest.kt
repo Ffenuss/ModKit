@@ -1341,6 +1341,15 @@ class AutoModDeviceTest {
         } ?: error("Native gameplay proof requires a supported 64-bit ABI")
         val patch = NativeFixtureElfProof.readInstalled(
             original.apkFiles.single(), nativeAbi)
+        // The actual candidate for the running-game recipe now comes from the
+        // generic ELF discovery, not the fixture-specific ELF proof. The
+        // latter remains an independent oracle for bytes/virtual address.
+        val discoveredPatch = NativeFixtureScalarDiscoveryProof.discover(
+            original.apkFiles.single(), nativeAbi, context.cacheDir, signal)
+        assertEquals("Discovered function VA must match independent ELF parser",
+            patch.address, discoveredPatch.patchVirtualAddress)
+        assertEquals(patch.original, discoveredPatch.expectedHex)
+        assertEquals(patch.replacement, discoveredPatch.replacementHex)
         if (liveArm64) assertEquals("arm64-v8a", nativeAbi)
         assertTrue(patch.address > 0L)
         // Every native fixture APK includes ARM64 regardless of the
@@ -1453,12 +1462,12 @@ class AutoModDeviceTest {
         val recipe = RepackedRuntimeTestMenuItem(
             id = "native:step-seven",
             label = "Native movement",
-            detail = "Owned $nativeAbi fixture: 2 -> 7",
+            detail = "Discovered exported scalar in owned $nativeAbi fixture: 2 -> 7",
             mode = RepackedRuntimeTestMenuItemMode.PATCH,
             moduleName = patch.module,
-            binaryVirtualAddress = patch.address,
-            originalHex = patch.original,
-            replacementHex = patch.replacement,
+            binaryVirtualAddress = discoveredPatch.patchVirtualAddress,
+            originalHex = discoveredPatch.expectedHex,
+            replacementHex = discoveredPatch.replacementHex,
         )
         val configured = transport.configureTestMenu(authority, listOf(recipe))
         assertEquals(1, configured.patchItemCount)
@@ -1514,6 +1523,28 @@ class AutoModDeviceTest {
         fixtureText("Native move").click()
         assertNotNull("Closing external overlay must restore baseline native bytes",
             device.wait(Until.findObject(By.text("Native distance: 13")), 10_000))
+
+        // Only the owned fixture has a known user-facing movement action. No
+        // generic native candidate is automatically promoted or made selectable
+        // by this test. Save confirmation only after actual gameplay changes.
+        evidence("native-scalar-gameplay-$nativeAbi.json") { file ->
+            file.writeText(JSONObject()
+                .put("schema", "modkit.native-scalar-fixture-e2e.v1")
+                .put("originalArtifactSha256", indexed.index.artifactSha256)
+                .put("fixturePackage", nativePackage)
+                .put("abi", nativeAbi)
+                .put("scanner", "NativeScalarExportDiscovery")
+                .put("symbol", discoveredPatch.symbol)
+                .put("module", patch.module)
+                .put("patchVirtualAddress", discoveredPatch.patchVirtualAddress)
+                .put("expectedHex", discoveredPatch.expectedHex)
+                .put("replacementHex", discoveredPatch.replacementHex)
+                .put("observedNativeDistance", org.json.JSONArray(listOf(0, 2, 9, 11, 13)))
+                .put("actualStepDeltas", org.json.JSONArray(listOf(2, 7, 2, 2)))
+                .put("overlayClosedRestoresOriginal", true)
+                .put("scope", "repository-owned native fixture only")
+                .toString(2))
+        }
 
         if (liveArm64) {
             // Emit only after the whole real, out-of-process overlay and
