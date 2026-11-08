@@ -96,9 +96,9 @@ data class DexLocalScan(
     val explanation: String
         get() = buildString {
             if (structuralMechanicsConfirmed > 0) {
-                append("Структурный анализ подтвердил " +
+                append("Найдено структурных шаблонов, похожих на игровые механики: " +
                     structuralMechanicsConfirmed +
-                    " игровых механик по поведению кода (без опоры на имена). ")
+                    ". Это не доказывает назначение функции, тип приложения или эффект в игре. ")
             }
             append(
                 when {
